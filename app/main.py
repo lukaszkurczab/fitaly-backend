@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
+from app.api.middleware import request_logging
 from app.api.router import api_router
 from app.core.api_version import (
     CURRENT_API_PREFIX,
@@ -11,6 +12,7 @@ from app.core.api_version import (
     NEXT_API_VERSION,
 )
 from app.core.config import settings
+from app.core.monitoring import init_sentry
 from app.db.firebase import get_firestore
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ def create_app() -> FastAPI:
         version=settings.VERSION,
         debug=settings.DEBUG,
     )
+    init_sentry()
+    app.add_middleware(request_logging.RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

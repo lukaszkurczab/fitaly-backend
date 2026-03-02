@@ -97,64 +97,96 @@ On startup, the backend configures CORS and attempts to initialize Firebase/Fire
 - `GET /api/v1/version`
 - `GET /api/v1/ai/usage?userId=<id>`
 - `POST /api/v1/ai/ask`
+- `POST /api/v1/logs/error`
+
+Every HTTP response includes the `X-Request-ID` header. Use it to correlate client-side failures, backend logs, and Sentry events for the same request.
 
 ## Required Environment Variables
 
-Current codebase requires only app config variables. Integration variables below are required once related features are enabled.
+Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/CaloriAI/food-scanner-ai-backend/.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `APP_NAME` | No | `Fitaly Food Scanner API` | API title in docs/metadata |
+| `DESCRIPTION` | No | `Backend API for Fitaly mobile application.` | API description exposed in docs |
 | `VERSION` | No | `0.1.0` | API version exposed by app |
 | `DEBUG` | No | `false` | FastAPI debug mode |
 | `API_V1_PREFIX` | No | `/api/v1` | Global API route prefix |
+| `ENVIRONMENT` | No | `local` | Runtime environment name (`local`, `development`, `staging`, `production`) |
 | `API_V2_PREFIX` | No | `/api/v2` | Next API version route prefix |
 | `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
-| `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
+| `CORS_ORIGINS` | No | `*` fallback if empty | Comma-separated frontend origins allowed by CORS |
 | `FIREBASE_PROJECT_ID` | Yes (Firebase/Firestore features) | - | Firebase project selection |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Yes (current Firebase bootstrap) | - | Absolute path to the Firebase service account JSON file |
 | `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email |
 | `FIREBASE_PRIVATE_KEY` | Yes (Firebase/Firestore features) | - | Service account private key |
-| `SENTRY_DSN` | Yes (Sentry enabled) | - | Sentry project DSN |
+| `SENTRY_DSN` | No | empty | Sentry project DSN; empty disables Sentry |
 | `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
+| `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
+| `USE_NEW_AI_BACKEND` | No | `false` | Feature flag for backend-driven AI flow |
 | `PORT` | Railway only | set by Railway | Runtime HTTP port |
 
 Example local `.env`:
 
 ```env
 APP_NAME=Fitaly Food Scanner API
+DESCRIPTION=Backend API for Fitaly mobile application.
 VERSION=0.1.0
 DEBUG=true
 API_V1_PREFIX=/api/v1
-API_V2_PREFIX=/api/v2
+ENVIRONMENT=development
 OPENAI_API_KEY=your_openai_key
-AI_DAILY_LIMIT_FREE=20
+CORS_ORIGINS=http://localhost:19006
 FIREBASE_PROJECT_ID=your_project_id
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
 FIREBASE_CLIENT_EMAIL=your_service_account_email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
 SENTRY_ENVIRONMENT=development
+AI_DAILY_LIMIT_FREE=20
+USE_NEW_AI_BACKEND=false
 ```
 
 ## Railway Deployment
 
-1. Create a new Railway project and connect the backend repo.
-2. Set project root to the backend directory (if needed).
-3. Add environment variables from the table above.
-4. Set start command:
+### .env setup
+
+`.env.example` lists the variables expected by the backend for local development and production deployment. For local work, copy it to `.env`, fill in your own values, and keep secrets out of version control.
+
+```bash
+cp .env.example .env
+```
+
+Set `GOOGLE_APPLICATION_CREDENTIALS` to the absolute path of your local Firebase service account JSON file, then fill in the remaining values required by the integrations you want to use.
+
+### Deploy On Railway
+
+1. Create a new Railway project and connect it to the repository that contains this backend.
+2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
+3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_DAILY_LIMIT_FREE`, `ENVIRONMENT`, `DEBUG`, `CORS_ORIGINS`, and `USE_NEW_AI_BACKEND`.
+5. If your Railway deployment still uses a Firebase service account file, make sure `GOOGLE_APPLICATION_CREDENTIALS` points to the runtime path of that JSON file.
+6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
 ```bash
 gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:$PORT app.main:app
 ```
 
-5. Deploy and verify:
+7. Do not set `PORT` manually. Railway injects it automatically for the running container.
+8. Keep `DEBUG=false` in production and set `ENVIRONMENT=production` plus `SENTRY_ENVIRONMENT=production` for live deployments.
+9. Deploy the service and wait for Railway to generate the public domain.
+10. Verify the live service on the generated domain:
 
 ```text
 GET https://<your-domain>/api/v1/health
+GET https://<your-domain>/api/v1/version
 ```
 
-Notes:
-- Railway injects `PORT` automatically.
-- Keep `DEBUG=false` in production.
+### Sentry & Firestore notes
+
+Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish local, staging, and production events.
+
+For Firebase and Firestore, generate a service account JSON in the Firebase Console or Google Cloud Console, store it securely, and never commit that file to the repository. For local development, point `GOOGLE_APPLICATION_CREDENTIALS` at the downloaded JSON file. If you also keep `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` in Railway variables, treat them as secrets and rotate them if they are ever exposed.
 
 ## Firestore (Short)
 
@@ -238,3 +270,50 @@ Error responses:
 - `sentry-sdk[fastapi]` captures unhandled errors and performance traces from the API.
 - Minimum setup: set `SENTRY_DSN` and initialize Sentry at app startup.
 - Keep different `SENTRY_ENVIRONMENT` values for `development`, `staging`, and `production`.
+
+## Error Monitoring
+
+Set `SENTRY_DSN` in `.env` to enable Sentry reporting:
+
+```env
+SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
+```
+
+If `SENTRY_DSN` is empty, Sentry stays disabled and the backend only writes logs locally. When configured, the backend reports unhandled exceptions, selected log messages, and request performance traces to Sentry.
+
+All responses include the `X-Request-ID` header. This identifier is attached to request logs and should be included in support/debug flows when correlating backend activity with client reports.
+
+## Client Error Log Endpoint
+
+`POST /api/v1/logs/error` accepts frontend error reports and forwards them to the backend logger. If Sentry is enabled, these events can also be forwarded there through the centralized logging service.
+
+Request body fields:
+
+- `source` - client/app area that produced the error
+- `message` - human-readable error message
+- `stack` - optional stack trace string
+- `context` - optional JSON object with extra metadata
+- `userId` - optional user identifier
+
+Example request:
+
+```json
+{
+  "source": "mobile.scan-screen",
+  "message": "Camera permission check failed",
+  "stack": "Error: Camera permission check failed\n    at checkPermission (...)",
+  "context": {
+    "platform": "ios",
+    "appVersion": "1.2.0"
+  },
+  "userId": "abc123"
+}
+```
+
+Example response:
+
+```json
+{
+  "detail": "logged"
+}
+```
