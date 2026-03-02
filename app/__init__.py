@@ -1,1 +1,1 @@
-"""Application package for the CaloriAI backend."""
+"""Application package for the Fitaly backend."""

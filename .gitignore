@@ -26,3 +26,4 @@ htmlcov/
 
 # Environment
 .env
+service_account.json

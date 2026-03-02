@@ -1,8 +1,8 @@
-# CaloriAI Backend (FastAPI)
+# Fitaly Backend (FastAPI)
 
 ## Purpose
 
-This backend provides the API layer for the CaloriAI mobile app.
+This backend provides the API layer for the Fitaly mobile app.
 It handles health/status endpoints now and is prepared for AI, Firebase/Firestore, and observability integrations.
 
 ## Tech Stack
@@ -62,13 +62,38 @@ Run tests:
 pytest -q
 ```
 
+## Backend setup (Foundation stage)
+
+Install backend dependencies from the repository root:
+
+```bash
+pip install -r requirements.txt
+```
+
+Set the foundation-stage environment variables before starting the API:
+
+- `FIREBASE_PROJECT_ID` - Google Cloud project ID used by Firebase Admin and Firestore.
+- `GOOGLE_APPLICATION_CREDENTIALS` - absolute path to the Firebase service account JSON key used during backend startup.
+- `CORS_ORIGINS` - comma-separated list of allowed client origins. For local development you can use `CORS_ORIGINS=*`, but production should always list concrete domains.
+
+Run the application locally:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+On startup, the backend configures CORS and attempts to initialize Firebase/Firestore. The API currently exposes:
+
+- `GET /api/v1/health`
+- `GET /api/v1/version`
+
 ## Required Environment Variables
 
 Current codebase requires only app config variables. Integration variables below are required once related features are enabled.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `APP_NAME` | No | `CaloriAI Food Scanner API` | API title in docs/metadata |
+| `APP_NAME` | No | `Fitaly Food Scanner API` | API title in docs/metadata |
 | `VERSION` | No | `0.1.0` | API version exposed by app |
 | `DEBUG` | No | `false` | FastAPI debug mode |
 | `API_V1_PREFIX` | No | `/api/v1` | Global API route prefix |
@@ -84,7 +109,7 @@ Current codebase requires only app config variables. Integration variables below
 Example local `.env`:
 
 ```env
-APP_NAME=CaloriAI Food Scanner API
+APP_NAME=Fitaly Food Scanner API
 VERSION=0.1.0
 DEBUG=true
 API_V1_PREFIX=/api/v1

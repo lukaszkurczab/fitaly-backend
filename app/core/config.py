@@ -7,8 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # App metadata
-    APP_NAME: str = "CaloriAI Food Scanner API"
-    DESCRIPTION: str = "Backend API for CaloriAI mobile application."
+    APP_NAME: str = "Fitaly Food Scanner API"
+    DESCRIPTION: str = "Backend API for Fitaly mobile application."
     VERSION: str = "0.1.0"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     FIREBASE_PROJECT_ID: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
 
     # Product limits
