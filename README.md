@@ -117,9 +117,9 @@ Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/CaloriAI/food-scanner-a
 | `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
 | `CORS_ORIGINS` | No | `*` fallback if empty | Comma-separated frontend origins allowed by CORS |
 | `FIREBASE_PROJECT_ID` | Yes (Firebase/Firestore features) | - | Firebase project selection |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Yes (current Firebase bootstrap) | - | Absolute path to the Firebase service account JSON file |
-| `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email |
-| `FIREBASE_PRIVATE_KEY` | Yes (Firebase/Firestore features) | - | Service account private key |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Optional fallback | - | Absolute path to the Firebase service account JSON file |
+| `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email; preferred on Railway |
+| `FIREBASE_PRIVATE_KEY` | Yes (Firebase/Firestore features) | - | Service account private key; preferred on Railway |
 | `SENTRY_DSN` | No | empty | Sentry project DSN; empty disables Sentry |
 | `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
 | `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
@@ -157,7 +157,7 @@ USE_NEW_AI_BACKEND=false
 cp .env.example .env
 ```
 
-Set `GOOGLE_APPLICATION_CREDENTIALS` to the absolute path of your local Firebase service account JSON file, then fill in the remaining values required by the integrations you want to use.
+For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the absolute path of a Firebase service account JSON file or fill in `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly. Then add the remaining values required by the integrations you want to use.
 
 ### Deploy On Railway
 
@@ -165,7 +165,7 @@ Set `GOOGLE_APPLICATION_CREDENTIALS` to the absolute path of your local Firebase
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
 4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_DAILY_LIMIT_FREE`, `ENVIRONMENT`, `DEBUG`, `CORS_ORIGINS`, and `USE_NEW_AI_BACKEND`.
-5. If your Railway deployment still uses a Firebase service account file, make sure `GOOGLE_APPLICATION_CREDENTIALS` points to the runtime path of that JSON file.
+5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
 ```bash
@@ -186,7 +186,7 @@ GET https://<your-domain>/api/v1/version
 
 Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish local, staging, and production events.
 
-For Firebase and Firestore, generate a service account JSON in the Firebase Console or Google Cloud Console, store it securely, and never commit that file to the repository. For local development, point `GOOGLE_APPLICATION_CREDENTIALS` at the downloaded JSON file. If you also keep `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` in Railway variables, treat them as secrets and rotate them if they are ever exposed.
+For Firebase and Firestore, generate a service account in the Firebase Console or Google Cloud Console. On Railway, the preferred setup is to copy `client_email` into `FIREBASE_CLIENT_EMAIL` and `private_key` into `FIREBASE_PRIVATE_KEY`, keeping them as protected variables. For local development, you can still use the downloaded service account JSON file with `GOOGLE_APPLICATION_CREDENTIALS`. Never commit that JSON file to the repository, and rotate credentials if they are ever exposed.
 
 ## Firestore (Short)
 

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     FIREBASE_PROJECT_ID: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    FIREBASE_CLIENT_EMAIL: str = ""
+    FIREBASE_PRIVATE_KEY: str = ""
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
 

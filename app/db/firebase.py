@@ -19,13 +19,35 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _build_firebase_credential() -> credentials.Base:
+    """Build Firebase credentials from env vars or a local service account file."""
+    if settings.FIREBASE_CLIENT_EMAIL and settings.FIREBASE_PRIVATE_KEY:
+        normalized_private_key = settings.FIREBASE_PRIVATE_KEY.replace("\\n", "\n")
+        service_account_info = {
+            "type": "service_account",
+            "project_id": settings.FIREBASE_PROJECT_ID,
+            "client_email": settings.FIREBASE_CLIENT_EMAIL,
+            "private_key": normalized_private_key,
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+        return credentials.Certificate(service_account_info)
+
+    if settings.GOOGLE_APPLICATION_CREDENTIALS:
+        return credentials.Certificate(settings.GOOGLE_APPLICATION_CREDENTIALS)
+
+    raise ValueError(
+        "Firebase credentials are not configured. Set FIREBASE_CLIENT_EMAIL and "
+        "FIREBASE_PRIVATE_KEY, or GOOGLE_APPLICATION_CREDENTIALS."
+    )
+
+
 def init_firebase() -> firebase_admin.App:
     """Initialize Firebase Admin once and return the active app instance."""
     if firebase_admin._apps:
         return firebase_admin.get_app()
 
     try:
-        credential = credentials.Certificate(settings.GOOGLE_APPLICATION_CREDENTIALS)
+        credential = _build_firebase_credential()
         return firebase_admin.initialize_app(
             credential=credential,
             options={"projectId": settings.FIREBASE_PROJECT_ID},
