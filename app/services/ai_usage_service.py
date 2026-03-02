@@ -26,6 +26,23 @@ def get_date_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _coerce_usage_count(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _coerce_date_key(value: object, fallback: str) -> str:
+    return value if isinstance(value, str) and value else fallback
+
+
 async def get_usage(user_id: str) -> tuple[int, int, str]:
     """Return current usage count, daily limit, and date key for a user."""
     client: firestore.Client = get_firestore()
@@ -45,9 +62,10 @@ async def get_usage(user_id: str) -> tuple[int, int, str]:
     if not snapshot.exists:
         return 0, daily_limit, date_key
 
-    data = snapshot.to_dict() or {}
-    usage_count = int(data.get("usageCount", 0))
-    return usage_count, daily_limit, str(data.get("dateKey") or date_key)
+    data: dict[str, object] = snapshot.to_dict() or {}
+    usage_count = _coerce_usage_count(data.get("usageCount", 0))
+    stored_date_key = _coerce_date_key(data.get("dateKey"), date_key)
+    return usage_count, daily_limit, stored_date_key
 
 
 @firestore.transactional
@@ -58,13 +76,13 @@ def _increment_usage_transaction(
     daily_limit: int,
 ) -> int:
     snapshot = document_ref.get(transaction=transaction)
-    data = snapshot.to_dict() if snapshot.exists else {}
+    data: dict[str, object] = (snapshot.to_dict() or {}) if snapshot.exists else {}
     stored_date_key = data.get("dateKey")
 
     if not snapshot.exists or stored_date_key != date_key:
         usage_count = 1
     else:
-        usage_count = int(data.get("usageCount", 0)) + 1
+        usage_count = _coerce_usage_count(data.get("usageCount", 0)) + 1
 
     if usage_count > daily_limit:
         raise AiUsageLimitExceededError("AI usage limit exceeded.")

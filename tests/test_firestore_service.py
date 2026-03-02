@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from pytest_mock import MockerFixture
 
@@ -6,12 +7,9 @@ from app.services.firestore_service import get_document, set_document, update_do
 
 
 def _build_firestore_chain():
-    client = type("MockClient", (), {})()
-    collection_ref = type("MockCollectionRef", (), {})()
-    document_ref = type("MockDocumentRef", (), {})()
-
-    client.collection = lambda _collection: collection_ref
-    collection_ref.document = lambda _document_id: document_ref
+    client = SimpleNamespace()
+    collection_ref = SimpleNamespace()
+    document_ref = SimpleNamespace()
 
     return client, collection_ref, document_ref
 

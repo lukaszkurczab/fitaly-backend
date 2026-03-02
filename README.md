@@ -16,6 +16,7 @@ It handles health/status endpoints now and is prepared for AI, Firebase/Firestor
 - Pydantic Settings + `python-dotenv` (configuration)
 - Sentry SDK (error monitoring)
 - Pytest + HTTPX (tests)
+- Pyright (static type checking)
 
 ## Project Structure
 
@@ -60,6 +61,12 @@ Run tests:
 
 ```bash
 pytest -q
+```
+
+Run type checking:
+
+```bash
+pyright
 ```
 
 ## Backend setup (Foundation stage)

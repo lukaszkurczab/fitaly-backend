@@ -3,7 +3,7 @@
 - Stack: Python 3.11+, FastAPI, Uvicorn.
 - Backend services: Firebase Admin SDK, Firestore, OpenAI SDK, Sentry.
 - Hosting: Railway (initial target), local dev via `fastapi dev` / `uvicorn`.
-- Tooling: pytest, httpx (for tests), Ruff, mypy optional.
+- Tooling: pytest, httpx (for tests), Ruff, Pyright, mypy optional.
 - Config: `.env` + pydantic-settings (or equivalent typed settings layer).
 
 ### Architecture Principles
@@ -86,6 +86,7 @@ Always run and report results:
 - `pytest`
 - `python -m compileall app`
 - `ruff check .`
+- `pyright`
 
 If mypy is configured, also run:
 
@@ -153,6 +154,7 @@ If a gate fails: fix and re-run (max 3 attempts). If still failing: stop and rep
   - `pytest`
   - `python -m compileall app`
   - `ruff check .`
+  - `pyright`
 - If tests exist for the touched area: run them.
 - If no tests exist, provide a short manual verification checklist.
 - For API changes: list exact endpoints verified and expected status codes.

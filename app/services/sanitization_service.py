@@ -1,7 +1,7 @@
 """Helpers for masking sensitive user input before sending prompts to AI."""
 
 
-def sanitize_request(message: str, context: dict | None = None) -> str:
+def sanitize_request(message: str, context: dict[str, object] | None = None) -> str:
     """Sanitize user input by masking sensitive personal data and ranges.
 
     Replace specific numbers like weight/age with ranges (e.g. 23 -> "20-30").

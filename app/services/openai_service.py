@@ -14,7 +14,7 @@ from app.core.exceptions import OpenAIServiceError
 
 logger = logging.getLogger(__name__)
 openai.api_key = settings.OPENAI_API_KEY
-OPENAI_ERROR = getattr(getattr(openai, "error", openai), "OpenAIError")
+OPENAI_ERROR = getattr(openai, "OpenAIError")
 
 
 async def ask_chat(
@@ -26,9 +26,11 @@ async def ask_chat(
     if not settings.OPENAI_API_KEY:
         raise OpenAIServiceError("OpenAI API key is not configured.")
 
+    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=timeout)
+
     try:
         response = await asyncio.wait_for(
-            openai.ChatCompletion.acreate(
+            client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": message}],
                 temperature=0.2,
