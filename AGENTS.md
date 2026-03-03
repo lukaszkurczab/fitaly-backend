@@ -86,7 +86,7 @@ Always run and report results:
 - `pytest`
 - `python -m compileall app`
 - `ruff check .`
-- `pyright`
+- `./.venv/bin/pyright`
 
 If mypy is configured, also run:
 
@@ -154,7 +154,7 @@ If a gate fails: fix and re-run (max 3 attempts). If still failing: stop and rep
   - `pytest`
   - `python -m compileall app`
   - `ruff check .`
-  - `pyright`
+  - `./.venv/bin/pyright`
 - If tests exist for the touched area: run them.
 - If no tests exist, provide a short manual verification checklist.
 - For API changes: list exact endpoints verified and expected status codes.

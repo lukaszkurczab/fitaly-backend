@@ -12,7 +12,7 @@ class AiAskRequest(BaseModel):
 class AiAskResponse(BaseModel):
     userId: str
     reply: str
-    usageCount: int
-    remaining: int
+    usageCount: float
+    remaining: float
     dateKey: str
     version: str

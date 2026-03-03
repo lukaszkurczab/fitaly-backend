@@ -19,6 +19,7 @@ from app.db.firebase import get_firestore
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "ai_usage"
+USAGE_PRECISION = 4
 
 
 def get_date_key() -> str:
@@ -26,24 +27,28 @@ def get_date_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _coerce_usage_count(value: object) -> int:
+def _normalize_usage_count(value: float) -> float:
+    return round(value, USAGE_PRECISION)
+
+
+def _coerce_usage_count(value: object) -> float:
     if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
     if isinstance(value, str):
         try:
-            return int(value)
+            return float(value)
         except ValueError:
-            return 0
-    return 0
+            return 0.0
+    return 0.0
 
 
 def _coerce_date_key(value: object, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
-async def get_usage(user_id: str) -> tuple[int, int, str]:
+async def get_usage(user_id: str) -> tuple[float, int, str]:
     """Return current usage count, daily limit, and date key for a user."""
     client: firestore.Client = get_firestore()
     date_key = get_date_key()
@@ -60,10 +65,10 @@ async def get_usage(user_id: str) -> tuple[int, int, str]:
         raise FirestoreServiceError("Failed to fetch AI usage document.") from exc
 
     if not snapshot.exists:
-        return 0, daily_limit, date_key
+        return 0.0, daily_limit, date_key
 
     data: dict[str, object] = snapshot.to_dict() or {}
-    usage_count = _coerce_usage_count(data.get("usageCount", 0))
+    usage_count = _normalize_usage_count(_coerce_usage_count(data.get("usageCount", 0)))
     stored_date_key = _coerce_date_key(data.get("dateKey"), date_key)
     return usage_count, daily_limit, stored_date_key
 
@@ -74,15 +79,18 @@ def _increment_usage_transaction(
     document_ref: firestore.DocumentReference,
     date_key: str,
     daily_limit: int,
-) -> int:
+    cost: float,
+) -> float:
     snapshot = document_ref.get(transaction=transaction)
     data: dict[str, object] = (snapshot.to_dict() or {}) if snapshot.exists else {}
     stored_date_key = data.get("dateKey")
 
     if not snapshot.exists or stored_date_key != date_key:
-        usage_count = 1
+        usage_count = _normalize_usage_count(cost)
     else:
-        usage_count = _coerce_usage_count(data.get("usageCount", 0)) + 1
+        usage_count = _normalize_usage_count(
+            _coerce_usage_count(data.get("usageCount", 0)) + cost
+        )
 
     if usage_count > daily_limit:
         raise AiUsageLimitExceededError("AI usage limit exceeded.")
@@ -98,8 +106,15 @@ def _increment_usage_transaction(
     return usage_count
 
 
-async def increment_usage(user_id: str) -> tuple[int, int, str]:
+async def increment_usage(
+    user_id: str,
+    cost: float = 1.0,
+) -> tuple[float, int, str, float]:
     """Atomically increment daily AI usage for a user."""
+    normalized_cost = _normalize_usage_count(cost)
+    if normalized_cost <= 0:
+        raise ValueError("Usage cost must be greater than zero.")
+
     client: firestore.Client = get_firestore()
     date_key = get_date_key()
     daily_limit = settings.AI_DAILY_LIMIT_FREE
@@ -113,6 +128,7 @@ async def increment_usage(user_id: str) -> tuple[int, int, str]:
             document_ref,
             date_key,
             daily_limit,
+            normalized_cost,
         )
     except AiUsageLimitExceededError:
         raise
@@ -123,4 +139,5 @@ async def increment_usage(user_id: str) -> tuple[int, int, str]:
         )
         raise FirestoreServiceError("Failed to update AI usage document.") from exc
 
-    return usage_count, daily_limit, date_key
+    remaining = _normalize_usage_count(daily_limit - usage_count)
+    return usage_count, daily_limit, date_key, remaining

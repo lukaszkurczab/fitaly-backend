@@ -21,9 +21,9 @@ def test_get_ai_usage_returns_usage_payload(mocker: MockerFixture) -> None:
     assert response.json() == {
         "userId": "abc",
         "dateKey": "2026-03-02",
-        "usageCount": 3,
+        "usageCount": 3.0,
         "dailyLimit": 20,
-        "remaining": 17,
+        "remaining": 17.0,
     }
 
 
@@ -42,7 +42,7 @@ def test_get_ai_usage_computes_remaining_from_limit_and_usage(mocker: MockerFixt
     response = client.get("/api/v1/ai/usage", params={"userId": "abc"})
 
     assert response.status_code == 200
-    assert response.json()["remaining"] == -5
+    assert response.json()["remaining"] == -5.0
 
 
 def test_get_ai_usage_returns_500_for_firestore_errors(mocker: MockerFixture) -> None:

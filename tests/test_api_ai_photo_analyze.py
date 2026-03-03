@@ -13,7 +13,7 @@ client = TestClient(app)
 def test_post_ai_photo_analyze_returns_ingredients_and_usage(mocker: MockerFixture) -> None:
     increment_usage = mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
-        return_value=(2, 20, "2026-03-02"),
+        return_value=(2.0, 20, "2026-03-02", 18.0),
     )
     analyze_photo = mocker.patch(
         "app.api.routes.ai.openai_service.analyze_photo",
@@ -52,8 +52,8 @@ def test_post_ai_photo_analyze_returns_ingredients_and_usage(mocker: MockerFixtu
                 "unit": None,
             }
         ],
-        "usageCount": 2,
-        "remaining": 18,
+        "usageCount": 2.0,
+        "remaining": 18.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
     }
@@ -106,7 +106,7 @@ def test_post_ai_photo_analyze_returns_503_when_openai_fails(
 ) -> None:
     mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
-        return_value=(1, 20, "2026-03-02"),
+        return_value=(1.0, 20, "2026-03-02", 19.0),
     )
     mocker.patch(
         "app.api.routes.ai.openai_service.analyze_photo",

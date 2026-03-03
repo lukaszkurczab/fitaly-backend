@@ -66,7 +66,7 @@ pytest -q
 Run type checking:
 
 ```bash
-pyright
+./.venv/bin/pyright
 ```
 
 ## Backend setup (Foundation stage)

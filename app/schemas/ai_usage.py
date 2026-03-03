@@ -4,6 +4,6 @@ from pydantic import BaseModel
 class AiUsageResponse(BaseModel):
     userId: str
     dateKey: str
-    usageCount: int
+    usageCount: float
     dailyLimit: int
-    remaining: int
+    remaining: float

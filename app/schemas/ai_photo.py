@@ -20,7 +20,7 @@ class AiPhotoIngredient(BaseModel):
 class AiPhotoAnalyzeResponse(BaseModel):
     userId: str
     ingredients: list[AiPhotoIngredient]
-    usageCount: int
-    remaining: int
+    usageCount: float
+    remaining: float
     dateKey: str
     version: str

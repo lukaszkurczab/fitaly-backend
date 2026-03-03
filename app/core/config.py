@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -28,6 +29,12 @@ class Settings(BaseSettings):
 
     # Product limits
     AI_DAILY_LIMIT_FREE: int = Field(default=20, ge=1)
+    AI_GATEWAY_ENABLED: bool = True
+    AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
+    AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
+    AI_GATEWAY_ML_ENABLED: bool = False
+    AI_GATEWAY_ML_MODEL_PATH: Path = Path("models/ai_gateway_classifier.joblib")
+    AI_GATEWAY_ML_THRESHOLD_OFF_TOPIC: float = Field(default=0.35, ge=0.0, le=1.0)
 
     model_config = SettingsConfigDict(
         env_file=".env",
