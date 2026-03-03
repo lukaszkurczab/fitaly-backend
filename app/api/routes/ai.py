@@ -8,6 +8,11 @@ from app.core.exceptions import (
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
+from app.schemas.ai_photo import (
+    AiPhotoAnalyzeRequest,
+    AiPhotoAnalyzeResponse,
+    AiPhotoIngredient,
+)
 from app.services import (
     ai_usage_service,
     content_guard_service,
@@ -56,6 +61,46 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse:
     return AiAskResponse(
         userId=request.userId,
         reply=reply,
+        usageCount=usage_count,
+        remaining=remaining,
+        dateKey=date_key,
+        version=settings.VERSION,
+    )
+
+
+@router.post("/ai/photo/analyze", response_model=AiPhotoAnalyzeResponse)
+async def analyze_photo_ai(request: AiPhotoAnalyzeRequest) -> AiPhotoAnalyzeResponse:
+    try:
+        usage_count, daily_limit, date_key = await ai_usage_service.increment_usage(
+            request.userId
+        )
+    except AiUsageLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="AI usage limit exceeded",
+        ) from exc
+    except FirestoreServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        ) from exc
+
+    try:
+        ingredients = await openai_service.analyze_photo(
+            request.imageBase64,
+            lang=request.lang,
+        )
+    except OpenAIServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable",
+        ) from exc
+
+    remaining = daily_limit - usage_count
+
+    return AiPhotoAnalyzeResponse(
+        userId=request.userId,
+        ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
         usageCount=usage_count,
         remaining=remaining,
         dateKey=date_key,

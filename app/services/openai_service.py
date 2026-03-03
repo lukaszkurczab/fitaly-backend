@@ -5,7 +5,9 @@ mock it directly instead of touching the external OpenAI SDK.
 """
 
 import asyncio
+import json
 import logging
+from typing import Any, NotRequired, TypedDict
 
 import openai
 
@@ -15,6 +17,102 @@ from app.core.exceptions import OpenAIServiceError
 logger = logging.getLogger(__name__)
 openai.api_key = settings.OPENAI_API_KEY
 OPENAI_ERROR = getattr(openai, "OpenAIError")
+
+
+class AnalyzedIngredient(TypedDict):
+    name: str
+    amount: float
+    protein: float
+    fat: float
+    carbs: float
+    kcal: float
+    unit: NotRequired[str]
+
+
+def _extract_reply_content(response: Any) -> str:
+    choices = response["choices"] if isinstance(response, dict) else response.choices
+    if not choices:
+        raise OpenAIServiceError("OpenAI returned an empty response.")
+
+    first_choice = choices[0]
+    if isinstance(first_choice, dict):
+        reply = first_choice.get("message", {}).get("content")
+    else:
+        reply = getattr(first_choice.message, "content", None)
+
+    if not reply:
+        raise OpenAIServiceError("OpenAI returned an empty response.")
+
+    return reply.strip()
+
+
+def _parse_json_array(raw: str) -> list[Any]:
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        raise OpenAIServiceError("OpenAI returned an invalid ingredients payload.")
+
+    array_text = raw[start : end + 1]
+
+    try:
+        parsed = json.loads(array_text)
+    except json.JSONDecodeError:
+        cleaned = array_text.replace(",]", "]").replace(",}", "}")
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise OpenAIServiceError(
+                "OpenAI returned an invalid ingredients payload."
+            ) from exc
+
+    if not isinstance(parsed, list):
+        raise OpenAIServiceError("OpenAI returned an invalid ingredients payload.")
+
+    return parsed
+
+
+def _coerce_number(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise OpenAIServiceError("OpenAI returned an invalid ingredient number.") from exc
+    raise OpenAIServiceError("OpenAI returned an invalid ingredient number.")
+
+
+def _parse_ingredients(raw: str) -> list[AnalyzedIngredient]:
+    parsed = _parse_json_array(raw)
+    ingredients: list[AnalyzedIngredient] = []
+
+    for item in parsed:
+        if not isinstance(item, dict):
+            raise OpenAIServiceError("OpenAI returned an invalid ingredient object.")
+
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise OpenAIServiceError("OpenAI returned an invalid ingredient name.")
+
+        ingredient: AnalyzedIngredient = {
+            "name": name.strip(),
+            "amount": _coerce_number(item.get("amount")),
+            "protein": _coerce_number(item.get("protein")),
+            "fat": _coerce_number(item.get("fat")),
+            "carbs": _coerce_number(item.get("carbs")),
+            "kcal": _coerce_number(item.get("kcal")),
+        }
+
+        unit = item.get("unit")
+        if isinstance(unit, str) and unit.strip():
+            ingredient["unit"] = unit.strip()
+
+        ingredients.append(ingredient)
+
+    if not ingredients:
+        raise OpenAIServiceError("OpenAI returned an empty ingredients list.")
+
+    return ingredients
 
 
 async def ask_chat(
@@ -44,17 +142,59 @@ async def ask_chat(
         logger.exception("OpenAI request failed.")
         raise OpenAIServiceError("OpenAI request failed.") from exc
 
-    choices = response["choices"] if isinstance(response, dict) else response.choices
-    if not choices:
-        raise OpenAIServiceError("OpenAI returned an empty response.")
+    return _extract_reply_content(response)
 
-    first_choice = choices[0]
-    if isinstance(first_choice, dict):
-        reply = first_choice.get("message", {}).get("content")
-    else:
-        reply = getattr(first_choice.message, "content", None)
 
-    if not reply:
-        raise OpenAIServiceError("OpenAI returned an empty response.")
+async def analyze_photo(
+    image_base64: str,
+    lang: str = "en",
+    model: str = "gpt-4o",
+    timeout: int = 30,
+) -> list[AnalyzedIngredient]:
+    """Analyze a meal photo and return normalized ingredient entries."""
+    if not settings.OPENAI_API_KEY:
+        raise OpenAIServiceError("OpenAI API key is not configured.")
 
-    return reply.strip()
+    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=timeout)
+
+    prompt = (
+        "You extract simplified nutrition data from meal photos. "
+        f"Return names in {lang}. Return ONLY a raw JSON array. "
+        'Schema per item: {"name":"string","amount":123,"protein":0,"fat":0,"carbs":0,"kcal":0,"unit":"ml"}. '
+        "The unit key is optional and only for liquids. Use grams by default. "
+        "Prefer one combined item for a ready-made dish unless foods are clearly separate. "
+        "Do not include markdown or explanation."
+    )
+
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=600,
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError as exc:
+        logger.exception("OpenAI photo analysis timed out.")
+        raise OpenAIServiceError("OpenAI photo analysis timed out.") from exc
+    except OPENAI_ERROR as exc:
+        logger.exception("OpenAI photo analysis failed.")
+        raise OpenAIServiceError("OpenAI photo analysis failed.") from exc
+
+    reply = _extract_reply_content(response)
+    return _parse_ingredients(reply)

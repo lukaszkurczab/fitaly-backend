@@ -33,5 +33,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 method=request.method,
                 status_code=status_code,
             )
+        if response is None:
+            response = Response(status_code=500)
         response.headers["X-Request-ID"] = request_id
         return response
