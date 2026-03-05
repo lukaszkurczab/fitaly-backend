@@ -5,6 +5,7 @@ later as moderation rules evolve.
 """
 
 import re
+import unicodedata
 
 from app.core.exceptions import ContentBlockedError
 
@@ -20,29 +21,42 @@ BLOCKED_KEYWORDS = [
 
 NUTRITION_KEYWORDS_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
     "pl": (
-        "kalorie",
+        "kalori",
         "kcal",
-        "bialko",
-        "bialka",
+        "bialk",
         "tluszcz",
-        "tluszcze",
-        "weglowodany",
+        "weglowodan",
         "makro",
-        "posilek",
+        "posilk",
+        "kolac",
+        "obiad",
+        "sniadan",
+        "przekask",
+        "przepis",
+        "jadlospis",
         "jedzenie",
         "produkt",
+        "skladnik",
+        "odzyw",
         "dieta",
     ),
     "en": (
-        "calories",
+        "calori",
         "kcal",
         "protein",
         "fat",
         "carbs",
         "macro",
         "meal",
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snack",
+        "recipe",
+        "menu",
         "food",
         "ingredient",
+        "nutrition",
         "diet",
     ),
 }
@@ -58,7 +72,10 @@ OFF_TOPIC_KEYWORDS_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
         "programowanie",
         "kod",
         "bitcoin",
-        "kryptowaluty",
+        "kryptowalut",
+        "flaga",
+        "stolica",
+        "panstwo",
     ),
     "en": (
         "weather",
@@ -72,17 +89,28 @@ OFF_TOPIC_KEYWORDS_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
         "code",
         "bitcoin",
         "crypto",
+        "flag",
+        "capital",
+        "country",
     ),
 }
 
 
-def _contains_keyword(message: str, keywords: tuple[str, ...]) -> bool:
-    return any(re.search(rf"\b{re.escape(keyword)}\b", message) for keyword in keywords)
+def _normalize_message(message: str) -> str:
+    normalized = unicodedata.normalize("NFKD", message.lower())
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
-def is_off_topic(message: str, language: str = "pl") -> bool:
-    """Return ``True`` when the prompt looks unrelated to food or nutrition."""
-    normalized_message = message.lower().strip()
+def _tokenize(message: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", _normalize_message(message)))
+
+
+def _contains_keyword(tokens: tuple[str, ...], keywords: tuple[str, ...]) -> bool:
+    return any(token.startswith(keyword) for token in tokens for keyword in keywords)
+
+
+def has_nutrition_signal(message: str, language: str = "pl") -> bool:
+    normalized_message = message.strip()
     if not normalized_message:
         return False
 
@@ -91,15 +119,36 @@ def is_off_topic(message: str, language: str = "pl") -> bool:
         language_key,
         NUTRITION_KEYWORDS_BY_LANGUAGE["en"],
     )
+    tokens = _tokenize(normalized_message)
+    if not tokens:
+        return False
+
+    return _contains_keyword(tokens, nutrition_keywords)
+
+
+def is_off_topic(message: str, language: str = "pl") -> bool:
+    """Return ``True`` when the prompt looks unrelated to food or nutrition."""
+    normalized_message = message.strip()
+    if not normalized_message:
+        return False
+
+    language_key = language.lower()
     off_topic_keywords = OFF_TOPIC_KEYWORDS_BY_LANGUAGE.get(
         language_key,
         OFF_TOPIC_KEYWORDS_BY_LANGUAGE["en"],
     )
-
-    if _contains_keyword(normalized_message, nutrition_keywords):
+    tokens = _tokenize(normalized_message)
+    if not tokens:
         return False
 
-    return _contains_keyword(normalized_message, off_topic_keywords)
+    if has_nutrition_signal(normalized_message, language):
+        return False
+
+    if _contains_keyword(tokens, off_topic_keywords):
+        return True
+
+    # Strict domain gate: if the message has no food/nutrition signal, reject it.
+    return True
 
 
 def check_allowed(message: str) -> None:
