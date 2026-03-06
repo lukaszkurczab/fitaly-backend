@@ -139,7 +139,7 @@ def parse_ingredients_reply(raw: str) -> list[AnalyzedIngredient]:
 
 async def ask_chat(
     message: str,
-    model: str = "gpt-3.5-turbo",
+    model: str = "gpt-4o-mini",
     timeout: int = 30,
 ) -> str:
     """Send one user message to OpenAI and return the assistant reply."""

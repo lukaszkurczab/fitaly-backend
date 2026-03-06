@@ -226,6 +226,18 @@ def _resolve_profile_summary(context: dict[str, Any], language: str) -> str:
     return _compact_profile(_as_dict(context.get("profile")), language)
 
 
+def _off_topic_reply(language: str) -> str:
+    if language.lower().startswith("pl"):
+        return (
+            "To pytanie jest poza zakresem tego czatu. "
+            "Moge pomoc tylko w tematach zywienia, diety i posilkow."
+        )
+    return (
+        "This question is out of scope for this chat. "
+        "I can only help with food, nutrition, and diet topics."
+    )
+
+
 def build_chat_prompt(
     message: str,
     context: dict[str, Any] | None,
@@ -242,11 +254,16 @@ def build_chat_prompt(
     profile_summary = _resolve_profile_summary(normalized_context, language)
     history_lines = _history_to_lines(normalized_context.get("history"))
     history_summary = " | ".join(history_lines) if history_lines else "none"
+    off_topic_reply = _off_topic_reply(language)
 
     sections = [
         "You are a food and nutrition assistant.",
         f"Reply in {language}.",
         "Stay within food, nutrition, meals, calories, macros, and healthy eating guidance.",
+        f"If the user asks about non-diet topics, do not answer that topic and reply exactly with: {off_topic_reply}",
+        "Use meal history as context, not as a strict template. Do not blindly repeat previously eaten meals unless the user asks for that.",
+        "When suggesting meals, prefer practical healthier options and include short rationale (protein, fiber, calories/macros) when useful.",
+        "If key constraints are missing for a recommendation, ask one short clarifying question before proposing a specific plan.",
         "Keep the answer practical and safe. Do not provide medical diagnosis or treatment advice.",
         f"TONE={tone}",
         f"FOCUS={focus}",

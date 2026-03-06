@@ -28,7 +28,7 @@ def test_ask_chat_returns_first_reply_from_async_openai_client(mocker: MockerFix
 
     async_client.assert_called_once_with(api_key="test-key", timeout=30)
     create.assert_awaited_once_with(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": "Hello"}],
         temperature=0.2,
     )

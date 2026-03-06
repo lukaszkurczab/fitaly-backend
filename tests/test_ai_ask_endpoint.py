@@ -8,7 +8,6 @@ from pytest_mock import MockerFixture
 from app.core.config import settings
 from app.core.exceptions import (
     AiUsageLimitExceededError,
-    ContentBlockedError,
     FirestoreServiceError,
     OpenAIServiceError,
 )
@@ -32,12 +31,11 @@ def test_post_ai_ask_returns_reply_and_logs_gateway_document(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    check_allowed = mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     evaluate_request = mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
             "decision": "FORWARD",
-            "reason": "OK",
+            "reason": "PASS_THROUGH",
             "score": 1.0,
             "credit_cost": 1.0,
         },
@@ -82,7 +80,6 @@ def test_post_ai_ask_returns_reply_and_logs_gateway_document(
         "version": settings.VERSION,
         "persistence": "backend_owned",
     }
-    check_allowed.assert_called_once_with("Suggest a dinner")
     evaluate_request.assert_called_once_with("abc", "chat", "Suggest a dinner", language="pl")
     sanitize_context.assert_called_once_with({"weightKg": 78})
     sanitize_request.assert_called_once_with("Suggest a dinner", {"weightKg": "70-80"})
@@ -98,7 +95,7 @@ def test_post_ai_ask_returns_reply_and_logs_gateway_document(
     logged_doc = collection_ref.add.call_args.args[0]
     assert logged_doc["userId"] == "abc"
     assert logged_doc["decision"] == "FORWARD"
-    assert logged_doc["reason"] == "OK"
+    assert logged_doc["reason"] == "PASS_THROUGH"
     assert logged_doc["creditCost"] == 1.0
     assert logged_doc["length"] == len("Suggest a dinner")
     assert logged_doc["actionType"] == "chat"
@@ -114,35 +111,15 @@ def test_post_ai_ask_requires_required_fields(auth_headers) -> None:
     assert response.status_code == 422
 
 
-def test_post_ai_ask_returns_403_when_content_is_blocked(
-    mocker: MockerFixture,
-    auth_headers,
-) -> None:
-    mocker.patch(
-        "app.api.routes.ai.content_guard_service.check_allowed",
-        side_effect=ContentBlockedError("blocked"),
-    )
-
-    response = client.post(
-        "/api/v1/ai/ask",
-        json={"message": "therapy advice"},
-        headers=auth_headers("abc"),
-    )
-
-    assert response.status_code == 403
-    assert response.json() == {"detail": "blocked"}
-
-
 def test_post_ai_ask_returns_429_when_limit_is_exceeded(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
             "decision": "FORWARD",
-            "reason": "OK",
+            "reason": "PASS_THROUGH",
             "score": 1.0,
             "credit_cost": 1.0,
         },
@@ -174,12 +151,11 @@ def test_post_ai_ask_returns_500_when_firestore_fails(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
             "decision": "FORWARD",
-            "reason": "OK",
+            "reason": "PASS_THROUGH",
             "score": 1.0,
             "credit_cost": 1.0,
         },
@@ -211,12 +187,11 @@ def test_post_ai_ask_returns_503_when_openai_fails(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
             "decision": "FORWARD",
-            "reason": "OK",
+            "reason": "PASS_THROUGH",
             "score": 1.0,
             "credit_cost": 1.0,
         },
@@ -253,18 +228,17 @@ def test_post_ai_ask_returns_503_when_openai_fails(
     assert response.json() == {"detail": "AI service unavailable"}
 
 
-def test_post_ai_ask_rejects_off_topic_request_with_partial_cost_and_logs_document(
+def test_post_ai_ask_forwards_off_topic_like_message_to_openai(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
-            "decision": "REJECT",
-            "reason": "OFF_TOPIC",
-            "score": -0.8,
-            "credit_cost": 0.2,
+            "decision": "FORWARD",
+            "reason": "PASS_THROUGH",
+            "score": 1.0,
+            "credit_cost": 1.0,
         },
     )
     mocker.patch(
@@ -275,12 +249,19 @@ def test_post_ai_ask_rejects_off_topic_request_with_partial_cost_and_logs_docume
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="sanitized prompt",
     )
+    mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
     increment_usage = mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
-        return_value=(0.2, 20, "2026-03-02", 19.8),
+        return_value=(1.0, 20, "2026-03-02", 19.0),
     )
     _firestore_client, collection_ref = _mock_gateway_firestore(mocker)
-    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+    ask_chat = mocker.patch(
+        "app.api.routes.ai.openai_service.ask_chat",
+        return_value="To pytanie jest poza zakresem tego czatu. Moge pomoc tylko w tematach zywienia, diety i posilkow.",
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -288,30 +269,29 @@ def test_post_ai_ask_rejects_off_topic_request_with_partial_cost_and_logs_docume
         headers=auth_headers("abc"),
     )
 
-    assert response.status_code == 400
-    assert response.json() == {"reason": "OFF_TOPIC", "credit_cost": 0.2}
-    increment_usage.assert_called_once_with("abc", cost=0.2)
-    ask_chat.assert_not_called()
+    assert response.status_code == 200
+    assert response.json()["reply"].startswith("To pytanie jest poza zakresem tego czatu.")
+    increment_usage.assert_called_once_with("abc", cost=1.0)
+    ask_chat.assert_called_once_with("chat prompt")
     collection_ref.add.assert_called_once()
     logged_doc = collection_ref.add.call_args.args[0]
     assert logged_doc["userId"] == "abc"
-    assert logged_doc["decision"] == "REJECT"
-    assert logged_doc["reason"] == "OFF_TOPIC"
-    assert logged_doc["creditCost"] == 0.2
+    assert logged_doc["decision"] == "FORWARD"
+    assert logged_doc["reason"] == "PASS_THROUGH"
+    assert logged_doc["creditCost"] == 1.0
 
 
-def test_post_ai_ask_returns_local_answer_when_gateway_handles_request(
+def test_post_ai_ask_forwards_simple_calorie_query_to_openai(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
-            "decision": "LOCAL_ANSWER",
-            "reason": "LOCAL_PRODUCT_MATCH",
-            "score": 0.9,
-            "credit_cost": 0.5,
+            "decision": "FORWARD",
+            "reason": "PASS_THROUGH",
+            "score": 1.0,
+            "credit_cost": 1.0,
         },
     )
     mocker.patch(
@@ -322,12 +302,19 @@ def test_post_ai_ask_returns_local_answer_when_gateway_handles_request(
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="sanitized prompt",
     )
+    mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
     increment_usage = mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
-        return_value=(0.5, 20, "2026-03-02", 19.5),
+        return_value=(1.0, 20, "2026-03-02", 19.0),
     )
     _mock_gateway_firestore(mocker)
-    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+    ask_chat = mocker.patch(
+        "app.api.routes.ai.openai_service.ask_chat",
+        return_value="Jablko (100 g) ma okolo 52 kcal.",
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -337,22 +324,21 @@ def test_post_ai_ask_returns_local_answer_when_gateway_handles_request(
 
     assert response.status_code == 200
     assert response.json() == {
-        "reply": "To zapytanie zostalo obsluzone lokalnie.",
-        "usageCount": 0.5,
-        "remaining": 19.5,
+        "reply": "Jablko (100 g) ma okolo 52 kcal.",
+        "usageCount": 1.0,
+        "remaining": 19.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
         "persistence": "backend_owned",
     }
-    increment_usage.assert_called_once_with("abc", cost=0.5)
-    ask_chat.assert_not_called()
+    increment_usage.assert_called_once_with("abc", cost=1.0)
+    ask_chat.assert_called_once_with("chat prompt")
 
 
 def test_post_ai_ask_skips_gateway_evaluation_when_feature_flag_is_disabled(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     evaluate_request = mocker.patch("app.api.routes.ai.ai_gateway_service.evaluate_request")
     _mock_gateway_firestore(mocker)
     mocker.patch(
@@ -393,7 +379,6 @@ def test_post_ai_ask_bypasses_gateway_for_non_chat_action_type(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     evaluate_request = mocker.patch("app.api.routes.ai.ai_gateway_service.evaluate_request")
     _firestore_client, collection_ref = _mock_gateway_firestore(mocker)
     mocker.patch(
@@ -439,20 +424,19 @@ def test_post_ai_ask_uses_uid_from_token(
     auth_headers,
     mocker: MockerFixture,
 ) -> None:
-    mocker.patch("app.api.routes.ai.content_guard_service.check_allowed")
     mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
-            "decision": "LOCAL_ANSWER",
-            "reason": "LOCAL_PRODUCT_MATCH",
-            "score": 0.9,
-            "credit_cost": 0.5,
+            "decision": "FORWARD",
+            "reason": "PASS_THROUGH",
+            "score": 1.0,
+            "credit_cost": 1.0,
         },
     )
     increment_usage = mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
-        return_value=(0.5, 20, "2026-03-02", 19.5),
+        return_value=(1.0, 20, "2026-03-02", 19.0),
     )
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_context",
@@ -462,6 +446,14 @@ def test_post_ai_ask_uses_uid_from_token(
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="prompt",
     )
+    mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
+    mocker.patch(
+        "app.api.routes.ai.openai_service.ask_chat",
+        return_value="Try grilled chicken with rice.",
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -470,4 +462,4 @@ def test_post_ai_ask_uses_uid_from_token(
     )
 
     assert response.status_code == 200
-    increment_usage.assert_called_once_with("other-user", cost=0.5)
+    increment_usage.assert_called_once_with("other-user", cost=1.0)

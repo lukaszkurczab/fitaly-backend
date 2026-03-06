@@ -2,8 +2,7 @@ import logging
 from time import perf_counter
 from typing import TypedDict
 
-from fastapi import APIRouter, Depends, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends
 
 from app.api.deps import (
     AuthenticatedUser,
@@ -11,14 +10,12 @@ from app.api.deps import (
 )
 from app.api.http_errors import (
     raise_database_error,
-    raise_forbidden,
     raise_service_unavailable,
     raise_too_many_requests,
 )
 from app.core.config import settings
 from app.core.exceptions import (
     AiUsageLimitExceededError,
-    ContentBlockedError,
     FirestoreServiceError,
     OpenAIServiceError,
 )
@@ -39,7 +36,6 @@ from app.services import (
     ai_gateway_logger,
     ai_gateway_service,
     ai_usage_service,
-    content_guard_service,
     openai_service,
     sanitization_service,
     text_meal_service,
@@ -73,13 +69,6 @@ def _resolve_action_type(request: AiAskRequest) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return "chat"
-
-
-def _get_local_answer(message: str, language: str) -> str:
-    del message
-    if language.lower() == "en":
-        return "This request was handled locally."
-    return "To zapytanie zostalo obsluzone lokalnie."
 
 
 async def _log_gateway_result(
@@ -170,14 +159,9 @@ def _build_ai_ask_response(
 async def ask_ai(
     request: AiAskRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
-) -> AiAskResponse | JSONResponse:
+) -> AiAskResponse:
     started_at = perf_counter()
     user_id = current_user.uid
-
-    try:
-        content_guard_service.check_allowed(request.message)
-    except ContentBlockedError as exc:
-        raise_forbidden(exc, detail=str(exc))
 
     language = _resolve_language(request)
     action_type = _resolve_action_type(request)
@@ -221,39 +205,6 @@ async def ask_ai(
         cost=gateway_result["credit_cost"],
         include_cost_kwarg=True,
     )
-
-    if gateway_result["decision"] == "REJECT":
-        await _log_gateway_result(
-            user_id=user_id,
-            action_type=action_type,
-            message=request.message,
-            language=language,
-            result=gateway_result,
-            execution_time_ms=(perf_counter() - started_at) * 1000,
-        )
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={
-                "reason": gateway_result["reason"],
-                "credit_cost": gateway_result["credit_cost"],
-            },
-        )
-
-    if gateway_result["decision"] == "LOCAL_ANSWER":
-        await _log_gateway_result(
-            user_id=user_id,
-            action_type=action_type,
-            message=request.message,
-            language=language,
-            result=gateway_result,
-            execution_time_ms=(perf_counter() - started_at) * 1000,
-        )
-        return _build_ai_ask_response(
-            reply=_get_local_answer(request.message, language),
-            usage_count=usage_count,
-            remaining=remaining,
-            date_key=date_key,
-        )
 
     try:
         reply = await openai_service.ask_chat(prompt_message)
