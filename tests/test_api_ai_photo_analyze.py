@@ -55,6 +55,7 @@ def test_post_ai_photo_analyze_returns_ingredients_and_usage(
             }
         ],
         "usageCount": 2.0,
+        "dailyLimit": 20,
         "remaining": 18.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
@@ -82,6 +83,10 @@ def test_post_ai_photo_analyze_returns_429_when_limit_is_exceeded(
         "app.api.routes.ai.ai_usage_service.increment_usage",
         side_effect=AiUsageLimitExceededError("limit"),
     )
+    mocker.patch(
+        "app.api.routes.ai.ai_usage_service.get_usage",
+        return_value=(20.0, 20, "2026-03-02"),
+    )
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
@@ -90,7 +95,18 @@ def test_post_ai_photo_analyze_returns_429_when_limit_is_exceeded(
     )
 
     assert response.status_code == 429
-    assert response.json() == {"detail": "AI usage limit exceeded"}
+    assert response.json() == {
+        "detail": {
+            "message": "AI usage limit exceeded",
+            "code": "AI_USAGE_LIMIT_EXCEEDED",
+            "usage": {
+                "dateKey": "2026-03-02",
+                "usageCount": 20.0,
+                "dailyLimit": 20,
+                "remaining": 0.0,
+            },
+        }
+    }
 
 
 def test_post_ai_photo_analyze_returns_500_when_firestore_fails(
@@ -124,6 +140,10 @@ def test_post_ai_photo_analyze_returns_503_when_openai_fails(
         "app.api.routes.ai.openai_service.analyze_photo",
         side_effect=OpenAIServiceError("unavailable"),
     )
+    refund_usage = mocker.patch(
+        "app.api.routes.ai.ai_usage_service.decrement_usage",
+        return_value=(0.0, 20, "2026-03-02", 20.0),
+    )
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
@@ -133,6 +153,7 @@ def test_post_ai_photo_analyze_returns_503_when_openai_fails(
 
     assert response.status_code == 503
     assert response.json() == {"detail": "AI service unavailable"}
+    refund_usage.assert_called_once_with("abc", cost=1.0, date_key="2026-03-02")
 
 
 def test_post_ai_photo_analyze_uses_uid_from_token(

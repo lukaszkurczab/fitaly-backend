@@ -2,7 +2,7 @@ import logging
 from time import perf_counter
 from typing import TypedDict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import (
     AuthenticatedUser,
@@ -11,7 +11,6 @@ from app.api.deps import (
 from app.api.http_errors import (
     raise_database_error,
     raise_service_unavailable,
-    raise_too_many_requests,
 )
 from app.core.config import settings
 from app.core.exceptions import (
@@ -47,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 class AiResponseFields(TypedDict):
     usageCount: float
+    dailyLimit: int
     remaining: float
     dateKey: str
     version: str
@@ -105,34 +105,91 @@ async def _increment_usage_or_raise(
     *,
     cost: float = 1.0,
     include_cost_kwarg: bool = False,
-) -> tuple[float, str, float]:
+) -> tuple[float, int, str, float]:
     try:
         if include_cost_kwarg:
-            usage_count, _daily_limit, date_key, remaining = (
+            usage_count, daily_limit, date_key, remaining = (
                 await ai_usage_service.increment_usage(user_id, cost=cost)
             )
         else:
-            usage_count, _daily_limit, date_key, remaining = (
+            usage_count, daily_limit, date_key, remaining = (
                 await ai_usage_service.increment_usage(user_id)
             )
-    except AiUsageLimitExceededError as exc:
-        raise_too_many_requests(exc, detail="AI usage limit exceeded")
+    except AiUsageLimitExceededError:
+        try:
+            usage_count, daily_limit, date_key = await ai_usage_service.get_usage(user_id)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "message": "AI usage limit exceeded",
+                    "code": "AI_USAGE_LIMIT_EXCEEDED",
+                    "usage": ai_usage_service.build_usage_status(
+                        usage_count=usage_count,
+                        daily_limit=daily_limit,
+                        date_key=date_key,
+                    ),
+                },
+            )
+        except FirestoreServiceError as exc:
+            raise_database_error(exc)
     except FirestoreServiceError as exc:
         raise_database_error(exc)
 
-    return usage_count, date_key, remaining
+    return usage_count, daily_limit, date_key, remaining
+
+
+async def _refund_usage_after_ai_failure(
+    *,
+    user_id: str,
+    date_key: str,
+    cost: float,
+    endpoint: str,
+) -> None:
+    try:
+        usage_count, _daily_limit, _refunded_date_key, remaining = (
+            await ai_usage_service.decrement_usage(
+                user_id,
+                cost=cost,
+                date_key=date_key,
+            )
+        )
+        logger.info(
+            "Refunded AI usage after upstream failure.",
+            extra={
+                "user_id": user_id,
+                "endpoint": endpoint,
+                "cost": cost,
+                "usage_count": usage_count,
+                "remaining": remaining,
+                "date_key": date_key,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "Failed to refund AI usage after upstream failure.",
+            extra={
+                "user_id": user_id,
+                "endpoint": endpoint,
+                "cost": cost,
+                "date_key": date_key,
+            },
+        )
 
 
 def _build_ai_response_fields(
     *,
     usage_count: float,
+    daily_limit: int,
     remaining: float,
     date_key: str,
 ) -> AiResponseFields:
     return {
-        "usageCount": usage_count,
+        **ai_usage_service.build_usage_status(
+            usage_count=usage_count,
+            daily_limit=daily_limit,
+            date_key=date_key,
+        ),
         "remaining": remaining,
-        "dateKey": date_key,
         "version": settings.VERSION,
         "persistence": BACKEND_OWNED_PERSISTENCE,
     }
@@ -142,6 +199,7 @@ def _build_ai_ask_response(
     *,
     reply: str,
     usage_count: float,
+    daily_limit: int,
     remaining: float,
     date_key: str,
 ) -> AiAskResponse:
@@ -149,6 +207,7 @@ def _build_ai_ask_response(
         reply=reply,
         **_build_ai_response_fields(
             usage_count=usage_count,
+            daily_limit=daily_limit,
             remaining=remaining,
             date_key=date_key,
         ),
@@ -185,6 +244,25 @@ async def ask_ai(
             "score": 1.0,
             "credit_cost": 1.0,
         }
+    if gateway_result["decision"] != "FORWARD":
+        await _log_gateway_result(
+            user_id=user_id,
+            action_type=action_type,
+            message=request.message,
+            language=language,
+            result=gateway_result,
+            response_time_ms=(perf_counter() - started_at) * 1000,
+            execution_time_ms=(perf_counter() - started_at) * 1000,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "AI request blocked by gateway",
+                "code": "AI_GATEWAY_BLOCKED",
+                "reason": gateway_result["reason"],
+                "score": gateway_result["score"],
+            },
+        )
 
     sanitized_context = sanitization_service.sanitize_context(request.context)
     sanitized_message = sanitization_service.sanitize_request(
@@ -200,7 +278,7 @@ async def ask_ai(
         else sanitized_message
     )
 
-    usage_count, date_key, remaining = await _increment_usage_or_raise(
+    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(
         user_id,
         cost=gateway_result["credit_cost"],
         include_cost_kwarg=True,
@@ -209,6 +287,12 @@ async def ask_ai(
     try:
         reply = await openai_service.ask_chat(prompt_message)
     except OpenAIServiceError as exc:
+        await _refund_usage_after_ai_failure(
+            user_id=user_id,
+            date_key=date_key,
+            cost=gateway_result["credit_cost"],
+            endpoint="/ai/ask",
+        )
         raise_service_unavailable(exc, detail="AI service unavailable")
 
     await _log_gateway_result(
@@ -224,6 +308,7 @@ async def ask_ai(
     return _build_ai_ask_response(
         reply=reply,
         usage_count=usage_count,
+        daily_limit=daily_limit,
         remaining=remaining,
         date_key=date_key,
     )
@@ -235,7 +320,7 @@ async def analyze_photo_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiPhotoAnalyzeResponse:
     user_id = current_user.uid
-    usage_count, date_key, remaining = await _increment_usage_or_raise(user_id)
+    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(user_id)
 
     try:
         ingredients = await openai_service.analyze_photo(
@@ -243,12 +328,19 @@ async def analyze_photo_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
+        await _refund_usage_after_ai_failure(
+            user_id=user_id,
+            date_key=date_key,
+            cost=1.0,
+            endpoint="/ai/photo/analyze",
+        )
         raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiPhotoAnalyzeResponse(
         ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
         **_build_ai_response_fields(
             usage_count=usage_count,
+            daily_limit=daily_limit,
             remaining=remaining,
             date_key=date_key,
         ),
@@ -261,7 +353,7 @@ async def analyze_text_meal_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiTextMealAnalyzeResponse:
     user_id = current_user.uid
-    usage_count, date_key, remaining = await _increment_usage_or_raise(user_id)
+    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(user_id)
 
     try:
         ingredients = await text_meal_service.analyze_text_meal(
@@ -269,12 +361,19 @@ async def analyze_text_meal_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
+        await _refund_usage_after_ai_failure(
+            user_id=user_id,
+            date_key=date_key,
+            cost=1.0,
+            endpoint="/ai/text-meal/analyze",
+        )
         raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiTextMealAnalyzeResponse(
         ingredients=[AiTextMealIngredient(**ingredient) for ingredient in ingredients],
         **_build_ai_response_fields(
             usage_count=usage_count,
+            daily_limit=daily_limit,
             remaining=remaining,
             date_key=date_key,
         ),

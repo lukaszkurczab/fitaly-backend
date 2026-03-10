@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 
 from app.schemas.ai_common import AiPersistence
+from app.schemas.ai_usage import AiUsageStatus
 
 
 class AiTextMealPayload(BaseModel):
@@ -25,10 +26,7 @@ class AiTextMealIngredient(BaseModel):
     unit: str | None = None
 
 
-class AiTextMealAnalyzeResponse(BaseModel):
+class AiTextMealAnalyzeResponse(AiUsageStatus):
     ingredients: list[AiTextMealIngredient]
-    usageCount: float
-    remaining: float
-    dateKey: str
     version: str
     persistence: AiPersistence

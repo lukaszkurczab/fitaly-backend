@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from app.schemas.ai_common import AiPersistence
+from app.schemas.ai_usage import AiUsageStatus
 
 
 class AiPhotoAnalyzeRequest(BaseModel):
@@ -17,10 +18,7 @@ class AiPhotoIngredient(BaseModel):
     unit: str | None = None
 
 
-class AiPhotoAnalyzeResponse(BaseModel):
+class AiPhotoAnalyzeResponse(AiUsageStatus):
     ingredients: list[AiPhotoIngredient]
-    usageCount: float
-    remaining: float
-    dateKey: str
     version: str
     persistence: AiPersistence

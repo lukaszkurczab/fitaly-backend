@@ -7,6 +7,7 @@ transaction so concurrent requests cannot overrun the configured daily limit.
 
 from datetime import datetime, timezone
 import logging
+from typing import TypedDict
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "ai_usage"
 USAGE_PRECISION = 4
+
+
+class UsageStatus(TypedDict):
+    dateKey: str
+    usageCount: float
+    dailyLimit: int
+    remaining: float
 
 
 def get_date_key() -> str:
@@ -46,6 +54,21 @@ def _coerce_usage_count(value: object) -> float:
 
 def _coerce_date_key(value: object, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
+
+
+def build_usage_status(
+    *,
+    usage_count: float,
+    daily_limit: int,
+    date_key: str,
+) -> UsageStatus:
+    normalized_usage = _normalize_usage_count(usage_count)
+    return {
+        "dateKey": date_key,
+        "usageCount": normalized_usage,
+        "dailyLimit": daily_limit,
+        "remaining": _normalize_usage_count(daily_limit - normalized_usage),
+    }
 
 
 async def get_usage(user_id: str) -> tuple[float, int, str]:
@@ -106,6 +129,34 @@ def _increment_usage_transaction(
     return usage_count
 
 
+@firestore.transactional
+def _decrement_usage_transaction(
+    transaction: firestore.Transaction,
+    document_ref: firestore.DocumentReference,
+    date_key: str,
+    cost: float,
+) -> float:
+    snapshot = document_ref.get(transaction=transaction)
+    data: dict[str, object] = (snapshot.to_dict() or {}) if snapshot.exists else {}
+    stored_date_key = _coerce_date_key(data.get("dateKey"), date_key)
+
+    if not snapshot.exists or stored_date_key != date_key:
+        return 0.0
+
+    current_usage = _normalize_usage_count(_coerce_usage_count(data.get("usageCount", 0)))
+    next_usage = _normalize_usage_count(max(current_usage - cost, 0.0))
+
+    transaction.set(
+        document_ref,
+        {
+            "usageCount": next_usage,
+            "dateKey": date_key,
+            "updatedAt": datetime.now(timezone.utc),
+        },
+    )
+    return next_usage
+
+
 async def increment_usage(
     user_id: str,
     cost: float = 1.0,
@@ -141,3 +192,40 @@ async def increment_usage(
 
     remaining = _normalize_usage_count(daily_limit - usage_count)
     return usage_count, daily_limit, date_key, remaining
+
+
+async def decrement_usage(
+    user_id: str,
+    cost: float = 1.0,
+    *,
+    date_key: str | None = None,
+) -> tuple[float, int, str, float]:
+    """Best-effort usage refund for previously charged AI requests."""
+    normalized_cost = _normalize_usage_count(cost)
+    if normalized_cost <= 0:
+        raise ValueError("Usage cost must be greater than zero.")
+
+    resolved_date_key = date_key or get_date_key()
+    daily_limit = settings.AI_DAILY_LIMIT_FREE
+    document_id = f"{user_id}-{resolved_date_key}"
+
+    client: firestore.Client = get_firestore()
+    document_ref = client.collection(COLLECTION_NAME).document(document_id)
+    transaction = client.transaction()
+
+    try:
+        usage_count = _decrement_usage_transaction(
+            transaction,
+            document_ref,
+            resolved_date_key,
+            normalized_cost,
+        )
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to refund AI usage document.",
+            extra={"user_id": user_id, "date_key": resolved_date_key},
+        )
+        raise FirestoreServiceError("Failed to refund AI usage document.") from exc
+
+    remaining = _normalize_usage_count(daily_limit - usage_count)
+    return usage_count, daily_limit, resolved_date_key, remaining

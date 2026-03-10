@@ -24,10 +24,10 @@ async def get_ai_usage(
             detail="Failed to retrieve usage",
         ) from exc
 
-    remaining = round(daily_limit - usage_count, 4)
     return AiUsageResponse(
-        dateKey=date_key,
-        usageCount=usage_count,
-        dailyLimit=daily_limit,
-        remaining=remaining,
+        **ai_usage_service.build_usage_status(
+            usage_count=usage_count,
+            daily_limit=daily_limit,
+            date_key=date_key,
+        ),
     )

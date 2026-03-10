@@ -209,3 +209,49 @@ def test_increment_usage_sets_fractional_cost_on_new_document(mocker: MockerFixt
     assert date_key == "2026-03-02"
     assert remaining == daily_limit - 0.2
     assert transaction.set_calls[0][1]["usageCount"] == 0.2
+
+
+def test_decrement_usage_reduces_counter(mocker: MockerFixture) -> None:
+    client, _collection_ref, document_ref = _build_client(mocker)
+    transaction = FakeTransaction()
+    document_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"usageCount": 2.0, "dateKey": "2026-03-02"},
+    )
+    client.transaction.return_value = transaction
+
+    mocker.patch("app.services.ai_usage_service.get_firestore", return_value=client)
+    mocker.patch("app.services.ai_usage_service.get_date_key", return_value="2026-03-02")
+
+    usage_count, daily_limit, date_key, remaining = asyncio.run(
+        ai_usage_service.decrement_usage("user-1", cost=0.5)
+    )
+
+    assert usage_count == 1.5
+    assert daily_limit == settings.AI_DAILY_LIMIT_FREE
+    assert date_key == "2026-03-02"
+    assert remaining == daily_limit - 1.5
+    assert transaction.set_calls[0][1]["usageCount"] == 1.5
+
+
+def test_decrement_usage_clamps_counter_at_zero(mocker: MockerFixture) -> None:
+    client, _collection_ref, document_ref = _build_client(mocker)
+    transaction = FakeTransaction()
+    document_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"usageCount": 0.2, "dateKey": "2026-03-02"},
+    )
+    client.transaction.return_value = transaction
+
+    mocker.patch("app.services.ai_usage_service.get_firestore", return_value=client)
+    mocker.patch("app.services.ai_usage_service.get_date_key", return_value="2026-03-02")
+
+    usage_count, daily_limit, _date_key, remaining = asyncio.run(
+        ai_usage_service.decrement_usage("user-1", cost=1.0)
+    )
+
+    assert usage_count == 0.0
+    assert remaining == daily_limit
+    assert transaction.set_calls[0][1]["usageCount"] == 0.0

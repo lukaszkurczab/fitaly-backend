@@ -4,7 +4,7 @@ from typing import Literal, TypedDict
 
 from app.core.config import settings
 
-Decision = Literal["FORWARD"]
+Decision = Literal["FORWARD", "REJECT"]
 
 
 class GatewayResult(TypedDict):

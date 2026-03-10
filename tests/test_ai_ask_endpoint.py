@@ -75,6 +75,7 @@ def test_post_ai_ask_returns_reply_and_logs_gateway_document(
     assert response.json() == {
         "reply": "Try grilled chicken with rice.",
         "usageCount": 4.0,
+        "dailyLimit": 20,
         "remaining": 16.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
@@ -136,6 +137,10 @@ def test_post_ai_ask_returns_429_when_limit_is_exceeded(
         "app.api.routes.ai.ai_usage_service.increment_usage",
         side_effect=AiUsageLimitExceededError("limit"),
     )
+    mocker.patch(
+        "app.api.routes.ai.ai_usage_service.get_usage",
+        return_value=(20.0, 20, "2026-03-02"),
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -144,7 +149,18 @@ def test_post_ai_ask_returns_429_when_limit_is_exceeded(
     )
 
     assert response.status_code == 429
-    assert response.json() == {"detail": "AI usage limit exceeded"}
+    assert response.json() == {
+        "detail": {
+            "message": "AI usage limit exceeded",
+            "code": "AI_USAGE_LIMIT_EXCEEDED",
+            "usage": {
+                "dateKey": "2026-03-02",
+                "usageCount": 20.0,
+                "dailyLimit": 20,
+                "remaining": 0.0,
+            },
+        }
+    }
 
 
 def test_post_ai_ask_returns_500_when_firestore_fails(
@@ -217,6 +233,10 @@ def test_post_ai_ask_returns_503_when_openai_fails(
         "app.api.routes.ai.openai_service.ask_chat",
         side_effect=OpenAIServiceError("unavailable"),
     )
+    refund_usage = mocker.patch(
+        "app.api.routes.ai.ai_usage_service.decrement_usage",
+        return_value=(0.0, 20, "2026-03-02", 20.0),
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -226,6 +246,43 @@ def test_post_ai_ask_returns_503_when_openai_fails(
 
     assert response.status_code == 503
     assert response.json() == {"detail": "AI service unavailable"}
+    refund_usage.assert_called_once_with("abc", cost=1.0, date_key="2026-03-02")
+
+
+def test_post_ai_ask_returns_400_when_gateway_blocks_request(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    mocker.patch(
+        "app.api.routes.ai.ai_gateway_service.evaluate_request",
+        return_value={
+            "decision": "REJECT",
+            "reason": "OFF_TOPIC",
+            "score": 0.12,
+            "credit_cost": 0.2,
+        },
+    )
+    increment_usage = mocker.patch("app.api.routes.ai.ai_usage_service.increment_usage")
+    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+
+    response = client.post(
+        "/api/v1/ai/ask",
+        json={"message": "Jaka bedzie pogoda jutro?"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": {
+            "message": "AI request blocked by gateway",
+            "code": "AI_GATEWAY_BLOCKED",
+            "reason": "OFF_TOPIC",
+            "score": 0.12,
+        }
+    }
+    increment_usage.assert_not_called()
+    ask_chat.assert_not_called()
 
 
 def test_post_ai_ask_forwards_off_topic_like_message_to_openai(
@@ -326,6 +383,7 @@ def test_post_ai_ask_forwards_simple_calorie_query_to_openai(
     assert response.json() == {
         "reply": "Jablko (100 g) ma okolo 52 kcal.",
         "usageCount": 1.0,
+        "dailyLimit": 20,
         "remaining": 19.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
