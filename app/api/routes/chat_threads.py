@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_database_error
-from app.core.exceptions import FirestoreServiceError
 from app.schemas.chat_thread import (
     ChatMessageItem,
     ChatMessagePersistRequest,
@@ -22,14 +20,11 @@ async def get_chat_threads_me(
     beforeUpdatedAt: int | None = Query(default=None, ge=0),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> ChatThreadsPageResponse:
-    try:
-        items, next_before_updated_at = await chat_thread_service.list_threads(
-            current_user.uid,
-            limit_count=limit,
-            before_updated_at=beforeUpdatedAt,
-        )
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    items, next_before_updated_at = await chat_thread_service.list_threads(
+        current_user.uid,
+        limit_count=limit,
+        before_updated_at=beforeUpdatedAt,
+    )
 
     return ChatThreadsPageResponse(
         items=[ChatThreadItem.model_validate(item) for item in items],
@@ -47,15 +42,12 @@ async def get_chat_thread_messages_me(
     beforeCreatedAt: int | None = Query(default=None, ge=0),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> ChatMessagesPageResponse:
-    try:
-        items, next_before_created_at = await chat_thread_service.list_messages(
-            current_user.uid,
-            threadId,
-            limit_count=limit,
-            before_created_at=beforeCreatedAt,
-        )
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    items, next_before_created_at = await chat_thread_service.list_messages(
+        current_user.uid,
+        threadId,
+        limit_count=limit,
+        before_created_at=beforeCreatedAt,
+    )
 
     return ChatMessagesPageResponse(
         items=[ChatMessageItem.model_validate(item) for item in items],
@@ -72,18 +64,15 @@ async def persist_chat_thread_message_me(
     request: ChatMessagePersistRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> ChatMessagePersistResponse:
-    try:
-        await chat_thread_service.persist_message(
-            current_user.uid,
-            threadId,
-            message_id=request.messageId,
-            role=request.role,
-            content=request.content,
-            created_at=request.createdAt,
-            title=request.title,
-        )
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    await chat_thread_service.persist_message(
+        current_user.uid,
+        threadId,
+        message_id=request.messageId,
+        role=request.role,
+        content=request.content,
+        created_at=request.createdAt,
+        title=request.title,
+    )
 
     return ChatMessagePersistResponse(
         threadId=threadId,

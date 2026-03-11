@@ -62,11 +62,6 @@ async def _claim_username_for_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username unavailable",
         ) from exc
-    except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
 
     return UsernameClaimResponse(
         username=normalized_username,

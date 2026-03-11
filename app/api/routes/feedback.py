@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request, raise_database_error
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request
 from app.schemas.feedback import FeedbackCreateResponse, FeedbackItem
 from app.services import feedback_service
 from app.services.feedback_service import FeedbackValidationError
@@ -35,8 +34,6 @@ async def create_feedback_me(
         )
     except FeedbackValidationError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return FeedbackCreateResponse(
         feedback=FeedbackItem.model_validate(feedback),

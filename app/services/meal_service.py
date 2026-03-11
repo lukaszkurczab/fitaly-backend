@@ -18,7 +18,7 @@ from app.db.firebase import (
     get_storage_bucket,
     get_storage_bucket_name,
 )
-from app.services import streak_service
+from app.services import meal_storage, streak_service
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
+def coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
     candidate = str(value or fallback or "").strip()
     if not candidate:
         raise ValueError("Missing ISO timestamp")
@@ -134,27 +134,6 @@ def _normalize_totals(value: Any, ingredients: list[dict[str, Any]]) -> dict[str
     }
 
 
-def _build_cursor(field_value: str, document_id: str) -> str:
-    return f"{field_value}|{document_id}"
-
-
-def _parse_cursor(value: str | None) -> tuple[str, str | None] | None:
-    if value is None:
-        return None
-
-    normalized = value.strip()
-    if not normalized:
-        return None
-
-    if "|" not in normalized:
-        return normalized, None
-
-    field_value, document_id = normalized.rsplit("|", 1)
-    field_value = field_value.strip()
-    document_id = document_id.strip()
-    if not field_value:
-        raise ValueError("Invalid cursor")
-    return field_value, document_id or None
 
 
 def _meals_collection(user_id: str) -> firestore.CollectionReference:
@@ -194,7 +173,7 @@ def _normalize_source(value: Any) -> str | None:
     return source if source in MEAL_SOURCES else None
 
 
-def _normalize_meal_payload(
+def normalize_meal_payload(
     user_id: str,
     payload: dict[str, Any],
     *,
@@ -209,9 +188,9 @@ def _normalize_meal_payload(
         raise ValueError("Missing meal identifier")
 
     ingredients = _normalize_ingredients(payload.get("ingredients"))
-    updated_at = _coerce_iso8601(payload.get("updatedAt"), fallback=fallback_updated_at or now_iso)
-    timestamp = _coerce_iso8601(payload.get("timestamp"), fallback=updated_at)
-    created_at = _coerce_iso8601(payload.get("createdAt"), fallback=timestamp)
+    updated_at = coerce_iso8601(payload.get("updatedAt"), fallback=fallback_updated_at or now_iso)
+    timestamp = coerce_iso8601(payload.get("timestamp"), fallback=updated_at)
+    created_at = coerce_iso8601(payload.get("createdAt"), fallback=timestamp)
     day_key = _as_string(payload.get("dayKey")) or fallback_day_key
     deleted = _as_bool(payload.get("deleted"))
 
@@ -242,7 +221,7 @@ def _normalize_meal_snapshot(
     snapshot: firestore.DocumentSnapshot,
 ) -> dict[str, Any]:
     data = dict(snapshot.to_dict() or {})
-    return _normalize_meal_payload(
+    return normalize_meal_payload(
         user_id,
         data,
         fallback_cloud_id=snapshot.id,
@@ -315,7 +294,7 @@ async def list_history(
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
         )
-        parsed_cursor = _parse_cursor(before_cursor)
+        parsed_cursor = meal_storage.parse_cursor(before_cursor)
         if parsed_cursor is not None:
             cursor_timestamp, cursor_document_id = parsed_cursor
             query = (
@@ -330,7 +309,7 @@ async def list_history(
 
     items = [_normalize_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
     next_cursor = (
-        _build_cursor(items[-1]["timestamp"], items[-1]["cloudId"])
+        meal_storage.build_cursor(items[-1]["timestamp"], items[-1]["cloudId"])
         if len(items) == limit_count
         else None
     )
@@ -344,36 +323,18 @@ async def list_changes(
     after_cursor: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     meals_ref = _meals_collection(user_id)
-
-    try:
-        query = meals_ref.order_by("updatedAt", direction=firestore.Query.ASCENDING).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.ASCENDING,
-        )
-        parsed_cursor = _parse_cursor(after_cursor)
-        if parsed_cursor is not None:
-            updated_at, document_id = parsed_cursor
-            query = (
-                query.start_after([updated_at, document_id])
-                if document_id
-                else query.where(filter=FieldFilter("updatedAt", ">", updated_at))
-            )
-        snapshots = list(query.limit(limit_count).stream())
-    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
-        logger.exception("Failed to list meal changes.", extra={"user_id": user_id})
-        raise FirestoreServiceError("Failed to list meal changes.") from exc
-
-    items = [_normalize_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
-    next_cursor = (
-        _build_cursor(items[-1]["updatedAt"], items[-1]["cloudId"])
-        if len(items) == limit_count
-        else None
+    return await meal_storage.list_changes_paginated(
+        meals_ref,
+        user_id,
+        _normalize_meal_snapshot,
+        limit_count=limit_count,
+        after_cursor=after_cursor,
+        error_message="Failed to list meal changes.",
     )
-    return items, next_cursor
 
 
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    normalized_payload = _normalize_meal_payload(user_id, payload)
+    normalized_payload = normalize_meal_payload(user_id, payload)
     meal_ref = _meal_ref(user_id, normalized_payload["cloudId"])
 
     try:
@@ -407,12 +368,12 @@ async def mark_deleted(
     updated_at: str,
 ) -> dict[str, Any]:
     meal_ref = _meal_ref(user_id, meal_id)
-    normalized_updated_at = _coerce_iso8601(updated_at)
+    normalized_updated_at = coerce_iso8601(updated_at)
 
     try:
         snapshot = meal_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-        payload = _normalize_meal_payload(
+        payload = normalize_meal_payload(
             user_id,
             {
                 **existing,
@@ -450,7 +411,6 @@ async def mark_deleted(
 
 
 async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:
-    bucket = get_storage_bucket()
     extension = "jpg"
     if upload.filename and "." in upload.filename:
         maybe_extension = upload.filename.rsplit(".", 1)[-1].strip().lower()
@@ -458,32 +418,12 @@ async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:
             extension = maybe_extension
 
     image_id = str(uuid4())
-    object_path = f"meals/{user_id}/{image_id}.{extension}"
-    token = str(uuid4())
-    blob = bucket.blob(object_path)
-
-    try:
-        upload.file.seek(0)
-        blob.metadata = {"firebaseStorageDownloadTokens": token}
-        blob.upload_from_file(
-            upload.file,
-            content_type=upload.content_type or "image/jpeg",
-        )
-        blob.patch()
-    except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
-        logger.exception("Failed to upload meal photo.", extra={"user_id": user_id})
-        raise FirestoreServiceError("Failed to upload meal photo.") from exc
-    finally:
-        upload.file.close()
-
-    return {
-        "imageId": image_id,
-        "photoUrl": _storage_url_for_path(
-            get_storage_bucket_name(bucket),
-            object_path,
-            token,
-        ),
-    }
+    return await meal_storage.upload_photo_to_storage(
+        user_id,
+        upload,
+        object_path=f"meals/{user_id}/{image_id}.{extension}",
+        error_message="Failed to upload meal photo.",
+    )
 
 
 async def resolve_photo(

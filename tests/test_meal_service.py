@@ -129,7 +129,7 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     upload.filename = "meal.jpg"
     upload.content_type = "image/jpeg"
     upload.file = mocker.Mock()
-    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+    mocker.patch("app.services.meal_storage.get_storage_bucket", return_value=bucket)
 
     payload = asyncio.run(meal_service.upload_photo("user-1", upload))
 

@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request, raise_database_error
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request
 from app.schemas.notification import (
     NotificationDeleteResponse,
     NotificationListResponse,
@@ -28,101 +27,19 @@ from app.services.notification_service import (
 router = APIRouter()
 
 
-async def _list_notifications_for_user(*, user_id: str) -> NotificationListResponse:
-    try:
-        items = await notification_service.list_notifications(user_id)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
-
-    return NotificationListResponse(
-        items=[UserNotificationItem.model_validate(item) for item in items]
-    )
-
-
-async def _upsert_notification_for_user(
-    *,
-    user_id: str,
-    payload: UserNotificationItem,
-) -> NotificationUpsertResponse:
-    try:
-        item = await notification_service.upsert_notification(
-            user_id,
-            payload.model_dump(),
-        )
-    except NotificationValidationError as exc:
-        raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
-
-    return NotificationUpsertResponse(
-        item=UserNotificationItem.model_validate(item),
-        updated=True,
-    )
-
-
-async def _delete_notification_for_user(
-    *,
-    user_id: str,
-    notification_id: str,
-) -> NotificationDeleteResponse:
-    try:
-        await notification_service.delete_notification(user_id, notification_id)
-    except NotificationValidationError as exc:
-        raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
-
-    return NotificationDeleteResponse(
-        notificationId=notification_id,
-        deleted=True,
-    )
-
-
-async def _get_notification_prefs_for_user(*, user_id: str) -> NotificationPrefsResponse:
-    try:
-        notifications = await notification_service.get_notification_prefs(user_id)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
-
-    return NotificationPrefsResponse(
-        notifications=NotificationPrefsPayload.model_validate(notifications)
-    )
-
-
-async def _update_notification_prefs_for_user(
-    *,
-    user_id: str,
-    request: NotificationPrefsUpdateRequest,
-) -> NotificationPrefsUpdateResponse:
-    try:
-        notifications = await notification_service.update_notification_prefs(
-            user_id,
-            request.notifications.model_dump(exclude_unset=True),
-        )
-    except NotificationPrefsValidationError as exc:
-        raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
-
-    return NotificationPrefsUpdateResponse(
-        notifications=NotificationPrefsPayload.model_validate(notifications),
-        updated=True,
-    )
-
-
-async def _reconcile_notification_plan_for_user(
-    *,
-    user_id: str,
+@router.post(
+    "/users/me/notifications/reconcile-plan",
+    response_model=NotificationPlanResponse,
+)
+async def reconcile_notification_plan_me(
     request: NotificationPlanRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationPlanResponse:
-    try:
-        ai_style, plans = await notification_plan_service.get_notification_plan(
-            user_id,
-            start_iso=request.startIso,
-            end_iso=request.endIso,
-        )
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    ai_style, plans = await notification_plan_service.get_notification_plan(
+        current_user.uid,
+        start_iso=request.startIso,
+        end_iso=request.endIso,
+    )
 
     return NotificationPlanResponse(
         aiStyle=ai_style,
@@ -143,25 +60,14 @@ async def _reconcile_notification_plan_for_user(
     )
 
 
-@router.post(
-    "/users/me/notifications/reconcile-plan",
-    response_model=NotificationPlanResponse,
-)
-async def reconcile_notification_plan_me(
-    request: NotificationPlanRequest,
-    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
-) -> NotificationPlanResponse:
-    return await _reconcile_notification_plan_for_user(
-        user_id=current_user.uid,
-        request=request,
-    )
-
-
 @router.get("/users/me/notifications", response_model=NotificationListResponse)
 async def list_notifications_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationListResponse:
-    return await _list_notifications_for_user(user_id=current_user.uid)
+    items = await notification_service.list_notifications(current_user.uid)
+    return NotificationListResponse(
+        items=[UserNotificationItem.model_validate(item) for item in items]
+    )
 
 
 @router.post("/users/me/notifications", response_model=NotificationUpsertResponse)
@@ -169,9 +75,17 @@ async def upsert_notification_me(
     request: UserNotificationItem,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationUpsertResponse:
-    return await _upsert_notification_for_user(
-        user_id=current_user.uid,
-        payload=request,
+    try:
+        item = await notification_service.upsert_notification(
+            current_user.uid,
+            request.model_dump(),
+        )
+    except NotificationValidationError as exc:
+        raise_bad_request(exc)
+
+    return NotificationUpsertResponse(
+        item=UserNotificationItem.model_validate(item),
+        updated=True,
     )
 
 
@@ -183,10 +97,12 @@ async def delete_notification_me(
     notificationId: str,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationDeleteResponse:
-    return await _delete_notification_for_user(
-        user_id=current_user.uid,
-        notification_id=notificationId,
-    )
+    try:
+        await notification_service.delete_notification(current_user.uid, notificationId)
+    except NotificationValidationError as exc:
+        raise_bad_request(exc)
+
+    return NotificationDeleteResponse(notificationId=notificationId, deleted=True)
 
 
 @router.get(
@@ -196,7 +112,10 @@ async def delete_notification_me(
 async def get_notification_prefs_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationPrefsResponse:
-    return await _get_notification_prefs_for_user(user_id=current_user.uid)
+    notifications = await notification_service.get_notification_prefs(current_user.uid)
+    return NotificationPrefsResponse(
+        notifications=NotificationPrefsPayload.model_validate(notifications)
+    )
 
 
 @router.post(
@@ -207,7 +126,15 @@ async def update_notification_prefs_me(
     request: NotificationPrefsUpdateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationPrefsUpdateResponse:
-    return await _update_notification_prefs_for_user(
-        user_id=current_user.uid,
-        request=request,
+    try:
+        notifications = await notification_service.update_notification_prefs(
+            current_user.uid,
+            request.notifications.model_dump(exclude_unset=True),
+        )
+    except NotificationPrefsValidationError as exc:
+        raise_bad_request(exc)
+
+    return NotificationPrefsUpdateResponse(
+        notifications=NotificationPrefsPayload.model_validate(notifications),
+        updated=True,
     )

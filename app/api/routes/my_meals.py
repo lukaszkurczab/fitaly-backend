@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request, raise_database_error
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request
 from app.schemas.meal import (
     MealChangesPageResponse,
     MealDeleteRequest,
@@ -31,8 +30,6 @@ async def get_my_meal_changes_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealChangesPageResponse(
         items=[MealItem.model_validate(item) for item in items],
@@ -52,8 +49,6 @@ async def upsert_my_meal_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealUpsertResponse(meal=MealItem.model_validate(meal), updated=True)
 
@@ -72,8 +67,6 @@ async def delete_my_meal_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealDeleteResponse(
         mealId=meal["cloudId"],
@@ -91,13 +84,10 @@ async def upload_my_meal_photo_me(
     file: UploadFile = File(...),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealPhotoUploadResponse:
-    try:
-        payload = await my_meal_service.upload_photo(
-            current_user.uid,
-            mealId,
-            file,
-        )
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    payload = await my_meal_service.upload_photo(
+        current_user.uid,
+        mealId,
+        file,
+    )
 
     return MealPhotoUploadResponse(**payload)

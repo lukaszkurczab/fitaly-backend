@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request, raise_database_error
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request
 from app.schemas.meal import (
     MealChangesPageResponse,
     MealDeleteRequest,
@@ -22,15 +21,9 @@ def _to_range(min_value: float | None, max_value: float | None) -> tuple[float, 
     if min_value is None and max_value is None:
         return None
     if min_value is None or max_value is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both range values are required",
-        )
+        raise_bad_request(ValueError("Both range values are required"))
     if min_value > max_value:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid range",
-        )
+        raise_bad_request(ValueError("Invalid range"))
     return min_value, max_value
 
 
@@ -64,8 +57,6 @@ async def get_meals_history_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealsHistoryPageResponse(
         items=[MealItem.model_validate(item) for item in items],
@@ -87,8 +78,6 @@ async def get_meal_photo_url_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealPhotoUploadResponse(**payload)
 
@@ -107,8 +96,6 @@ async def get_meal_changes_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealChangesPageResponse(
         items=[MealItem.model_validate(item) for item in items],
@@ -121,10 +108,7 @@ async def upload_meal_photo_me(
     file: UploadFile = File(...),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealPhotoUploadResponse:
-    try:
-        payload = await meal_service.upload_photo(current_user.uid, file)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+    payload = await meal_service.upload_photo(current_user.uid, file)
 
     return MealPhotoUploadResponse(**payload)
 
@@ -138,8 +122,6 @@ async def upsert_meal_me(
         meal = await meal_service.upsert_meal(current_user.uid, request.model_dump())
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealUpsertResponse(meal=MealItem.model_validate(meal), updated=True)
 
@@ -158,8 +140,6 @@ async def delete_meal_me(
         )
     except ValueError as exc:
         raise_bad_request(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
 
     return MealDeleteResponse(
         mealId=meal["cloudId"],

@@ -103,27 +103,27 @@ Every HTTP response includes the `X-Request-ID` header. Use it to correlate clie
 
 ## Required Environment Variables
 
-Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/CaloriAI/food-scanner-ai-backend/.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
+Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/Fitaly/food-scanner-ai-backend/.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `APP_NAME` | No | `Fitaly Food Scanner API` | API title in docs/metadata |
-| `DESCRIPTION` | No | `Backend API for Fitaly mobile application.` | API description exposed in docs |
-| `VERSION` | No | `0.1.0` | API version exposed by app |
-| `DEBUG` | No | `false` | FastAPI debug mode |
-| `API_V1_PREFIX` | No | `/api/v1` | Global API route prefix |
-| `ENVIRONMENT` | No | `local` | Runtime environment name (`local`, `development`, `staging`, `production`) |
-| `API_V2_PREFIX` | No | `/api/v2` | Next API version route prefix |
-| `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
-| `CORS_ORIGINS` | No | `*` fallback if empty | Comma-separated frontend origins allowed by CORS |
-| `FIREBASE_PROJECT_ID` | Yes (Firebase/Firestore features) | - | Firebase project selection |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Optional fallback | - | Absolute path to the Firebase service account JSON file |
-| `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email; preferred on Railway |
-| `FIREBASE_PRIVATE_KEY` | Yes (Firebase/Firestore features) | - | Service account private key; preferred on Railway |
-| `SENTRY_DSN` | No | empty | Sentry project DSN; empty disables Sentry |
-| `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
-| `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
-| `PORT` | Railway only | set by Railway | Runtime HTTP port |
+| Variable                         | Required                          | Default                                      | Purpose                                                                    |
+| -------------------------------- | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
+| `APP_NAME`                       | No                                | `Fitaly Food Scanner API`                    | API title in docs/metadata                                                 |
+| `DESCRIPTION`                    | No                                | `Backend API for Fitaly mobile application.` | API description exposed in docs                                            |
+| `VERSION`                        | No                                | `0.1.0`                                      | API version exposed by app                                                 |
+| `DEBUG`                          | No                                | `false`                                      | FastAPI debug mode                                                         |
+| `API_V1_PREFIX`                  | No                                | `/api/v1`                                    | Global API route prefix                                                    |
+| `ENVIRONMENT`                    | No                                | `local`                                      | Runtime environment name (`local`, `development`, `staging`, `production`) |
+| `API_V2_PREFIX`                  | No                                | `/api/v2`                                    | Next API version route prefix                                              |
+| `OPENAI_API_KEY`                 | Yes (AI features)                 | -                                            | Auth for OpenAI API calls                                                  |
+| `CORS_ORIGINS`                   | No                                | `*` fallback if empty                        | Comma-separated frontend origins allowed by CORS                           |
+| `FIREBASE_PROJECT_ID`            | Yes (Firebase/Firestore features) | -                                            | Firebase project selection                                                 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Optional fallback                 | -                                            | Absolute path to the Firebase service account JSON file                    |
+| `FIREBASE_CLIENT_EMAIL`          | Yes (Firebase/Firestore features) | -                                            | Service account client email; preferred on Railway                         |
+| `FIREBASE_PRIVATE_KEY`           | Yes (Firebase/Firestore features) | -                                            | Service account private key; preferred on Railway                          |
+| `SENTRY_DSN`                     | No                                | empty                                        | Sentry project DSN; empty disables Sentry                                  |
+| `SENTRY_ENVIRONMENT`             | No                                | `development`                                | Sentry environment tag                                                     |
+| `AI_DAILY_LIMIT_FREE`            | No                                | `20`                                         | Daily AI quota for free users                                              |
+| `PORT`                           | Railway only                      | set by Railway                               | Runtime HTTP port                                                          |
 
 Example local `.env`:
 

@@ -4,27 +4,15 @@ from datetime import UTC, datetime
 import logging
 from typing import Any
 from uuid import uuid4
-
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
-from app.db.firebase import (
-    build_storage_download_url,
-    get_firestore,
-    get_storage_bucket,
-    get_storage_bucket_name,
-)
-from app.services.meal_service import (
-    DOCUMENT_ID_FIELD,
-    _build_cursor,
-    _coerce_iso8601,
-    _normalize_meal_payload,
-    _parse_cursor,
-)
+from app.db.firebase import get_firestore
+from app.services import meal_storage
+from app.services.meal_service import coerce_iso8601, normalize_meal_payload
 
 logger = logging.getLogger(__name__)
 
@@ -47,33 +35,14 @@ async def list_changes(
     limit_count: int = 100,
     after_cursor: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    meals_ref = _my_meals_collection(user_id)
-
-    try:
-        query = meals_ref.order_by("updatedAt", direction=firestore.Query.ASCENDING).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.ASCENDING,
-        )
-        parsed_cursor = _parse_cursor(after_cursor)
-        if parsed_cursor is not None:
-            updated_at, document_id = parsed_cursor
-            query = (
-                query.start_after([updated_at, document_id])
-                if document_id
-                else query.where(filter=FieldFilter("updatedAt", ">", updated_at))
-            )
-        snapshots = list(query.limit(limit_count).stream())
-    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
-        logger.exception("Failed to list saved meal changes.", extra={"user_id": user_id})
-        raise FirestoreServiceError("Failed to list saved meal changes.") from exc
-
-    items = [_normalize_saved_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
-    next_cursor = (
-        _build_cursor(items[-1]["updatedAt"], items[-1]["cloudId"])
-        if len(items) == limit_count
-        else None
+    return await meal_storage.list_changes_paginated(
+        _my_meals_collection(user_id),
+        user_id,
+        _normalize_saved_meal_snapshot,
+        limit_count=limit_count,
+        after_cursor=after_cursor,
+        error_message="Failed to list saved meal changes.",
     )
-    return items, next_cursor
 
 
 def _normalize_saved_meal_payload(
@@ -83,7 +52,7 @@ def _normalize_saved_meal_payload(
     fallback_cloud_id: str | None = None,
     fallback_updated_at: str | None = None,
 ) -> dict[str, Any]:
-    normalized = _normalize_meal_payload(
+    normalized = normalize_meal_payload(
         user_id,
         payload,
         fallback_cloud_id=fallback_cloud_id,
@@ -135,7 +104,7 @@ async def mark_deleted(
     updated_at: str,
 ) -> dict[str, Any]:
     meal_ref = _my_meal_ref(user_id, meal_id)
-    normalized_updated_at = _coerce_iso8601(updated_at)
+    normalized_updated_at = coerce_iso8601(updated_at)
 
     try:
         snapshot = meal_ref.get()
@@ -175,41 +144,20 @@ async def upload_photo(
     meal_id: str,
     upload: UploadFile,
 ) -> dict[str, str]:
-    bucket = get_storage_bucket()
     extension = "jpg"
     if upload.filename and "." in upload.filename:
         maybe_extension = upload.filename.rsplit(".", 1)[-1].strip().lower()
         if maybe_extension:
             extension = maybe_extension
 
-    image_id = str(uuid4())
-    object_path = f"myMeals/{user_id}/{meal_id}-{image_id}.{extension}"
-    token = str(uuid4())
-    blob = bucket.blob(object_path)
-
-    try:
-        upload.file.seek(0)
-        blob.metadata = {"firebaseStorageDownloadTokens": token}
-        blob.upload_from_file(
-            upload.file,
-            content_type=upload.content_type or "image/jpeg",
-        )
-        blob.patch()
-    except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
-        logger.exception(
-            "Failed to upload saved meal photo.",
-            extra={"user_id": user_id, "meal_id": meal_id},
-        )
-        raise FirestoreServiceError("Failed to upload saved meal photo.") from exc
-    finally:
-        upload.file.close()
-
+    payload = await meal_storage.upload_photo_to_storage(
+        user_id,
+        upload,
+        object_path=f"myMeals/{user_id}/{meal_id}-{uuid4()}.{extension}",
+        error_message="Failed to upload saved meal photo.",
+    )
     return {
         "mealId": meal_id,
-        "imageId": image_id,
-        "photoUrl": build_storage_download_url(
-            get_storage_bucket_name(bucket),
-            object_path,
-            token,
-        ),
+        "imageId": payload["imageId"],
+        "photoUrl": payload["photoUrl"],
     }

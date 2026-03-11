@@ -9,13 +9,11 @@ from app.api.deps import (
     get_required_authenticated_user,
 )
 from app.api.http_errors import (
-    raise_database_error,
     raise_service_unavailable,
 )
 from app.core.config import settings
 from app.core.exceptions import (
     AiUsageLimitExceededError,
-    FirestoreServiceError,
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
@@ -116,24 +114,19 @@ async def _increment_usage_or_raise(
                 await ai_usage_service.increment_usage(user_id)
             )
     except AiUsageLimitExceededError:
-        try:
-            usage_count, daily_limit, date_key = await ai_usage_service.get_usage(user_id)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    "message": "AI usage limit exceeded",
-                    "code": "AI_USAGE_LIMIT_EXCEEDED",
-                    "usage": ai_usage_service.build_usage_status(
-                        usage_count=usage_count,
-                        daily_limit=daily_limit,
-                        date_key=date_key,
-                    ),
-                },
-            )
-        except FirestoreServiceError as exc:
-            raise_database_error(exc)
-    except FirestoreServiceError as exc:
-        raise_database_error(exc)
+        usage_count, daily_limit, date_key = await ai_usage_service.get_usage(user_id)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": "AI usage limit exceeded",
+                "code": "AI_USAGE_LIMIT_EXCEEDED",
+                "usage": ai_usage_service.build_usage_status(
+                    usage_count=usage_count,
+                    daily_limit=daily_limit,
+                    date_key=date_key,
+                ),
+            },
+        )
 
     return usage_count, daily_limit, date_key, remaining
 

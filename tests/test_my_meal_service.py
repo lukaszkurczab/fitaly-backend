@@ -74,7 +74,7 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     blob = mocker.Mock()
     bucket.name = "demo.appspot.com"
     bucket.blob.return_value = blob
-    mocker.patch("app.services.my_meal_service.get_storage_bucket", return_value=bucket)
+    mocker.patch("app.services.meal_storage.get_storage_bucket", return_value=bucket)
 
     upload = mocker.Mock()
     upload.filename = "saved.jpg"
