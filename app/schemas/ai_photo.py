@@ -1,10 +1,6 @@
-from datetime import datetime
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
-from app.schemas.ai_credits import CreditCosts
-from app.schemas.ai_common import AiPersistence
+from app.schemas.ai_common import BaseAiResponse
 
 
 class AiPhotoAnalyzeRequest(BaseModel):
@@ -22,13 +18,5 @@ class AiPhotoIngredient(BaseModel):
     unit: str | None = None
 
 
-class AiPhotoAnalyzeResponse(BaseModel):
+class AiPhotoAnalyzeResponse(BaseAiResponse):
     ingredients: list[AiPhotoIngredient]
-    balance: int
-    allocation: int
-    tier: Literal["free", "premium"]
-    periodStartAt: datetime
-    periodEndAt: datetime
-    costs: CreditCosts
-    version: str
-    persistence: AiPersistence

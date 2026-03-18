@@ -16,12 +16,14 @@ from app.core.datetime_utils import (
 )
 from app.core.exceptions import AiCreditsExhaustedError, FirestoreServiceError
 from app.db.firebase import get_firestore
+from app.core.coercion import coerce_int, coerce_optional_str
+from app.core.firestore_constants import (
+    AI_CREDIT_TRANSACTIONS_COLLECTION,
+    AI_CREDITS_COLLECTION,
+)
 from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 
 logger = logging.getLogger(__name__)
-
-AI_CREDITS_COLLECTION = "ai_credits"
-AI_CREDIT_TRANSACTIONS_COLLECTION = "ai_credit_transactions"
 Tier = Literal["free", "premium"]
 
 
@@ -31,25 +33,6 @@ def _coerce_optional_datetime(value: object) -> datetime | None:
     return _ensure_utc_datetime(value)
 
 
-def _coerce_int(value: object, fallback: int) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(float(value))
-        except ValueError:
-            return fallback
-    return fallback
-
-
-def _coerce_optional_str(value: object) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value
-    return None
 
 
 def _tier_allocation(tier: Tier) -> int:
@@ -89,7 +72,7 @@ def _normalize_document(
     now: datetime,
 ) -> dict[str, object]:
     tier = _normalize_tier(data.get("tier"))
-    allocation = _coerce_int(data.get("allocation"), _tier_allocation(tier))
+    allocation = coerce_int(data.get("allocation"), _tier_allocation(tier))
     if allocation <= 0:
         allocation = _tier_allocation(tier)
 
@@ -100,7 +83,7 @@ def _normalize_document(
     if period_end_at <= period_start_at:
         period_end_at = _add_one_month_clamped(period_start_at)
 
-    balance = _coerce_int(data.get("balance"), allocation)
+    balance = coerce_int(data.get("balance"), allocation)
     balance = max(0, min(balance, allocation))
 
     return {
@@ -110,11 +93,11 @@ def _normalize_document(
         "allocation": allocation,
         "periodStartAt": period_start_at,
         "periodEndAt": period_end_at,
-        "renewalAnchorSource": _coerce_optional_str(data.get("renewalAnchorSource"))
+        "renewalAnchorSource": coerce_optional_str(data.get("renewalAnchorSource"))
         or "rolling_monthly",
-        "revenueCatEntitlementId": _coerce_optional_str(data.get("revenueCatEntitlementId")),
+        "revenueCatEntitlementId": coerce_optional_str(data.get("revenueCatEntitlementId")),
         "revenueCatExpirationAt": _coerce_optional_datetime(data.get("revenueCatExpirationAt")),
-        "lastRevenueCatEventId": _coerce_optional_str(data.get("lastRevenueCatEventId")),
+        "lastRevenueCatEventId": coerce_optional_str(data.get("lastRevenueCatEventId")),
         "createdAt": _coerce_optional_datetime(data.get("createdAt")) or now,
         "updatedAt": _coerce_optional_datetime(data.get("updatedAt")) or now,
     }
@@ -193,7 +176,7 @@ def _document_for_current_period(
     )
     if did_roll:
         tier = _normalize_tier(document.get("tier"))
-        allocation = _coerce_int(document.get("allocation"), _tier_allocation(tier))
+        allocation = coerce_int(document.get("allocation"), _tier_allocation(tier))
         document["balance"] = allocation
         document["periodStartAt"] = next_start
         document["periodEndAt"] = next_end
@@ -229,7 +212,7 @@ def _deduct_credits_transaction(
     data: dict[str, object] | None = (snapshot.to_dict() or {}) if snapshot.exists else None
     document, _ = _document_for_current_period(user_id=user_id, data=data, now=now)
 
-    previous_balance = _coerce_int(document.get("balance"), 0)
+    previous_balance = coerce_int(document.get("balance"), 0)
     if previous_balance < cost:
         raise AiCreditsExhaustedError("AI credits exhausted.")
 
@@ -253,8 +236,8 @@ def _refund_credits_transaction(
     data: dict[str, object] | None = (snapshot.to_dict() or {}) if snapshot.exists else None
     document, _ = _document_for_current_period(user_id=user_id, data=data, now=now)
 
-    previous_balance = _coerce_int(document.get("balance"), 0)
-    allocation = _coerce_int(document.get("allocation"), _tier_allocation("free"))
+    previous_balance = coerce_int(document.get("balance"), 0)
+    allocation = coerce_int(document.get("allocation"), _tier_allocation("free"))
     next_balance = min(previous_balance + cost, allocation)
 
     document["balance"] = next_balance
@@ -415,15 +398,15 @@ def _apply_subscription_event_transaction(
 
     if existing_data is not None:
         existing_document = _normalize_document(user_id=user_id, data=existing_data, now=now)
-        existing_balance = _coerce_int(existing_document.get("balance"), 0)
+        existing_balance = coerce_int(existing_document.get("balance"), 0)
         created_at = _coerce_optional_datetime(existing_document.get("createdAt")) or now
-        last_event_id = _coerce_optional_str(existing_document.get("lastRevenueCatEventId"))
+        last_event_id = coerce_optional_str(existing_document.get("lastRevenueCatEventId"))
         if event_id is not None and event_id == last_event_id:
             return existing_document, False, existing_balance
 
     resolved_event_id = event_id or last_event_id
     if target_tier == "premium":
-        resolved_entitlement_id = entitlement_id or _coerce_optional_str(
+        resolved_entitlement_id = entitlement_id or coerce_optional_str(
             (existing_document or {}).get("revenueCatEntitlementId")
         )
         resolved_period_end_at = (
@@ -503,7 +486,7 @@ async def _apply_subscription_event(
             action=renewal_anchor_source,
             cost=0,
             balance_before=existing_balance,
-            balance_after=_coerce_int(document.get("balance"), 0),
+            balance_after=coerce_int(document.get("balance"), 0),
             document=document,
         )
     return _build_status(document)
@@ -579,12 +562,12 @@ def _start_cycle_transaction(
     existing_data: dict[str, object] = (
         (snapshot.to_dict() or {}) if snapshot.exists else {}
     )
-    existing_balance = _coerce_int(existing_data.get("balance"), 0)
+    existing_balance = coerce_int(existing_data.get("balance"), 0)
     created_at = _coerce_optional_datetime(existing_data.get("createdAt")) or now
-    last_event_id = _coerce_optional_str(existing_data.get("lastRevenueCatEventId"))
+    last_event_id = coerce_optional_str(existing_data.get("lastRevenueCatEventId"))
 
     if tier == "premium":
-        revenuecat_entitlement_id = _coerce_optional_str(
+        revenuecat_entitlement_id = coerce_optional_str(
             existing_data.get("revenueCatEntitlementId")
         )
         resolved_expiration = (
@@ -647,7 +630,7 @@ async def _start_cycle(
         action=renewal_anchor_source,
         cost=0,
         balance_before=existing_balance,
-        balance_after=_coerce_int(document.get("balance"), 0),
+        balance_after=coerce_int(document.get("balance"), 0),
         document=document,
     )
     return _build_status(document)
@@ -657,16 +640,16 @@ def _build_status(document: dict[str, object]) -> AiCreditsStatus:
     now = _utc_now()
     tier = _normalize_tier(document.get("tier"))
     return AiCreditsStatus(
-        userId=_coerce_optional_str(document.get("userId")) or "",
+        userId=coerce_optional_str(document.get("userId")) or "",
         tier=tier,
-        balance=_coerce_int(document.get("balance"), 0),
-        allocation=_coerce_int(document.get("allocation"), _tier_allocation(tier)),
+        balance=coerce_int(document.get("balance"), 0),
+        allocation=coerce_int(document.get("allocation"), _tier_allocation(tier)),
         periodStartAt=_coerce_optional_datetime(document.get("periodStartAt")) or now,
         periodEndAt=_coerce_optional_datetime(document.get("periodEndAt")) or now,
-        renewalAnchorSource=_coerce_optional_str(document.get("renewalAnchorSource")),
-        revenueCatEntitlementId=_coerce_optional_str(document.get("revenueCatEntitlementId")),
+        renewalAnchorSource=coerce_optional_str(document.get("renewalAnchorSource")),
+        revenueCatEntitlementId=coerce_optional_str(document.get("revenueCatEntitlementId")),
         revenueCatExpirationAt=_coerce_optional_datetime(document.get("revenueCatExpirationAt")),
-        lastRevenueCatEventId=_coerce_optional_str(document.get("lastRevenueCatEventId")),
+        lastRevenueCatEventId=coerce_optional_str(document.get("lastRevenueCatEventId")),
         costs=CreditCosts(
             chat=settings.AI_CREDIT_COST_CHAT,
             textMeal=settings.AI_CREDIT_COST_TEXT_MEAL,

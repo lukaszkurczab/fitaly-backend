@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict"]
+MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved", "quick_add"]
 
 
 class MealIngredient(BaseModel):
@@ -26,6 +27,13 @@ class MealTotals(BaseModel):
     kcal: float = 0
 
 
+class MealAiMeta(BaseModel):
+    model: str | None = None
+    runId: str | None = None
+    confidence: float | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class MealItem(BaseModel):
     userUid: str
     mealId: str
@@ -38,6 +46,8 @@ class MealItem(BaseModel):
     updatedAt: str
     syncState: MealSyncState = "synced"
     source: MealSource = None
+    inputMethod: MealInputMethod | None = None
+    aiMeta: MealAiMeta | None = None
     imageId: str | None = None
     photoUrl: str | None = None
     notes: str | None = None
@@ -68,6 +78,8 @@ class MealUpsertRequest(BaseModel):
     updatedAt: str | None = None
     syncState: MealSyncState | None = None
     source: MealSource = None
+    inputMethod: MealInputMethod | None = None
+    aiMeta: MealAiMeta | None = None
     imageId: str | None = None
     photoUrl: str | None = None
     notes: str | None = None

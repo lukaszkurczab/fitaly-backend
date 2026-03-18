@@ -10,13 +10,15 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import (
+    MEALS_SUBCOLLECTION,
+    NOTIFICATIONS_SUBCOLLECTION,
+    USERS_COLLECTION,
+)
 from app.db.firebase import get_firestore
 
 logger = logging.getLogger(__name__)
 
-USERS_COLLECTION = "users"
-NOTIFICATIONS_SUBCOLLECTION = "notifications"
-MEALS_SUBCOLLECTION = "meals"
 VALID_AI_STYLES = {"none", "concise", "friendly", "detailed"}
 VALID_NOTIFICATION_TYPES = {"meal_reminder", "calorie_goal", "day_fill"}
 VALID_MEAL_KINDS = {"breakfast", "lunch", "dinner", "snack"}

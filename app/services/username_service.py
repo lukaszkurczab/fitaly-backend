@@ -7,12 +7,10 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import USERNAMES_COLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 
 logger = logging.getLogger(__name__)
-
-USERS_COLLECTION = "users"
-USERNAMES_COLLECTION = "usernames"
 MIN_USERNAME_LENGTH = 3
 
 

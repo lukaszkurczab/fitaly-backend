@@ -1,7 +1,7 @@
 import logging
-from datetime import datetime
+from collections.abc import Awaitable, Callable
 from time import perf_counter
-from typing import Literal, TypedDict
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -18,8 +18,8 @@ from app.core.exceptions import (
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
-from app.schemas.ai_common import AiPersistence, BACKEND_OWNED_PERSISTENCE
-from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
+from app.schemas.ai_common import BACKEND_OWNED_PERSISTENCE
+from app.schemas.ai_credits import AiCreditsStatus
 from app.schemas.ai_photo import (
     AiPhotoAnalyzeRequest,
     AiPhotoAnalyzeResponse,
@@ -42,17 +42,6 @@ from app.services import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-class AiResponseFields(TypedDict):
-    balance: int
-    allocation: int
-    tier: Literal["free", "premium"]
-    periodStartAt: datetime
-    periodEndAt: datetime
-    costs: CreditCosts
-    version: str
-    persistence: AiPersistence
 
 
 def _resolve_language(request: AiAskRequest) -> str:
@@ -81,6 +70,27 @@ def _safe_photo_gateway_message(image_base64: str) -> str:
     return f"[photo-bytes:{len(image_base64.strip())}]"
 
 
+def _with_gateway_runtime(
+    result: ai_gateway_service.GatewayResult,
+    *,
+    latency_ms: float,
+    outcome: Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"] | None = None,
+    failure_reason: str | None = None,
+    actual_tokens: int | None = None,
+) -> ai_gateway_service.GatewayResult:
+    enriched: ai_gateway_service.GatewayResult = {
+        **result,
+        "latency_ms": round(latency_ms, 2),
+    }
+    if outcome is not None:
+        enriched["outcome"] = outcome
+    if failure_reason is not None:
+        enriched["failure_reason"] = failure_reason
+    if actual_tokens is not None:
+        enriched["actual_tokens"] = actual_tokens
+    return enriched
+
+
 async def _log_gateway_result(
     *,
     user_id: str,
@@ -90,7 +100,6 @@ async def _log_gateway_result(
     result: ai_gateway_service.GatewayResult,
     response_time_ms: float | None = None,
     execution_time_ms: float | None = None,
-    profile: str | None = None,
     tier: Literal["free", "premium"] | None = None,
     credit_cost: float | None = None,
 ) -> None:
@@ -103,7 +112,7 @@ async def _log_gateway_result(
             language=language,
             response_time_ms=response_time_ms,
             execution_time_ms=execution_time_ms,
-            profile=profile,
+            profile=tier,
             tier=tier,
             credit_cost=credit_cost,
         )
@@ -127,6 +136,50 @@ async def _log_gateway_result(
             "actual_tokens": result.get("actual_tokens"),
             "latency_ms": result.get("latency_ms"),
             "estimated_cost": result.get("estimated_cost"),
+        },
+    )
+
+
+async def _reject_gateway_request(
+    *,
+    user_id: str,
+    action_type: str,
+    message: str,
+    language: str,
+    gateway_result: ai_gateway_service.GatewayResult,
+    started_at: float,
+) -> None:
+    tier: Literal["free", "premium"] | None = None
+    try:
+        tier = (await ai_credits_service.get_credits_status(user_id)).tier
+    except Exception:
+        logger.exception(
+            "Failed to resolve AI tier for gateway reject log.",
+            extra={"user_id": user_id, "action_type": action_type},
+        )
+    elapsed_ms = (perf_counter() - started_at) * 1000
+    await _log_gateway_result(
+        user_id=user_id,
+        action_type=action_type,
+        message=message,
+        language=language,
+        result=_with_gateway_runtime(
+            gateway_result,
+            latency_ms=elapsed_ms,
+            outcome="BLOCKED",
+        ),
+        response_time_ms=elapsed_ms,
+        execution_time_ms=elapsed_ms,
+        tier=tier,
+        credit_cost=0.0,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "message": "AI request blocked by gateway",
+            "code": "AI_GATEWAY_BLOCKED",
+            "reason": gateway_result["reason"],
+            "score": gateway_result["score"],
         },
     )
 
@@ -198,10 +251,11 @@ async def _refund_credits_after_ai_failure(
         )
 
 
-def _build_ai_response_fields_from_credits(
+def _build_ai_response_fields(
     *,
     credits_status: AiCreditsStatus,
-) -> AiResponseFields:
+    gateway_result: ai_gateway_service.GatewayResult | None = None,
+) -> dict[str, Any]:
     return {
         "balance": credits_status.balance,
         "allocation": credits_status.allocation,
@@ -211,18 +265,87 @@ def _build_ai_response_fields_from_credits(
         "costs": credits_status.costs,
         "version": settings.VERSION,
         "persistence": BACKEND_OWNED_PERSISTENCE,
+        "model": gateway_result.get("model") if gateway_result is not None else None,
+        "runId": gateway_result.get("request_id") if gateway_result is not None else None,
+        "confidence": None,
+        "warnings": [],
     }
 
 
-def _build_ai_ask_response(
+async def _execute_ai_request(
     *,
-    reply: str,
-    credits_status: AiCreditsStatus,
-) -> AiAskResponse:
-    return AiAskResponse(
-        reply=reply,
-        **_build_ai_response_fields_from_credits(credits_status=credits_status),
+    user_id: str,
+    action_type: str,
+    gateway_message: str,
+    language: str,
+    gateway_result: ai_gateway_service.GatewayResult,
+    credit_cost: int,
+    endpoint: str,
+    ai_call: Callable[[], Awaitable[Any]],
+    started_at: float,
+) -> tuple[Any, AiCreditsStatus]:
+    if gateway_result["decision"] != "FORWARD":
+        await _reject_gateway_request(
+            user_id=user_id,
+            action_type=action_type,
+            message=gateway_message,
+            language=language,
+            gateway_result=gateway_result,
+            started_at=started_at,
+        )
+
+    credits_status = await _deduct_credits_or_raise(
+        user_id=user_id,
+        cost=credit_cost,
+        action=action_type,
     )
+
+    try:
+        result = await ai_call()
+    except OpenAIServiceError as exc:
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        await _log_gateway_result(
+            user_id=user_id,
+            action_type=action_type,
+            message=gateway_message,
+            language=language,
+            result=_with_gateway_runtime(
+                gateway_result,
+                latency_ms=elapsed_ms,
+                outcome="UPSTREAM_ERROR",
+                failure_reason=exc.__class__.__name__,
+            ),
+            response_time_ms=elapsed_ms,
+            execution_time_ms=elapsed_ms,
+            tier=credits_status.tier,
+            credit_cost=float(credit_cost),
+        )
+        await _refund_credits_after_ai_failure(
+            user_id=user_id,
+            cost=credit_cost,
+            action=f"{action_type}_failure_refund",
+            endpoint=endpoint,
+        )
+        raise_service_unavailable(exc, detail="AI service unavailable")
+
+    elapsed_ms = (perf_counter() - started_at) * 1000
+    await _log_gateway_result(
+        user_id=user_id,
+        action_type=action_type,
+        message=gateway_message,
+        language=language,
+        result=_with_gateway_runtime(
+            gateway_result,
+            latency_ms=elapsed_ms,
+            outcome="FORWARDED",
+        ),
+        response_time_ms=elapsed_ms,
+        execution_time_ms=elapsed_ms,
+        tier=credits_status.tier,
+        credit_cost=float(credit_cost),
+    )
+
+    return result, credits_status
 
 
 @router.post("/ai/ask", response_model=AiAskResponse)
@@ -244,36 +367,6 @@ async def ask_ai(
         language=language,
         request_id=request_id,
     )
-    if gateway_result["decision"] != "FORWARD":
-        tier: Literal["free", "premium"] | None = None
-        try:
-            tier = (await ai_credits_service.get_credits_status(user_id)).tier
-        except Exception:
-            logger.exception(
-                "Failed to resolve AI tier for gateway reject log.",
-                extra={"user_id": user_id, "action_type": action_type},
-            )
-        elapsed_ms = (perf_counter() - started_at) * 1000
-        await _log_gateway_result(
-            user_id=user_id,
-            action_type=action_type,
-            message=request.message,
-            language=language,
-            result=gateway_result,
-            response_time_ms=elapsed_ms,
-            execution_time_ms=elapsed_ms,
-            tier=tier,
-            credit_cost=0.0,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": "AI request blocked by gateway",
-                "code": "AI_GATEWAY_BLOCKED",
-                "reason": gateway_result["reason"],
-                "score": gateway_result["score"],
-            },
-        )
 
     sanitized_context = sanitization_service.sanitize_context(request.context)
     sanitized_message = sanitization_service.sanitize_request(
@@ -289,40 +382,24 @@ async def ask_ai(
         else sanitized_message
     )
 
-    credits_status = await _deduct_credits_or_raise(
-        user_id=user_id,
-        cost=settings.AI_CREDIT_COST_CHAT,
-        action="chat",
-    )
-
-    try:
-        reply = await openai_service.ask_chat(prompt_message)
-    except OpenAIServiceError as exc:
-        await _refund_credits_after_ai_failure(
-            user_id=user_id,
-            cost=settings.AI_CREDIT_COST_CHAT,
-            action="chat_failure_refund",
-            endpoint="/ai/ask",
-        )
-        raise_service_unavailable(exc, detail="AI service unavailable")
-
-    elapsed_ms = (perf_counter() - started_at) * 1000
-    await _log_gateway_result(
+    reply, credits_status = await _execute_ai_request(
         user_id=user_id,
         action_type=action_type,
-        message=request.message,
+        gateway_message=request.message,
         language=language,
-        result=gateway_result,
-        response_time_ms=elapsed_ms,
-        execution_time_ms=elapsed_ms,
-        profile=credits_status.tier,
-        tier=credits_status.tier,
-        credit_cost=float(settings.AI_CREDIT_COST_CHAT),
+        gateway_result=gateway_result,
+        credit_cost=settings.AI_CREDIT_COST_CHAT,
+        endpoint="/ai/ask",
+        ai_call=lambda: openai_service.ask_chat(prompt_message),
+        started_at=started_at,
     )
 
-    return _build_ai_ask_response(
+    return AiAskResponse(
         reply=reply,
-        credits_status=credits_status,
+        **_build_ai_response_fields(
+            credits_status=credits_status,
+            gateway_result=gateway_result,
+        ),
     )
 
 
@@ -342,43 +419,28 @@ async def analyze_photo_ai(
         language=request.lang,
         request_id=_resolve_request_id(http_request),
     )
-    credits_status = await _deduct_credits_or_raise(
-        user_id=user_id,
-        cost=settings.AI_CREDIT_COST_PHOTO,
-        action="photo_analysis",
-    )
 
-    try:
-        ingredients = await openai_service.analyze_photo(
-            request.imageBase64,
-            lang=request.lang,
-        )
-    except OpenAIServiceError as exc:
-        await _refund_credits_after_ai_failure(
-            user_id=user_id,
-            cost=settings.AI_CREDIT_COST_PHOTO,
-            action="photo_analysis_failure_refund",
-            endpoint="/ai/photo/analyze",
-        )
-        raise_service_unavailable(exc, detail="AI service unavailable")
-
-    elapsed_ms = (perf_counter() - started_at) * 1000
-    await _log_gateway_result(
+    ingredients, credits_status = await _execute_ai_request(
         user_id=user_id,
         action_type="photo_analysis",
-        message=gateway_message,
+        gateway_message=gateway_message,
         language=request.lang,
-        result={**gateway_result, "latency_ms": elapsed_ms},
-        response_time_ms=elapsed_ms,
-        execution_time_ms=elapsed_ms,
-        profile=credits_status.tier,
-        tier=credits_status.tier,
-        credit_cost=float(settings.AI_CREDIT_COST_PHOTO),
+        gateway_result=gateway_result,
+        credit_cost=settings.AI_CREDIT_COST_PHOTO,
+        endpoint="/ai/photo/analyze",
+        ai_call=lambda: openai_service.analyze_photo(
+            request.imageBase64,
+            lang=request.lang,
+        ),
+        started_at=started_at,
     )
 
     return AiPhotoAnalyzeResponse(
         ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
-        **_build_ai_response_fields_from_credits(credits_status=credits_status),
+        **_build_ai_response_fields(
+            credits_status=credits_status,
+            gateway_result=gateway_result,
+        ),
     )
 
 
@@ -398,41 +460,26 @@ async def analyze_text_meal_ai(
         language=request.lang,
         request_id=_resolve_request_id(http_request),
     )
-    credits_status = await _deduct_credits_or_raise(
-        user_id=user_id,
-        cost=settings.AI_CREDIT_COST_TEXT_MEAL,
-        action="text_meal_analysis",
-    )
 
-    try:
-        ingredients = await text_meal_service.analyze_text_meal(
-            request.payload,
-            lang=request.lang,
-        )
-    except OpenAIServiceError as exc:
-        await _refund_credits_after_ai_failure(
-            user_id=user_id,
-            cost=settings.AI_CREDIT_COST_TEXT_MEAL,
-            action="text_meal_analysis_failure_refund",
-            endpoint="/ai/text-meal/analyze",
-        )
-        raise_service_unavailable(exc, detail="AI service unavailable")
-
-    elapsed_ms = (perf_counter() - started_at) * 1000
-    await _log_gateway_result(
+    ingredients, credits_status = await _execute_ai_request(
         user_id=user_id,
         action_type="text_meal_analysis",
-        message=gateway_message,
+        gateway_message=gateway_message,
         language=request.lang,
-        result={**gateway_result, "latency_ms": elapsed_ms},
-        response_time_ms=elapsed_ms,
-        execution_time_ms=elapsed_ms,
-        profile=credits_status.tier,
-        tier=credits_status.tier,
-        credit_cost=float(settings.AI_CREDIT_COST_TEXT_MEAL),
+        gateway_result=gateway_result,
+        credit_cost=settings.AI_CREDIT_COST_TEXT_MEAL,
+        endpoint="/ai/text-meal/analyze",
+        ai_call=lambda: text_meal_service.analyze_text_meal(
+            request.payload,
+            lang=request.lang,
+        ),
+        started_at=started_at,
     )
 
     return AiTextMealAnalyzeResponse(
         ingredients=[AiTextMealIngredient(**ingredient) for ingredient in ingredients],
-        **_build_ai_response_fields_from_credits(credits_status=credits_status),
+        **_build_ai_response_fields(
+            credits_status=credits_status,
+            gateway_result=gateway_result,
+        ),
     )

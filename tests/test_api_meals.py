@@ -186,6 +186,98 @@ def test_post_meal_upsert_persists_via_backend_service(
     upsert_meal.assert_called_once()
 
 
+def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    upsert_meal = mocker.patch(
+        "app.api.routes.meals.meal_service.upsert_meal",
+        return_value={
+            "userUid": "user-1",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "type": "lunch",
+            "name": "Chicken",
+            "ingredients": [],
+            "createdAt": "2026-03-03T12:00:00.000Z",
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "syncState": "synced",
+            "source": "ai",
+            "inputMethod": "photo",
+            "aiMeta": {
+                "model": "gpt-4o-mini",
+                "runId": "run-1",
+                "confidence": 0.83,
+                "warnings": ["partial_totals"],
+            },
+            "imageId": None,
+            "photoUrl": None,
+            "notes": None,
+            "tags": [],
+            "deleted": False,
+            "cloudId": "meal-1",
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+            "inputMethod": "photo",
+            "aiMeta": {
+                "model": "gpt-4o-mini",
+                "runId": "run-1",
+                "confidence": 0.83,
+                "warnings": ["partial_totals"],
+            },
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meal"]["inputMethod"] == "photo"
+    assert response.json()["meal"]["aiMeta"] == {
+        "model": "gpt-4o-mini",
+        "runId": "run-1",
+        "confidence": 0.83,
+        "warnings": ["partial_totals"],
+    }
+    upsert_meal.assert_called_once_with(
+        "user-1",
+        {
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": None,
+            "type": "lunch",
+            "name": None,
+            "ingredients": [],
+            "createdAt": None,
+            "updatedAt": None,
+            "syncState": None,
+            "source": None,
+            "inputMethod": "photo",
+            "aiMeta": {
+                "model": "gpt-4o-mini",
+                "runId": "run-1",
+                "confidence": 0.83,
+                "warnings": ["partial_totals"],
+            },
+            "imageId": None,
+            "photoUrl": None,
+            "notes": None,
+            "tags": [],
+            "deleted": False,
+            "cloudId": None,
+            "totals": None,
+            "userUid": None,
+        },
+    )
+
+
 def test_post_meal_delete_uses_backend_service(
     mocker: MockerFixture,
     auth_headers,

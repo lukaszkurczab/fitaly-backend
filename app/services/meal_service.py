@@ -11,7 +11,9 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from app.core.coercion import coerce_float, coerce_optional_str
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import (
     build_storage_download_url,
     get_firestore,
@@ -22,12 +24,11 @@ from app.services import meal_storage, streak_service
 
 logger = logging.getLogger(__name__)
 
-USERS_COLLECTION = "users"
-MEALS_SUBCOLLECTION = "meals"
 DOCUMENT_ID_FIELD = "__name__"
 
 MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
+MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text", "saved", "quick_add"}
 
 
 class MealPhotoPayload(TypedDict):
@@ -49,28 +50,8 @@ def coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
     return candidate
 
 
-def _as_string(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 def _as_bool(value: Any) -> bool:
     return bool(value)
-
-
-def _coerce_float(value: object, *, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
 
 
 def _normalize_tags(value: Any) -> list[str]:
@@ -89,22 +70,22 @@ def _normalize_ingredients(value: Any) -> list[dict[str, Any]]:
             continue
         raw_map = cast(dict[str, object], raw)
 
-        item_id = _as_string(raw_map.get("id"))
-        name = _as_string(raw_map.get("name"))
+        item_id = coerce_optional_str(raw_map.get("id"))
+        name = coerce_optional_str(raw_map.get("name"))
         if not item_id or not name:
             continue
 
-        unit = _as_string(raw_map.get("unit"))
+        unit = coerce_optional_str(raw_map.get("unit"))
         items.append(
             {
                 "id": item_id,
                 "name": name,
-                "amount": _coerce_float(raw_map.get("amount")),
+                "amount": coerce_float(raw_map.get("amount")),
                 "unit": unit if unit in {"g", "ml"} else None,
-                "kcal": _coerce_float(raw_map.get("kcal")),
-                "protein": _coerce_float(raw_map.get("protein")),
-                "fat": _coerce_float(raw_map.get("fat")),
-                "carbs": _coerce_float(raw_map.get("carbs")),
+                "kcal": coerce_float(raw_map.get("kcal")),
+                "protein": coerce_float(raw_map.get("protein")),
+                "fat": coerce_float(raw_map.get("fat")),
+                "carbs": coerce_float(raw_map.get("carbs")),
             }
         )
 
@@ -127,10 +108,10 @@ def _normalize_totals(value: Any, ingredients: list[dict[str, Any]]) -> dict[str
     value_map = cast(dict[str, object], value)
 
     return {
-        "protein": _coerce_float(value_map.get("protein")),
-        "fat": _coerce_float(value_map.get("fat")),
-        "carbs": _coerce_float(value_map.get("carbs")),
-        "kcal": _coerce_float(value_map.get("kcal")),
+        "protein": coerce_float(value_map.get("protein")),
+        "fat": coerce_float(value_map.get("fat")),
+        "carbs": coerce_float(value_map.get("carbs")),
+        "kcal": coerce_float(value_map.get("kcal")),
     }
 
 
@@ -143,10 +124,6 @@ def _meals_collection(user_id: str) -> firestore.CollectionReference:
 
 def _meal_ref(user_id: str, meal_id: str) -> firestore.DocumentReference:
     return _meals_collection(user_id).document(meal_id)
-
-
-def _storage_url_for_path(bucket_name: str, object_path: str, token: str) -> str:
-    return build_storage_download_url(bucket_name, object_path, token)
 
 
 def _read_or_create_storage_token(blob: Any) -> str:
@@ -164,13 +141,47 @@ def _read_or_create_storage_token(blob: Any) -> str:
 
 
 def _normalize_type(value: Any) -> str:
-    meal_type = _as_string(value) or "other"
+    meal_type = coerce_optional_str(value) or "other"
     return meal_type if meal_type in MEAL_TYPES else "other"
 
 
 def _normalize_source(value: Any) -> str | None:
-    source = _as_string(value)
+    source = coerce_optional_str(value)
     return source if source in MEAL_SOURCES else None
+
+
+def _normalize_input_method(value: Any) -> str | None:
+    input_method = coerce_optional_str(value)
+    return input_method if input_method in MEAL_INPUT_METHODS else None
+
+
+def _normalize_ai_meta(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    model = coerce_optional_str(value.get("model"))
+    run_id = coerce_optional_str(value.get("runId"))
+    confidence_raw = value.get("confidence")
+    confidence = None
+    if confidence_raw is not None:
+        confidence = coerce_float(confidence_raw)
+
+    warnings_raw = value.get("warnings")
+    warnings = (
+        [warning.strip() for warning in warnings_raw if isinstance(warning, str) and warning.strip()]
+        if isinstance(warnings_raw, list)
+        else []
+    )
+
+    if model is None and run_id is None and confidence is None and not warnings:
+        return None
+
+    return {
+        "model": model,
+        "runId": run_id,
+        "confidence": confidence,
+        "warnings": warnings,
+    }
 
 
 def normalize_meal_payload(
@@ -182,8 +193,8 @@ def normalize_meal_payload(
     fallback_day_key: str | None = None,
 ) -> dict[str, Any]:
     now_iso = _now_iso()
-    cloud_id = _as_string(payload.get("cloudId")) or fallback_cloud_id
-    meal_id = _as_string(payload.get("mealId")) or cloud_id
+    cloud_id = coerce_optional_str(payload.get("cloudId")) or fallback_cloud_id
+    meal_id = coerce_optional_str(payload.get("mealId")) or cloud_id
     if not cloud_id or not meal_id:
         raise ValueError("Missing meal identifier")
 
@@ -191,7 +202,7 @@ def normalize_meal_payload(
     updated_at = coerce_iso8601(payload.get("updatedAt"), fallback=fallback_updated_at or now_iso)
     timestamp = coerce_iso8601(payload.get("timestamp"), fallback=updated_at)
     created_at = coerce_iso8601(payload.get("createdAt"), fallback=timestamp)
-    day_key = _as_string(payload.get("dayKey")) or fallback_day_key
+    day_key = coerce_optional_str(payload.get("dayKey")) or fallback_day_key
     deleted = _as_bool(payload.get("deleted"))
 
     return {
@@ -200,15 +211,19 @@ def normalize_meal_payload(
         "timestamp": timestamp,
         "dayKey": day_key,
         "type": _normalize_type(payload.get("type")),
-        "name": _as_string(payload.get("name")),
+        "name": coerce_optional_str(payload.get("name")),
         "ingredients": ingredients,
         "createdAt": created_at,
         "updatedAt": updated_at,
         "syncState": "synced",
         "source": _normalize_source(payload.get("source")),
-        "imageId": _as_string(payload.get("imageId")),
-        "photoUrl": _as_string(payload.get("photoUrl")),
-        "notes": _as_string(payload.get("notes")),
+        "inputMethod": _normalize_input_method(
+            payload.get("inputMethod", payload.get("input_method"))
+        ),
+        "aiMeta": _normalize_ai_meta(payload.get("aiMeta", payload.get("ai_meta"))),
+        "imageId": coerce_optional_str(payload.get("imageId")),
+        "photoUrl": coerce_optional_str(payload.get("photoUrl")),
+        "notes": coerce_optional_str(payload.get("notes")),
         "tags": _normalize_tags(payload.get("tags")),
         "deleted": deleted,
         "cloudId": cloud_id,
@@ -225,8 +240,8 @@ def _normalize_meal_snapshot(
         user_id,
         data,
         fallback_cloud_id=snapshot.id,
-        fallback_updated_at=_as_string(data.get("updatedAt")) or _now_iso(),
-        fallback_day_key=_as_string(data.get("dayKey")),
+        fallback_updated_at=coerce_optional_str(data.get("updatedAt")) or _now_iso(),
+        fallback_day_key=coerce_optional_str(data.get("dayKey")),
     )
 
 
@@ -344,7 +359,7 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             if existing["updatedAt"] > normalized_payload["updatedAt"]:
                 return existing
             if not normalized_payload.get("dayKey"):
-                normalized_payload["dayKey"] = _as_string(existing.get("dayKey"))
+                normalized_payload["dayKey"] = coerce_optional_str(existing.get("dayKey"))
         meal_ref.set(normalized_payload, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
@@ -355,7 +370,7 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     await streak_service.sync_streak_from_meals(
         user_id,
-        reference_day_key=_as_string(normalized_payload.get("dayKey")),
+        reference_day_key=coerce_optional_str(normalized_payload.get("dayKey")),
     )
 
     return normalized_payload
@@ -388,7 +403,7 @@ async def mark_deleted(
             },
             fallback_cloud_id=meal_id,
             fallback_updated_at=normalized_updated_at,
-            fallback_day_key=_as_string(existing.get("dayKey")),
+            fallback_day_key=coerce_optional_str(existing.get("dayKey")),
         )
         if snapshot.exists:
             existing_normalized = _normalize_meal_snapshot(user_id, snapshot)
@@ -404,7 +419,7 @@ async def mark_deleted(
 
     await streak_service.sync_streak_from_meals(
         user_id,
-        reference_day_key=_as_string(payload.get("dayKey")),
+        reference_day_key=coerce_optional_str(payload.get("dayKey")),
     )
 
     return payload
@@ -434,8 +449,8 @@ async def resolve_photo(
     meal_id: str | None = None,
     image_id: str | None = None,
 ) -> MealPhotoPayload:
-    normalized_meal_id = _as_string(meal_id)
-    normalized_image_id = _as_string(image_id)
+    normalized_meal_id = coerce_optional_str(meal_id)
+    normalized_image_id = coerce_optional_str(image_id)
 
     if not normalized_meal_id and not normalized_image_id:
         raise ValueError("Missing meal photo identifier")
@@ -456,8 +471,8 @@ async def resolve_photo(
 
         if snapshot.exists:
             normalized_meal = _normalize_meal_snapshot(user_id, snapshot)
-            resolved_photo_url = _as_string(normalized_meal.get("photoUrl"))
-            resolved_image_id = _as_string(normalized_meal.get("imageId")) or resolved_image_id
+            resolved_photo_url = coerce_optional_str(normalized_meal.get("photoUrl"))
+            resolved_image_id = coerce_optional_str(normalized_meal.get("imageId")) or resolved_image_id
 
     if resolved_photo_url and resolved_image_id:
         return {
@@ -492,7 +507,7 @@ async def resolve_photo(
         return {
             "mealId": normalized_meal_id or None,
             "imageId": resolved_image_id,
-            "photoUrl": _storage_url_for_path(
+            "photoUrl": build_storage_download_url(
                 get_storage_bucket_name(bucket),
                 object_path,
                 token,

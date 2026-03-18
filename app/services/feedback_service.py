@@ -11,6 +11,7 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import FEEDBACK_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import (
     build_storage_download_url,
     get_firestore,
@@ -19,9 +20,6 @@ from app.db.firebase import (
 )
 
 logger = logging.getLogger(__name__)
-
-USERS_COLLECTION = "users"
-FEEDBACK_SUBCOLLECTION = "feedback"
 
 
 class FeedbackValidationError(Exception):

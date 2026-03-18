@@ -7,28 +7,16 @@ from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
+from app.core.coercion import coerce_int, coerce_optional_int
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import (
+    CHAT_THREADS_SUBCOLLECTION,
+    MESSAGES_SUBCOLLECTION,
+    USERS_COLLECTION,
+)
 from app.db.firebase import get_firestore
 
 logger = logging.getLogger(__name__)
-
-USERS_COLLECTION = "users"
-CHAT_THREADS_SUBCOLLECTION = "chat_threads"
-MESSAGES_SUBCOLLECTION = "messages"
-
-
-def _coerce_int(value: Any, *, fallback: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _coerce_optional_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _threads_collection(user_id: str) -> firestore.CollectionReference:
@@ -58,10 +46,10 @@ def _normalize_thread(
     return {
         "id": snapshot.id,
         "title": str(data.get("title") or ""),
-        "createdAt": _coerce_int(data.get("createdAt")),
-        "updatedAt": _coerce_int(data.get("updatedAt")),
+        "createdAt": coerce_int(data.get("createdAt")),
+        "updatedAt": coerce_int(data.get("updatedAt")),
         "lastMessage": str(data.get("lastMessage") or "") or None,
-        "lastMessageAt": _coerce_optional_int(data.get("lastMessageAt")),
+        "lastMessageAt": coerce_optional_int(data.get("lastMessageAt")),
     }
 
 
@@ -73,13 +61,13 @@ def _normalize_message(
     if role not in {"user", "assistant", "system"}:
         role = "assistant"
 
-    created_at = _coerce_int(data.get("createdAt"))
+    created_at = coerce_int(data.get("createdAt"))
     return {
         "id": snapshot.id,
         "role": role,
         "content": str(data.get("content") or ""),
         "createdAt": created_at,
-        "lastSyncedAt": _coerce_int(data.get("lastSyncedAt"), fallback=created_at),
+        "lastSyncedAt": coerce_int(data.get("lastSyncedAt"), fallback=created_at),
         "deleted": bool(data.get("deleted") or False),
     }
 

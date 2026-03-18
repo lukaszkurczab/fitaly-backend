@@ -11,6 +11,21 @@ from app.services.ai_gateway_service import GatewayResult
 
 COLLECTION_NAME = "ai_gateway_logs"
 
+_RESULT_KEY_MAP = {
+    "request_id": "requestId",
+    "task_type": "taskType",
+    "hypothetical_decision": "hypotheticalDecision",
+    "hypothetical_reason": "hypotheticalReason",
+    "enforced": "enforced",
+    "model": "model",
+    "estimated_tokens": "estimatedTokens",
+    "actual_tokens": "actualTokens",
+    "latency_ms": "latencyMs",
+    "estimated_cost": "estimatedCost",
+    "outcome": "outcome",
+    "failure_reason": "failureReason",
+}
+
 
 class GatewayLogExtras(TypedDict, total=False):
     responseTimeMs: float
@@ -27,6 +42,8 @@ class GatewayLogExtras(TypedDict, total=False):
     actualTokens: int | None
     latencyMs: float | None
     estimatedCost: float
+    outcome: str
+    failureReason: str
 
 
 def log_gateway_decision(
@@ -66,18 +83,6 @@ def log_gateway_decision(
         doc["profile"] = profile
     if tier:
         doc["tier"] = tier
-    _RESULT_KEY_MAP = {
-        "request_id": "requestId",
-        "task_type": "taskType",
-        "hypothetical_decision": "hypotheticalDecision",
-        "hypothetical_reason": "hypotheticalReason",
-        "enforced": "enforced",
-        "model": "model",
-        "estimated_tokens": "estimatedTokens",
-        "actual_tokens": "actualTokens",
-        "latency_ms": "latencyMs",
-        "estimated_cost": "estimatedCost",
-    }
     for snake_key, camel_key in _RESULT_KEY_MAP.items():
         if snake_key in result:
             doc[camel_key] = result[snake_key]

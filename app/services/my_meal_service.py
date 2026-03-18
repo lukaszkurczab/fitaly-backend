@@ -10,14 +10,12 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import MY_MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.services import meal_storage
 from app.services.meal_service import coerce_iso8601, normalize_meal_payload
 
 logger = logging.getLogger(__name__)
-
-USERS_COLLECTION = "users"
-MY_MEALS_SUBCOLLECTION = "myMeals"
 
 
 def _my_meals_collection(user_id: str) -> firestore.CollectionReference:

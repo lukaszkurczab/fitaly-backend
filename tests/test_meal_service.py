@@ -108,6 +108,8 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
         "updatedAt": "2026-03-03T12:30:00.000Z",
         "syncState": "synced",
         "source": None,
+        "inputMethod": None,
+        "aiMeta": None,
         "imageId": None,
         "photoUrl": None,
         "notes": None,
@@ -118,6 +120,56 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
     }
     meal_ref.set.assert_called_once_with(result, merge=True)
     sync_streak.assert_called_once_with("user-1", reference_day_key=None)
+
+
+def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    result = asyncio.run(
+        meal_service.upsert_meal(
+            "user-1",
+            {
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T12:30:00.000Z",
+                "deleted": False,
+                "inputMethod": "photo",
+                "aiMeta": {
+                    "model": "gpt-4o-mini",
+                    "runId": "run-1",
+                    "confidence": 0.84,
+                    "warnings": ["partial_totals"],
+                },
+            },
+        )
+    )
+
+    assert result["inputMethod"] == "photo"
+    assert result["aiMeta"] == {
+        "model": "gpt-4o-mini",
+        "runId": "run-1",
+        "confidence": 0.84,
+        "warnings": ["partial_totals"],
+    }
+    meal_ref.set.assert_called_once_with(result, merge=True)
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
 def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> None:

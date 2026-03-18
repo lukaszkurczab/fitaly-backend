@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 import logging
 from typing import Any
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
+from app.core.coercion import coerce_float, round_metric
 from app.core.config import settings
 from app.core.datetime_utils import parse_flexible_datetime, utc_now
 from app.core.exceptions import FirestoreServiceError, HabitsDisabledError
+from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.habits import (
     CoachPriority,
@@ -28,13 +31,12 @@ from app.services.streak_service import _parse_target_kcal
 
 logger = logging.getLogger(__name__)
 
-USERS_COLLECTION = "users"
-MEALS_SUBCOLLECTION = "meals"
 VALID_MEAL_TYPES = ("breakfast", "lunch", "dinner", "snack", "other")
 LOW_CONFIDENCE_THRESHOLD = 0.5
 RECENT_ACTIVITY_WINDOW_DAYS = 7
 ADHERENCE_WINDOW_DAYS = 14
 CONSISTENCY_WINDOW_DAYS = 28
+READ_WINDOW_BUFFER_DAYS = 1
 
 
 @dataclass(frozen=True)
@@ -55,10 +57,6 @@ class DailyAggregate:
     has_unknown_details: bool = False
 
 
-def _round_metric(value: float, digits: int = 4) -> float:
-    return round(float(value), digits)
-
-
 def _to_date(day_key: str) -> date | None:
     try:
         return datetime.strptime(day_key, "%Y-%m-%d").date()
@@ -67,6 +65,7 @@ def _to_date(day_key: str) -> date | None:
 
 
 def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
+    """Use valid dayKey as the habit source of truth, otherwise fall back to UTC timestamp day."""
     day_key = raw_meal.get("dayKey")
     if isinstance(day_key, str):
         normalized_day_key = day_key.strip()
@@ -79,24 +78,13 @@ def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
     return timestamp.date().isoformat()
 
 
-def _coerce_number(value: object, *, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
 
 
 def _extract_totals(raw_meal: dict[str, Any]) -> tuple[float, float]:
     totals = raw_meal.get("totals")
     if isinstance(totals, dict):
-        kcal = _coerce_number(totals.get("kcal"))
-        protein = _coerce_number(totals.get("protein"))
+        kcal = coerce_float(totals.get("kcal"))
+        protein = coerce_float(totals.get("protein"))
         if kcal > 0 or protein > 0:
             return kcal, protein
 
@@ -107,8 +95,8 @@ def _extract_totals(raw_meal: dict[str, Any]) -> tuple[float, float]:
         for raw_ingredient in ingredients:
             if not isinstance(raw_ingredient, dict):
                 continue
-            kcal += _coerce_number(raw_ingredient.get("kcal"))
-            protein += _coerce_number(raw_ingredient.get("protein"))
+            kcal += coerce_float(raw_ingredient.get("kcal"))
+            protein += coerce_float(raw_ingredient.get("protein"))
     return kcal, protein
 
 
@@ -123,7 +111,7 @@ def _has_meaningful_ingredients(raw_meal: dict[str, Any]) -> bool:
         if isinstance(raw_ingredient.get("name"), str) and raw_ingredient["name"].strip():
             return True
         if any(
-            _coerce_number(raw_ingredient.get(field_name)) > 0
+            coerce_float(raw_ingredient.get(field_name)) > 0
             for field_name in ("amount", "kcal", "protein", "carbs", "fat")
         ):
             return True
@@ -139,7 +127,7 @@ def _has_meaningful_totals(raw_meal: dict[str, Any]) -> bool:
     if not isinstance(totals, dict):
         return False
     return any(
-        _coerce_number(totals.get(field_name)) > 0
+        coerce_float(totals.get(field_name)) > 0
         for field_name in ("carbs", "fat")
     )
 
@@ -157,7 +145,7 @@ def _has_low_confidence_ai_meta(raw_meal: dict[str, Any]) -> bool:
     if not isinstance(ai_meta, dict):
         return False
     confidence = ai_meta.get("confidence")
-    return _coerce_number(confidence, default=1.0) < LOW_CONFIDENCE_THRESHOLD
+    return coerce_float(confidence, default=1.0) < LOW_CONFIDENCE_THRESHOLD
 
 
 def _is_structurally_incomplete(raw_meal: dict[str, Any]) -> bool:
@@ -175,6 +163,10 @@ def _is_unknown_meal_details(raw_meal: dict[str, Any]) -> bool:
         or _has_low_confidence_ai_meta(raw_meal)
         or _is_structurally_incomplete(raw_meal)
     )
+
+
+def _is_deleted_meal(raw_meal: dict[str, Any]) -> bool:
+    return bool(raw_meal.get("deleted"))
 
 
 def _normalize_meal(raw_meal: dict[str, Any]) -> NormalizedMeal | None:
@@ -228,6 +220,8 @@ def _aggregate_days(
     aggregates: dict[str, DailyAggregate] = {}
 
     for raw_meal in meals:
+        if _is_deleted_meal(raw_meal):
+            continue
         normalized = _normalize_meal(raw_meal)
         if normalized is None:
             continue
@@ -305,7 +299,7 @@ def _build_protein_days_hit(
         hitDays=hit_days,
         eligibleDays=eligible_days,
         unknownDays=0,
-        ratio=_round_metric(hit_days / eligible_days) if eligible_days else None,
+        ratio=round_metric(hit_days / eligible_days) if eligible_days else None,
     )
 
 
@@ -331,6 +325,54 @@ def _derive_top_risk_and_priority(
         return "calorie_under_target", "calorie_adherence"
 
     return "none", "maintain"
+
+
+def _build_read_window(
+    *,
+    computed_at: datetime,
+    window_days: int = CONSISTENCY_WINDOW_DAYS,
+    buffer_days: int = READ_WINDOW_BUFFER_DAYS,
+) -> tuple[date, date]:
+    end_day = computed_at.date()
+    start_day = end_day - timedelta(days=window_days - 1)
+    return start_day - timedelta(days=buffer_days), end_day + timedelta(days=buffer_days)
+
+
+def _serialize_day_start(day_value: date) -> str:
+    return datetime.combine(day_value, time.min, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _load_recent_meals(
+    user_ref: firestore.DocumentReference,
+    *,
+    computed_at: datetime,
+) -> list[dict[str, Any]]:
+    meals_collection = user_ref.collection(MEALS_SUBCOLLECTION)
+    start_day, end_day = _build_read_window(computed_at=computed_at)
+    start_day_key = start_day.isoformat()
+    end_day_key = end_day.isoformat()
+    start_ts = _serialize_day_start(start_day)
+    end_ts = _serialize_day_start(end_day + timedelta(days=1))
+
+    # Read by canonical dayKey first, then add a bounded timestamp fallback for meals missing/invalid dayKey.
+    snapshots_by_id: dict[str, dict[str, Any]] = {}
+    day_key_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("dayKey", ">=", start_day_key))
+        .where(filter=FieldFilter("dayKey", "<=", end_day_key))
+    )
+    for snapshot in day_key_query.stream():
+        snapshots_by_id[snapshot.id] = dict(snapshot.to_dict() or {})
+
+    timestamp_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("timestamp", ">=", start_ts))
+        .where(filter=FieldFilter("timestamp", "<", end_ts))
+    )
+    for snapshot in timestamp_query.stream():
+        snapshots_by_id.setdefault(snapshot.id, dict(snapshot.to_dict() or {}))
+
+    return list(snapshots_by_id.values())
 
 
 def compute_habit_signals(
@@ -364,9 +406,9 @@ def compute_habit_signals(
 
     total_meals_14 = sum(aggregates[day_key].meal_count for day_key in day_keys_14)
     avg_meals_per_logged_day_14 = (
-        _round_metric(total_meals_14 / logging_days_14) if logging_days_14 else 0.0
+        round_metric(total_meals_14 / logging_days_14) if logging_days_14 else 0.0
     )
-    logging_consistency_28 = _round_metric(logging_days_28 / CONSISTENCY_WINDOW_DAYS)
+    logging_consistency_28 = round_metric(logging_days_28 / CONSISTENCY_WINDOW_DAYS)
 
     calorie_target = _parse_target_kcal(profile or {})
     protein_target = _extract_protein_target(profile)
@@ -375,11 +417,11 @@ def compute_habit_signals(
 
     if calorie_target > 0 and logging_days_14 > 0:
         kcal_ratios = [aggregates[day_key].kcal / calorie_target for day_key in day_keys_14]
-        kcal_adherence_14 = _round_metric(sum(kcal_ratios) / len(kcal_ratios))
+        kcal_adherence_14 = round_metric(sum(kcal_ratios) / len(kcal_ratios))
         kcal_under_target_days = sum(
             1 for day_key in day_keys_14 if aggregates[day_key].kcal < calorie_target * 0.9
         )
-        kcal_under_target_ratio_14 = _round_metric(kcal_under_target_days / logging_days_14)
+        kcal_under_target_ratio_14 = round_metric(kcal_under_target_days / logging_days_14)
 
     protein_days_hit_14 = _build_protein_days_hit(
         day_keys_14=day_keys_14,
@@ -432,7 +474,10 @@ async def get_habit_signals(
     try:
         user_snapshot = user_ref.get()
         profile = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else None
-        meals = [dict(snapshot.to_dict() or {}) for snapshot in user_ref.collection(MEALS_SUBCOLLECTION).stream()]
+        meals = _load_recent_meals(
+            user_ref,
+            computed_at=(computed_at or utc_now()).astimezone(UTC),
+        )
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to compute habit signals.",

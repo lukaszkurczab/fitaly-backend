@@ -21,10 +21,17 @@ from app.db.firebase import (
 from app.services import streak_service
 from app.services.username_service import normalize_username
 
+from app.core.firestore_constants import (
+    CHAT_THREADS_SUBCOLLECTION,
+    FEEDBACK_SUBCOLLECTION,
+    MESSAGES_SUBCOLLECTION,
+    MY_MEALS_SUBCOLLECTION,
+    USERNAMES_COLLECTION,
+    USERS_COLLECTION,
+)
+
 logger = logging.getLogger(__name__)
 
-USERS_COLLECTION = "users"
-USERNAMES_COLLECTION = "usernames"
 DELETE_SUBCOLLECTIONS = (
     "meals",
     "myMeals",
@@ -36,10 +43,6 @@ DELETE_SUBCOLLECTIONS = (
 )
 BATCH_DELETE_LIMIT = 500
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-CHAT_THREADS_SUBCOLLECTION = "chat_threads"
-CHAT_MESSAGES_SUBCOLLECTION = "messages"
-FEEDBACK_SUBCOLLECTION = "feedback"
-MY_MEALS_SUBCOLLECTION = "myMeals"
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
         "unitsSystem",
@@ -285,7 +288,7 @@ def _delete_chat_threads(
     thread_documents = list(user_ref.collection(CHAT_THREADS_SUBCOLLECTION).stream())
     for thread_document in thread_documents:
         message_documents = list(
-            thread_document.reference.collection(CHAT_MESSAGES_SUBCOLLECTION).stream()
+            thread_document.reference.collection(MESSAGES_SUBCOLLECTION).stream()
         )
         if message_documents:
             _delete_documents_in_batches(client, message_documents)
@@ -302,7 +305,7 @@ def _read_chat_thread_messages(
         thread_id = thread_document.id
         thread_data = dict(thread_document.to_dict() or {})
         for message_document in thread_document.reference.collection(
-            CHAT_MESSAGES_SUBCOLLECTION
+            MESSAGES_SUBCOLLECTION
         ).stream():
             payload = dict(message_document.to_dict() or {})
             payload.setdefault("id", message_document.id)

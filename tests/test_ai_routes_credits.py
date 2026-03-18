@@ -94,6 +94,10 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
         "costs": {"chat": 1, "textMeal": 1, "photo": 5},
         "version": settings.VERSION,
         "persistence": "backend_owned",
+        "model": None,
+        "runId": None,
+        "confidence": None,
+        "warnings": [],
     }
     deduct_credits.assert_called_once_with("abc", cost=1, action="chat")
     ask_chat.assert_called_once_with("chat prompt")
@@ -140,11 +144,15 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Jaka bedzie pogoda jutro?"},
+        json={"message": "Ile bialka ma kurczak z ryzem?"},
         headers=auth_headers("abc"),
     )
 
     assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4o-mini"
+    assert response.json()["runId"]
+    assert response.json()["confidence"] is None
+    assert response.json()["warnings"] == []
     log_gateway_decision.assert_called_once()
     gateway_result = log_gateway_decision.call_args.args[2]
     assert gateway_result["decision"] == "FORWARD"
@@ -153,9 +161,55 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
     assert gateway_result["model"] == "gpt-4o-mini"
     assert gateway_result["estimated_tokens"] > 0
     assert gateway_result["estimated_cost"] == 1.0
-    assert gateway_result["hypothetical_decision"] == "REJECT"
-    assert gateway_result["hypothetical_reason"] == "LIKELY_OFF_TOPIC"
+    assert gateway_result["outcome"] == "FORWARDED"
     assert gateway_result["request_id"]
+
+
+def test_post_ai_ask_rejects_real_off_topic_chat(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch(
+        "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
+    )
+    get_credits_status = mocker.patch(
+        "app.api.routes.ai.ai_credits_service.get_credits_status",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
+    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+
+    response = client.post(
+        "/api/v1/ai/ask",
+        json={"message": "Jaka bedzie pogoda jutro?"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": {
+            "message": "AI request blocked by gateway",
+            "code": "AI_GATEWAY_BLOCKED",
+            "reason": "LIKELY_OFF_TOPIC",
+            "score": 1.0,
+        }
+    }
+    get_credits_status.assert_called_once_with("abc")
+    deduct_credits.assert_not_called()
+    ask_chat.assert_not_called()
+    log_gateway_decision.assert_called_once()
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["decision"] == "REJECT"
+    assert gateway_result["reason"] == "LIKELY_OFF_TOPIC"
+    assert gateway_result["outcome"] == "BLOCKED"
+    assert gateway_result["enforced"] is True
 
 
 def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
@@ -300,7 +354,7 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
         return_value={
@@ -357,6 +411,10 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
 
     assert response.status_code == 503
     assert response.json() == {"detail": "AI service unavailable"}
+    log_gateway_decision.assert_called_once()
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["outcome"] == "UPSTREAM_ERROR"
+    assert gateway_result["failure_reason"] == "OpenAIServiceError"
     refund_credits.assert_called_once_with(
         "abc",
         cost=1,
@@ -403,9 +461,14 @@ def test_post_ai_photo_analyze_deducts_five_credits(
     assert response.status_code == 200
     assert response.json()["balance"] == 95
     assert response.json()["costs"] == {"chat": 1, "textMeal": 1, "photo": 5}
+    assert response.json()["model"] == "gpt-4o"
+    assert response.json()["runId"]
+    assert response.json()["warnings"] == []
     deduct_credits.assert_called_once_with("abc", cost=5, action="photo_analysis")
     log_gateway_decision.assert_called_once()
-    assert log_gateway_decision.call_args.args[2]["task_type"] == "photo_meal_analysis"
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["task_type"] == "photo_meal_analysis"
+    assert gateway_result["outcome"] == "FORWARDED"
 
 
 def test_post_ai_text_meal_analyze_deducts_one_credit(
@@ -446,9 +509,148 @@ def test_post_ai_text_meal_analyze_deducts_one_credit(
 
     assert response.status_code == 200
     assert response.json()["balance"] == 799
+    assert response.json()["model"] == "gpt-4o-mini"
+    assert response.json()["runId"]
+    assert response.json()["warnings"] == []
     deduct_credits.assert_called_once_with("abc", cost=1, action="text_meal_analysis")
     log_gateway_decision.assert_called_once()
-    assert log_gateway_decision.call_args.args[2]["task_type"] == "text_meal_analysis"
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["task_type"] == "text_meal_analysis"
+    assert gateway_result["outcome"] == "FORWARDED"
+
+
+def test_post_ai_photo_analyze_respects_gateway_reject(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.get_credits_status",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_gateway_service.evaluate_request",
+        return_value={
+            "decision": "REJECT",
+            "reason": "TEST_BLOCK",
+            "score": 0.8,
+            "credit_cost": 0.0,
+        },
+    )
+    deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
+    analyze_photo = mocker.patch("app.api.routes.ai.openai_service.analyze_photo")
+
+    response = client.post(
+        "/api/v1/ai/photo/analyze",
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AI_GATEWAY_BLOCKED"
+    deduct_credits.assert_not_called()
+    analyze_photo.assert_not_called()
+    log_gateway_decision.assert_called_once()
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "BLOCKED"
+
+
+def test_post_ai_text_meal_analyze_respects_gateway_reject(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.get_credits_status",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="premium",
+            balance=800,
+            allocation=800,
+            period_start_at=datetime(2026, 4, 14, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 5, 14, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_gateway_service.evaluate_request",
+        return_value={
+            "decision": "REJECT",
+            "reason": "TEST_BLOCK",
+            "score": 0.7,
+            "credit_cost": 0.0,
+        },
+    )
+    deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
+    analyze_text_meal = mocker.patch("app.api.routes.ai.text_meal_service.analyze_text_meal")
+
+    response = client.post(
+        "/api/v1/ai/text-meal/analyze",
+        json={"payload": {"name": "owsianka"}},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AI_GATEWAY_BLOCKED"
+    deduct_credits.assert_not_called()
+    analyze_text_meal.assert_not_called()
+    log_gateway_decision.assert_called_once()
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "BLOCKED"
+
+
+def test_post_ai_photo_analyze_logs_upstream_failure(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=95,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.openai_service.analyze_photo",
+        side_effect=OpenAIServiceError("unavailable"),
+    )
+    refund_credits = mocker.patch(
+        "app.api.routes.ai.ai_credits_service.refund_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/ai/photo/analyze",
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 503
+    log_gateway_decision.assert_called_once()
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["outcome"] == "UPSTREAM_ERROR"
+    assert gateway_result["failure_reason"] == "OpenAIServiceError"
+    refund_credits.assert_called_once_with(
+        "abc",
+        cost=5,
+        action="photo_analysis_failure_refund",
+    )
 
 
 def test_post_ai_photo_validation_reject_has_zero_deduction(

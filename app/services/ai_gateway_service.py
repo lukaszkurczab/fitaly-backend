@@ -10,6 +10,7 @@ from app.core.config import settings
 
 Decision = Literal["FORWARD", "REJECT", "LOCAL_ANSWER"]
 TaskType = Literal["chat", "photo_meal_analysis", "text_meal_analysis", "other"]
+GatewayOutcome = Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"]
 
 
 class GatewayResult(TypedDict):
@@ -28,6 +29,8 @@ class GatewayResult(TypedDict):
     actual_tokens: int | None
     latency_ms: float | None
     estimated_cost: float
+    outcome: NotRequired[GatewayOutcome]
+    failure_reason: NotRequired[str]
 
 
 def classify_task_type(action_type: str) -> TaskType:
@@ -84,6 +87,8 @@ def build_gateway_result(
     enforced: bool = True,
     actual_tokens: int | None = None,
     latency_ms: float | None = None,
+    outcome: GatewayOutcome | None = None,
+    failure_reason: str | None = None,
 ) -> GatewayResult:
     task_type = classify_task_type(action_type)
     estimated_cost = estimate_cost(task_type, decision)
@@ -106,6 +111,10 @@ def build_gateway_result(
         result["hypothetical_decision"] = hypothetical_decision
     if hypothetical_reason is not None:
         result["hypothetical_reason"] = hypothetical_reason
+    if outcome is not None:
+        result["outcome"] = outcome
+    if failure_reason is not None:
+        result["failure_reason"] = failure_reason
     return result
 
 
@@ -154,6 +163,18 @@ def evaluate_request(
         )
 
     hypothetical_decision, hypothetical_reason = _classify_hypothetical_decision(message)
+    if classify_task_type(action_type) == "chat" and hypothetical_decision == "REJECT":
+        return build_gateway_result(
+            action_type=action_type,
+            message=message,
+            decision="REJECT",
+            reason=hypothetical_reason or "LIKELY_OFF_TOPIC",
+            request_id=request_id,
+            hypothetical_decision=hypothetical_decision,
+            hypothetical_reason=hypothetical_reason,
+            enforced=True,
+        )
+
     return build_gateway_result(
         action_type=action_type,
         message=message,

@@ -11,16 +11,18 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import (
+    BADGES_SUBCOLLECTION,
+    MEALS_SUBCOLLECTION,
+    STREAK_SUBCOLLECTION,
+    USERS_COLLECTION,
+)
 from app.db.firebase import get_firestore
 
 logger = logging.getLogger(__name__)
 
 DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-USERS_COLLECTION = "users"
-STREAK_SUBCOLLECTION = "streak"
 STREAK_DOCUMENT_ID = "main"
-BADGES_SUBCOLLECTION = "badges"
-MEALS_SUBCOLLECTION = "meals"
 STREAK_MILESTONES = (7, 30, 90, 180, 365, 500, 1000)
 STREAK_BADGE_SPECS = {
     7: {"id": "streak_7", "color": "#5AA469"},

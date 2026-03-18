@@ -42,6 +42,37 @@ def _meal(
     return payload
 
 
+class _FakeQuery:
+    def __init__(
+        self,
+        collection: "_FakeMealsCollection",
+        filters: list[object] | None = None,
+    ) -> None:
+        self._collection = collection
+        self._filters = filters or []
+
+    def where(self, *, filter) -> "_FakeQuery":
+        return _FakeQuery(self._collection, [*self._filters, filter])
+
+    def stream(self):
+        self._collection.calls.append(
+            [
+                (flt.field_path, flt.op_string, flt.value)
+                for flt in self._filters
+            ]
+        )
+        return self._collection.snapshots
+
+
+class _FakeMealsCollection:
+    def __init__(self, snapshots: list[object]) -> None:
+        self.snapshots = snapshots
+        self.calls: list[list[tuple[str, str, object]]] = []
+
+    def where(self, *, filter) -> _FakeQuery:
+        return _FakeQuery(self, [filter])
+
+
 def test_day_grouping_prefers_day_key_over_timestamp() -> None:
     response = habit_signal_service.compute_habit_signals(
         profile=None,
@@ -67,6 +98,25 @@ def test_day_grouping_prefers_day_key_over_timestamp() -> None:
     assert response.behavior.avgMealsPerLoggedDay14 == 1.0
 
 
+def test_day_grouping_falls_back_to_timestamp_when_day_key_is_invalid() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile=None,
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="bad-day",
+                timestamp="2026-03-18T08:00:00Z",
+                kcal=400,
+                protein=20,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.loggingDays7 == 1
+    assert response.behavior.avgMealsPerLoggedDay14 == 1.0
+
+
 def test_logging_consistency_uses_28_day_window() -> None:
     meals = []
     for index in range(14):
@@ -88,6 +138,59 @@ def test_logging_consistency_uses_28_day_window() -> None:
     )
 
     assert response.behavior.loggingConsistency28 == 0.5
+
+
+def test_deleted_meals_are_excluded_from_habit_signals() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile=None,
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T08:00:00Z",
+                kcal=600,
+                protein=30,
+            ),
+            _meal(
+                meal_id="meal-2",
+                day_key="2026-03-17",
+                timestamp="2026-03-17T08:00:00Z",
+                kcal=700,
+                protein=35,
+                deleted=True,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.loggingDays7 == 1
+    assert response.behavior.avgMealsPerLoggedDay14 == 1.0
+
+
+def test_meals_older_than_consistency_window_are_excluded() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile=None,
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T08:00:00Z",
+                kcal=600,
+                protein=30,
+            ),
+            _meal(
+                meal_id="meal-2",
+                day_key="2026-02-10",
+                timestamp="2026-02-10T08:00:00Z",
+                kcal=700,
+                protein=35,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.loggingDays7 == 1
+    assert response.behavior.loggingConsistency28 == 0.0357
 
 
 def test_kcal_adherence_and_under_target_ratio_use_valid_target() -> None:
@@ -261,8 +364,7 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
         protein=90,
     )
 
-    meals_collection = mocker.Mock()
-    meals_collection.stream.return_value = [meal_snapshot]
+    meals_collection = _FakeMealsCollection([meal_snapshot])
     user_ref = mocker.Mock()
     user_ref.get.return_value = user_snapshot
     user_ref.collection.return_value = meals_collection
@@ -278,6 +380,11 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
 
     assert response.behavior.loggingDays7 == 1
     assert response.behavior.kcalAdherence14 == 0.9
+    assert len(meals_collection.calls) == 2
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[0][1][0] == "dayKey"
+    assert meals_collection.calls[1][0] == ("deleted", "==", False)
+    assert meals_collection.calls[1][1][0] == "timestamp"
 
 
 def test_get_habit_signals_raises_when_feature_flag_is_disabled(

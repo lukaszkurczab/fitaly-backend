@@ -10,9 +10,11 @@ from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
+from app.core.coercion import round_metric
 from app.core.config import settings
 from app.core.datetime_utils import utc_now
 from app.core.exceptions import FirestoreServiceError, StateDisabledError
+from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.nutrition_state import (
     NutritionAiSummary,
@@ -35,9 +37,6 @@ from app.services.streak_service import _build_streak_state_from_meals, _parse_t
 
 logger = logging.getLogger(__name__)
 
-USERS_COLLECTION = "users"
-MEALS_SUBCOLLECTION = "meals"
-
 
 def _serialize_datetime(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
@@ -55,10 +54,6 @@ def resolve_requested_day_key(day_key: str | None, *, now: datetime | None = Non
     if day_key is not None:
         return _parse_day_key_or_raise(day_key)
     return (now or utc_now()).astimezone(UTC).date().isoformat()
-
-
-def _round_metric(value: float, digits: int = 4) -> float:
-    return round(float(value), digits)
 
 
 def _coerce_target(value: object) -> float | None:
@@ -110,10 +105,10 @@ def _sum_consumed(meals: list[dict[str, Any]]) -> NutritionConsumed:
                         fat += float(ingredient.get("fat") or 0)
 
     return NutritionConsumed(
-        kcal=_round_metric(kcal, 2),
-        protein=_round_metric(protein, 2),
-        carbs=_round_metric(carbs, 2),
-        fat=_round_metric(fat, 2),
+        kcal=round_metric(kcal, 2),
+        protein=round_metric(protein, 2),
+        carbs=round_metric(carbs, 2),
+        fat=round_metric(fat, 2),
     )
 
 
@@ -123,14 +118,14 @@ def _build_remaining(
     consumed: NutritionConsumed,
 ) -> NutritionRemaining:
     return NutritionRemaining(
-        kcal=max(_round_metric(targets.kcal - consumed.kcal, 2), 0) if targets.kcal is not None else None,
-        protein=max(_round_metric(targets.protein - consumed.protein, 2), 0)
+        kcal=max(round_metric(targets.kcal - consumed.kcal, 2), 0) if targets.kcal is not None else None,
+        protein=max(round_metric(targets.protein - consumed.protein, 2), 0)
         if targets.protein is not None
         else None,
-        carbs=max(_round_metric(targets.carbs - consumed.carbs, 2), 0)
+        carbs=max(round_metric(targets.carbs - consumed.carbs, 2), 0)
         if targets.carbs is not None
         else None,
-        fat=max(_round_metric(targets.fat - consumed.fat, 2), 0) if targets.fat is not None else None,
+        fat=max(round_metric(targets.fat - consumed.fat, 2), 0) if targets.fat is not None else None,
     )
 
 
@@ -138,7 +133,7 @@ def _build_quality(meals: list[dict[str, Any]]) -> NutritionQuality:
     meals_logged = len(meals)
     missing_nutrition_meals = sum(1 for meal in meals if _is_unknown_meal_details(meal))
     completeness = (
-        _round_metric((meals_logged - missing_nutrition_meals) / meals_logged)
+        round_metric((meals_logged - missing_nutrition_meals) / meals_logged)
         if meals_logged > 0
         else 0.0
     )

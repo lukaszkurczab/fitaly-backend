@@ -1,10 +1,8 @@
-from datetime import datetime
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
-from app.schemas.ai_credits import CreditCosts
-from app.schemas.ai_common import AiPersistence
+from app.schemas.ai_common import BaseAiResponse
 
 
 class AiAskRequest(BaseModel):
@@ -12,13 +10,5 @@ class AiAskRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
-class AiAskResponse(BaseModel):
+class AiAskResponse(BaseAiResponse):
     reply: str
-    balance: int
-    allocation: int
-    tier: Literal["free", "premium"]
-    periodStartAt: datetime
-    periodEndAt: datetime
-    costs: CreditCosts
-    version: str
-    persistence: AiPersistence
