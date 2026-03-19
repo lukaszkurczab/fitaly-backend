@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -33,9 +33,11 @@ from app.services.ai_gateway_service import (
 )
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
+JSONDict = dict[str, Any]
+StringListDict = dict[str, list[str]]
 
 
-def _load_fixture(name: str) -> dict:
+def _load_fixture(name: str) -> JSONDict:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
 
 
@@ -48,10 +50,10 @@ class TestMealItemContract:
     """Canonical meal fixture must parse through both MealItem and MealUpsertRequest."""
 
     @pytest.fixture()
-    def fixture(self) -> dict:
+    def fixture(self) -> JSONDict:
         return _load_fixture("meal_item.json")
 
-    def test_meal_item_parses(self, fixture: dict) -> None:
+    def test_meal_item_parses(self, fixture: JSONDict) -> None:
         item = MealItem.model_validate(fixture)
         assert item.mealId == "meal-contract-1"
         assert item.type == "lunch"
@@ -64,16 +66,18 @@ class TestMealItemContract:
         assert item.aiMeta is not None
         assert item.aiMeta.model == "gpt-4o"
         assert item.dayKey == "2026-03-18"
+        assert item.loggedAtLocalMin == 780
+        assert item.tzOffsetMin == 60
         assert item.deleted is False
 
-    def test_meal_upsert_request_parses(self, fixture: dict) -> None:
+    def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
         req = MealUpsertRequest.model_validate(fixture)
         assert req.mealId == "meal-contract-1"
         assert req.type == "lunch"
         assert req.totals is not None
         assert req.totals.protein == 62.0
 
-    def test_fixture_round_trips_through_serialization(self, fixture: dict) -> None:
+    def test_fixture_round_trips_through_serialization(self, fixture: JSONDict) -> None:
         """Parse → serialize → parse must be stable."""
         item = MealItem.model_validate(fixture)
         serialized = item.model_dump(mode="json")
@@ -92,43 +96,54 @@ class TestNutritionStateContract:
     """Canonical nutrition state fixture must parse through NutritionStateResponse."""
 
     @pytest.fixture()
-    def fixture(self) -> dict:
+    def fixture(self) -> JSONDict:
         return _load_fixture("nutrition_state.json")
 
-    def test_response_parses(self, fixture: dict) -> None:
+    def test_response_parses(self, fixture: JSONDict) -> None:
         state = NutritionStateResponse.model_validate(fixture)
         assert state.dayKey == "2026-03-18"
         assert state.targets.kcal == 2200.0
         assert state.consumed.protein == 98.0
         assert state.remaining.carbs == 90.0
+        assert state.overTarget.kcal == 0.0
         assert state.quality.mealsLogged == 3
         assert state.quality.dataCompletenessScore == 1.0
 
-    def test_habits_summary_parses(self, fixture: dict) -> None:
+    def test_habits_summary_parses(self, fixture: JSONDict) -> None:
         state = NutritionStateResponse.model_validate(fixture)
         assert state.habits.available is True
         assert state.habits.behavior.loggingDays7 == 5
+        assert state.habits.behavior.validLoggingDays7 == 4
         assert state.habits.behavior.loggingConsistency28 == 0.75
+        assert state.habits.behavior.validLoggingConsistency28 == 0.61
+        assert state.habits.behavior.avgValidMealsPerValidLoggedDay14 == 2.5
         assert state.habits.behavior.mealTypeCoverage14.coveredCount == 3
+        assert state.habits.behavior.mealTypeFrequency14.lunch == 5
+        assert state.habits.behavior.dayCoverage14.validLoggedDays == 8
         assert state.habits.behavior.proteinDaysHit14.ratio == 0.67
+        assert state.habits.behavior.timingPatterns14.available is True
+        assert state.habits.behavior.timingPatterns14.firstMealMedianHour == 8.25
         assert state.habits.topRisk == "none"
         assert state.habits.coachPriority == "maintain"
+        assert state.habits.dataQuality.daysUsingTimestampTimingFallback14 == 2
 
-    def test_streak_summary_parses(self, fixture: dict) -> None:
+    def test_streak_summary_parses(self, fixture: JSONDict) -> None:
         state = NutritionStateResponse.model_validate(fixture)
         assert state.streak.available is True
         assert state.streak.current == 5
         assert state.streak.lastDate == "2026-03-18"
 
-    def test_ai_summary_parses(self, fixture: dict) -> None:
+    def test_ai_summary_parses(self, fixture: JSONDict) -> None:
         state = NutritionStateResponse.model_validate(fixture)
         assert state.ai.available is True
         assert state.ai.tier == "free"
         assert state.ai.balance == 85
         assert state.ai.costs.chat == 1
         assert state.ai.costs.photo == 5
+        assert state.meta.isDegraded is False
+        assert state.meta.componentStatus.habits == "ok"
 
-    def test_fixture_top_level_keys_match_schema(self, fixture: dict) -> None:
+    def test_fixture_top_level_keys_match_schema(self, fixture: JSONDict) -> None:
         """Fixture must contain exactly the fields NutritionStateResponse declares."""
         expected_keys = set(NutritionStateResponse.model_fields.keys())
         actual_keys = set(fixture.keys())
@@ -148,17 +163,17 @@ class TestGatewayRejectContract:
     """Canonical gateway reject fixture matches route HTTP 400 shape."""
 
     @pytest.fixture()
-    def fixture(self) -> dict:
+    def fixture(self) -> JSONDict:
         return _load_fixture("gateway_reject.json")
 
-    def test_reject_detail_shape(self, fixture: dict) -> None:
+    def test_reject_detail_shape(self, fixture: JSONDict) -> None:
         detail = fixture["detail"]
         assert detail["message"] == "AI request blocked by gateway"
         assert detail["code"] == "AI_GATEWAY_BLOCKED"
         assert isinstance(detail["reason"], str)
         assert isinstance(detail["score"], (int, float))
 
-    def test_reject_reason_is_canonical(self, fixture: dict) -> None:
+    def test_reject_reason_is_canonical(self, fixture: JSONDict) -> None:
         """The reason in the fixture must be one of the backend's canonical constants."""
         canonical_reasons = {REJECT_REASON_OFF_TOPIC, REJECT_REASON_TOO_SHORT}
         assert fixture["detail"]["reason"] in canonical_reasons
@@ -173,19 +188,19 @@ class TestEnumParity:
     """Enum values in the fixture must exactly match backend Literal definitions."""
 
     @pytest.fixture()
-    def enums(self) -> dict:
+    def enums(self) -> StringListDict:
         return _load_fixture("enums.json")
 
-    def test_meal_type_parity(self, enums: dict) -> None:
+    def test_meal_type_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["MealType"]) == sorted(get_args(MealType))
 
-    def test_meal_sync_state_parity(self, enums: dict) -> None:
+    def test_meal_sync_state_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["MealSyncState"]) == sorted(get_args(MealSyncState))
 
-    def test_meal_input_method_parity(self, enums: dict) -> None:
+    def test_meal_input_method_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["MealInputMethod"]) == sorted(get_args(MealInputMethod))
 
-    def test_meal_source_parity(self, enums: dict) -> None:
+    def test_meal_source_parity(self, enums: StringListDict) -> None:
         # MealSource is Literal["ai", "manual", "saved"] | None — extract the Literal part.
         literal_args = get_args(MealSource)
         # The union is (Literal[...], None); extract from Literal.
@@ -196,15 +211,15 @@ class TestEnumParity:
                 source_values.extend(inner)
         assert sorted(enums["MealSource"]) == sorted(source_values)
 
-    def test_gateway_reject_reasons_parity(self, enums: dict) -> None:
+    def test_gateway_reject_reasons_parity(self, enums: StringListDict) -> None:
         backend_reasons = {REJECT_REASON_OFF_TOPIC, REJECT_REASON_TOO_SHORT}
         assert sorted(enums["GatewayRejectReasons"]) == sorted(backend_reasons)
 
-    def test_top_risk_parity(self, enums: dict) -> None:
+    def test_top_risk_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["TopRisk"]) == sorted(get_args(TopRisk))
 
-    def test_coach_priority_parity(self, enums: dict) -> None:
+    def test_coach_priority_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["CoachPriority"]) == sorted(get_args(CoachPriority))
 
-    def test_ai_tier_parity(self, enums: dict) -> None:
+    def test_ai_tier_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["AiTier"]) == sorted(["free", "premium"])

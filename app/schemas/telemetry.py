@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -36,6 +37,28 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "notification_opened",
     }
 )
+
+DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
+    r"(message|content|email|name|phone)",
+    re.IGNORECASE,
+)
+
+ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
+    "session_start": frozenset({"origin"}),
+    "session_end": frozenset({"origin", "durationSec", "endReason"}),
+    "screen_view": frozenset({"screen"}),
+    "meal_add_method_selected": frozenset({"mealInputMethod"}),
+    "meal_added": frozenset({"mealInputMethod", "ingredientCount"}),
+    "meal_updated": frozenset({"mealInputMethod", "ingredientCount"}),
+    "meal_deleted": frozenset({"mealInputMethod"}),
+    "ai_chat_send": frozenset({"surface", "chars"}),
+    "ai_chat_result": frozenset({"surface", "success", "resultStatus"}),
+    "notification_scheduled": frozenset({"notificationType", "origin"}),
+    "notification_fired": frozenset({"notificationType", "origin", "foreground"}),
+    "notification_opened": frozenset(
+        {"notificationType", "origin", "openedFromBackground", "actionIdentifier"}
+    ),
+}
 
 def _is_allowed_prop_value(value: Any) -> bool:
     if value is None:
@@ -122,6 +145,23 @@ class TelemetryEventInput(BaseModel):
 
         return value
 
+    @model_validator(mode="after")
+    def validate_props_contract(self) -> "TelemetryEventInput":
+        if self.name not in ALLOWED_TELEMETRY_EVENT_NAMES:
+            return self
+
+        props = self.props or {}
+        allowed_props = ALLOWED_TELEMETRY_EVENT_PROPS.get(self.name, frozenset())
+        for key in props:
+            if DISALLOWED_TELEMETRY_PROP_KEY_PATTERN.search(key):
+                raise ValueError("Telemetry property key is privacy-sensitive")
+            if key not in allowed_props:
+                raise ValueError(
+                    f"Telemetry property '{key}' is not allowed for event '{self.name}'"
+                )
+
+        return self
+
 
 class TelemetryBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -158,3 +198,26 @@ class TelemetryBatchIngestResponse(BaseModel):
         if self.rejectedCount != len(self.rejectedEvents):
             raise ValueError("Rejected event count does not match rejected event list")
         return self
+
+
+class TelemetrySummaryEventCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    count: int = Field(ge=0)
+
+
+class TelemetryDailySummaryBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: str
+    totalEvents: int = Field(ge=0)
+    eventCounts: list[TelemetrySummaryEventCount] = Field(default_factory=list)
+
+
+class TelemetryDailySummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generatedAt: str
+    days: int = Field(ge=1, le=30)
+    buckets: list[TelemetryDailySummaryBucket] = Field(default_factory=list)

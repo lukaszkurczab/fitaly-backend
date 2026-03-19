@@ -39,6 +39,8 @@ class MealItem(BaseModel):
     mealId: str
     timestamp: str
     dayKey: str | None = None
+    loggedAtLocalMin: int | None = Field(default=None, ge=0, le=1439)
+    tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
     type: MealType
     name: str | None = None
     ingredients: list[MealIngredient] = Field(default_factory=list)
@@ -71,6 +73,8 @@ class MealUpsertRequest(BaseModel):
     mealId: str = Field(min_length=1)
     timestamp: str = Field(min_length=1)
     dayKey: str | None = None
+    loggedAtLocalMin: int | None = Field(default=None, ge=0, le=1439)
+    tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
     type: MealType
     name: str | None = None
     ingredients: list[MealIngredient] = Field(default_factory=list)

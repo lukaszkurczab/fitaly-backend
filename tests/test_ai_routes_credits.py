@@ -73,8 +73,8 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
         ),
     )
     ask_chat = mocker.patch(
-        "app.api.routes.ai.openai_service.ask_chat",
-        return_value="Try grilled chicken with rice.",
+        "app.api.routes.ai._execute_chat_completion",
+        return_value=("Try grilled chicken with rice.", 24),
     )
 
     response = client.post(
@@ -138,8 +138,8 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai.openai_service.ask_chat",
-        return_value="Weather is out of scope, but here is a dinner tip.",
+        "app.api.routes.ai._execute_chat_completion",
+        return_value=("Weather is out of scope, but here is a dinner tip.", 31),
     )
 
     response = client.post(
@@ -161,6 +161,7 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
     assert gateway_result["model"] == "gpt-4o-mini"
     assert gateway_result["estimated_tokens"] > 0
     assert gateway_result["estimated_cost"] == 1.0
+    assert gateway_result["actual_tokens"] == 31
     assert gateway_result["outcome"] == "FORWARDED"
     assert gateway_result["request_id"]
 
@@ -184,7 +185,7 @@ def test_post_ai_ask_rejects_real_off_topic_chat(
         ),
     )
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -208,8 +209,108 @@ def test_post_ai_ask_rejects_real_off_topic_chat(
     gateway_result = log_gateway_decision.call_args.args[2]
     assert gateway_result["decision"] == "REJECT"
     assert gateway_result["reason"] == "OFF_TOPIC"
-    assert gateway_result["outcome"] == "BLOCKED"
+    assert gateway_result["outcome"] == "REJECTED"
     assert gateway_result["enforced"] is True
+
+
+def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch(
+        "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.get_credits_status",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_context",
+        return_value=None,
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_request",
+        return_value="sanitized prompt",
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=99,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai._execute_chat_completion",
+        return_value=("Jogurt ma sporo bialka.", 18),
+    )
+    mocker.patch("app.api.routes.ai.ai_gateway_service.RATE_LIMIT_MAX_REQUESTS", 1)
+    ai_gateway_service = __import__(
+        "app.api.routes.ai",
+        fromlist=["ai_gateway_service"],
+    ).ai_gateway_service
+    ai_gateway_service.reset_rate_limit_state()
+
+    first = client.post(
+        "/api/v1/ai/ask",
+        json={"message": "Ile bialka ma jogurt?"},
+        headers=auth_headers("abc"),
+    )
+    second = client.post(
+        "/api/v1/ai/ask",
+        json={"message": "Ile bialka ma kefir?"},
+        headers=auth_headers("abc"),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["detail"]["code"] == "AI_GATEWAY_RATE_LIMITED"
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "REJECTED"
+
+
+def test_post_ai_photo_analyze_returns_413_for_payload_guard(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch(
+        "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.get_credits_status",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch("app.api.routes.ai.ai_gateway_service.MAX_PHOTO_PAYLOAD_CHARS", 5)
+
+    response = client.post(
+        "/api/v1/ai/photo/analyze",
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "AI_GATEWAY_PAYLOAD_TOO_LARGE"
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "REJECTED"
 
 
 def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
@@ -254,7 +355,7 @@ def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
             period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
         ),
     )
-    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -325,7 +426,7 @@ def test_post_ai_ask_gateway_reject_has_zero_deduction(
         },
     )
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat")
+    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
 
     response = client.post(
         "/api/v1/ai/ask",
@@ -388,7 +489,7 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai.openai_service.ask_chat",
+        "app.api.routes.ai._execute_chat_completion",
         side_effect=OpenAIServiceError("unavailable"),
     )
     refund_credits = mocker.patch(
@@ -439,17 +540,20 @@ def test_post_ai_photo_analyze_deducts_five_credits(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai.openai_service.analyze_photo",
-        return_value=[
-            {
-                "name": "Owsianka",
-                "amount": 120,
-                "protein": 6,
-                "fat": 4,
-                "carbs": 20,
-                "kcal": 148,
-            }
-        ],
+        "app.api.routes.ai._execute_photo_completion",
+        return_value=(
+            [
+                {
+                    "name": "Owsianka",
+                    "amount": 120,
+                    "protein": 6,
+                    "fat": 4,
+                    "carbs": 20,
+                    "kcal": 148,
+                }
+            ],
+            145,
+        ),
     )
 
     response = client.post(
@@ -488,17 +592,20 @@ def test_post_ai_text_meal_analyze_deducts_one_credit(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai.text_meal_service.analyze_text_meal",
-        return_value=[
-            {
-                "name": "Owsianka",
-                "amount": 120,
-                "protein": 6,
-                "fat": 4,
-                "carbs": 20,
-                "kcal": 148,
-            }
-        ],
+        "app.api.routes.ai._execute_text_meal_completion",
+        return_value=(
+            [
+                {
+                    "name": "Owsianka",
+                    "amount": 120,
+                    "protein": 6,
+                    "fat": 4,
+                    "carbs": 20,
+                    "kcal": 148,
+                }
+            ],
+            88,
+        ),
     )
 
     response = client.post(
@@ -545,7 +652,7 @@ def test_post_ai_photo_analyze_respects_gateway_reject(
         },
     )
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    analyze_photo = mocker.patch("app.api.routes.ai.openai_service.analyze_photo")
+    analyze_photo = mocker.patch("app.api.routes.ai._execute_photo_completion")
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
@@ -558,7 +665,7 @@ def test_post_ai_photo_analyze_respects_gateway_reject(
     deduct_credits.assert_not_called()
     analyze_photo.assert_not_called()
     log_gateway_decision.assert_called_once()
-    assert log_gateway_decision.call_args.args[2]["outcome"] == "BLOCKED"
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "REJECTED"
 
 
 def test_post_ai_text_meal_analyze_respects_gateway_reject(
@@ -587,7 +694,7 @@ def test_post_ai_text_meal_analyze_respects_gateway_reject(
         },
     )
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    analyze_text_meal = mocker.patch("app.api.routes.ai.text_meal_service.analyze_text_meal")
+    analyze_text_meal = mocker.patch("app.api.routes.ai._execute_text_meal_completion")
 
     response = client.post(
         "/api/v1/ai/text-meal/analyze",
@@ -600,7 +707,7 @@ def test_post_ai_text_meal_analyze_respects_gateway_reject(
     deduct_credits.assert_not_called()
     analyze_text_meal.assert_not_called()
     log_gateway_decision.assert_called_once()
-    assert log_gateway_decision.call_args.args[2]["outcome"] == "BLOCKED"
+    assert log_gateway_decision.call_args.args[2]["outcome"] == "REJECTED"
 
 
 def test_post_ai_photo_analyze_logs_upstream_failure(
@@ -620,7 +727,7 @@ def test_post_ai_photo_analyze_logs_upstream_failure(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai.openai_service.analyze_photo",
+        "app.api.routes.ai._execute_photo_completion",
         side_effect=OpenAIServiceError("unavailable"),
     )
     refund_credits = mocker.patch(
@@ -667,3 +774,52 @@ def test_post_ai_photo_validation_reject_has_zero_deduction(
 
     assert response.status_code == 422
     deduct_credits.assert_not_called()
+
+
+def test_post_ai_ask_ignores_client_action_type_and_skips_logging_when_gateway_disabled(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
+    mocker.patch("app.api.routes.ai.settings.AI_GATEWAY_ENABLED", False)
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=99,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_context",
+        return_value=None,
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_request",
+        return_value="sanitized prompt",
+    )
+    prompt_builder = mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
+    execute_chat = mocker.patch(
+        "app.api.routes.ai._execute_chat_completion",
+        return_value=("Diet answer", 22),
+    )
+
+    response = client.post(
+        "/api/v1/ai/ask",
+        json={
+            "message": "Suggest a dinner",
+            "context": {"actionType": "photo_analysis", "language": "pl"},
+        },
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 200
+    prompt_builder.assert_called_once()
+    execute_chat.assert_called_once_with("chat prompt")
+    log_gateway_decision.assert_not_called()

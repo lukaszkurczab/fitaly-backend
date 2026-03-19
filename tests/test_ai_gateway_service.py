@@ -4,11 +4,15 @@ from app.core.config import settings
 from app.services.ai_gateway_service import (
     FORWARD_REASON_GATEWAY_DISABLED,
     FORWARD_REASON_PASS_THROUGH,
+    GUARD_REASON_MESSAGE_TOO_LONG,
+    GUARD_REASON_PAYLOAD_TOO_LARGE,
+    GUARD_REASON_RATE_LIMITED,
     HYPOTHESIS_TRIVIAL_GREETING,
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
     classify_task_type,
     evaluate_request,
+    reset_rate_limit_state,
 )
 
 
@@ -19,6 +23,11 @@ from app.services.ai_gateway_service import (
 # Mirror of mobile's GATEWAY_REJECT_REASONS (useChatHistory.ts).
 # If this set changes, update the mobile constant too.
 MOBILE_GATEWAY_REJECT_REASONS = {"OFF_TOPIC", "ML_OFF_TOPIC", "TOO_SHORT"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_state() -> None:
+    reset_rate_limit_state()
 
 
 def test_canonical_reject_reasons_match_mobile_contract() -> None:
@@ -120,6 +129,55 @@ def test_gateway_disabled_does_not_reject_off_topic(mocker) -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_GATEWAY_DISABLED
+
+
+def test_gateway_disabled_bypasses_rate_limit_and_payload_guards(mocker) -> None:
+    mocker.patch("app.services.ai_gateway_service.settings.AI_GATEWAY_ENABLED", False)
+    mocker.patch("app.services.ai_gateway_service.RATE_LIMIT_MAX_REQUESTS", 0)
+    mocker.patch("app.services.ai_gateway_service.MAX_CHAT_MESSAGE_CHARS", 1)
+
+    result = evaluate_request("user-1", "chat", "still forwarded")
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_GATEWAY_DISABLED
+    assert result["enforced"] is False
+
+
+def test_evaluate_request_rate_limits_per_user(mocker) -> None:
+    mocker.patch("app.services.ai_gateway_service.RATE_LIMIT_MAX_REQUESTS", 1)
+
+    first = evaluate_request("user-1", "chat", "Ile bialka ma jajko?")
+    second = evaluate_request("user-1", "chat", "Ile bialka ma twarog?")
+
+    assert first["decision"] == "FORWARD"
+    assert second["decision"] == "REJECT"
+    assert second["reason"] == GUARD_REASON_RATE_LIMITED
+    assert second["enforced"] is True
+
+
+def test_evaluate_request_rejects_chat_message_that_is_too_long(mocker) -> None:
+    mocker.patch("app.services.ai_gateway_service.MAX_CHAT_MESSAGE_CHARS", 10)
+
+    result = evaluate_request("user-1", "chat", "To jest zdecydowanie za dluga wiadomosc")
+
+    assert result["decision"] == "REJECT"
+    assert result["reason"] == GUARD_REASON_MESSAGE_TOO_LONG
+    assert result["enforced"] is True
+
+
+def test_evaluate_request_rejects_payload_that_is_too_large(mocker) -> None:
+    mocker.patch("app.services.ai_gateway_service.MAX_TEXT_PAYLOAD_CHARS", 10)
+
+    result = evaluate_request(
+        "user-1",
+        "text_meal_analysis",
+        '{"name":"owsianka"}',
+        raw_payload_chars=99,
+    )
+
+    assert result["decision"] == "REJECT"
+    assert result["reason"] == GUARD_REASON_PAYLOAD_TOO_LARGE
+    assert result["enforced"] is True
 
 
 # ---------------------------------------------------------------------------

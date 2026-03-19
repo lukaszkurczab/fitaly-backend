@@ -35,3 +35,11 @@ class HabitsDisabledError(Exception):
 
 class StateDisabledError(Exception):
     """Raised when nutrition state computation is disabled by configuration."""
+
+
+class AiGatewayRateLimitError(Exception):
+    """Raised when a user exceeds the AI gateway request rate limit."""
+
+
+class AiGatewayPayloadTooLargeError(Exception):
+    """Raised when an AI request payload exceeds gateway guardrails."""

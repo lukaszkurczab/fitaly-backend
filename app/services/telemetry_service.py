@@ -20,7 +20,8 @@ import json
 import logging
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from hashlib import sha256
 from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,9 +40,12 @@ from app.core.exceptions import (
 from app.db.firebase import get_firestore
 from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
+    TelemetryDailySummaryBucket,
+    TelemetryDailySummaryResponse,
     TelemetryBatchIngestResponse,
     TelemetryBatchRequest,
     RejectedTelemetryEvent,
+    TelemetrySummaryEventCount,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +58,7 @@ MAX_BATCH_PAYLOAD_BYTES = 64 * 1024
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 60
 _request_buckets: dict[str, deque[float]] = {}
+TELEMETRY_RETENTION_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -108,20 +113,30 @@ def _build_document(
     event: "TelemetryEventInput",
     context: TelemetryRequestContext,
 ) -> dict[str, object]:
+    user_hash = (
+        sha256(context.user_id.encode("utf-8")).hexdigest()
+        if context.user_id
+        else None
+    )
     return {
         "eventId": event.eventId,
         "name": event.name,
         "ts": _serialize_timestamp(event.ts),
         "props": event.props or {},
         "sessionId": request.sessionId,
-        "userId": context.user_id,
+        "userHash": user_hash,
         "platform": request.app.platform,
         "appVersion": request.app.appVersion,
         "build": request.app.build,
         "locale": request.device.locale,
         "tzOffsetMin": request.device.tzOffsetMin,
         "ingestedAt": _serialize_timestamp(utc_now()),
+        "expiresAt": ensure_utc_datetime(utc_now() + timedelta(days=TELEMETRY_RETENTION_DAYS)),
     }
+
+
+def _build_user_hash(user_id: str) -> str:
+    return sha256(user_id.encode("utf-8")).hexdigest()
 
 
 def ingest_batch(
@@ -171,7 +186,7 @@ def ingest_batch(
             duplicate_count += 1
         except (FirebaseError, GoogleAPICallError, RetryError) as exc:
             logger.exception(
-                "Failed to ingest telemetry batch.",
+                "telemetry.ingest.firestore_error",
                 extra={"event_id": event.eventId, "event_name": event.name},
             )
             raise FirestoreServiceError("Failed to persist telemetry event.") from exc
@@ -196,4 +211,59 @@ def ingest_batch(
         duplicateCount=duplicate_count,
         rejectedCount=rejected_count,
         rejectedEvents=rejected_events,
+    )
+
+
+def get_daily_summary(
+    *,
+    user_id: str,
+    days: int = 7,
+    now: datetime | None = None,
+) -> TelemetryDailySummaryResponse:
+    if not settings.TELEMETRY_ENABLED:
+        raise TelemetryDisabledError("Telemetry ingestion is disabled")
+
+    normalized_now = ensure_utc_datetime(now or utc_now())
+    start_at = normalized_now - timedelta(days=max(days - 1, 0))
+    collection_ref = get_firestore().collection(COLLECTION_NAME)
+    query = (
+        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        .where("ts", ">=", _serialize_timestamp(start_at))
+        .where("ts", "<=", _serialize_timestamp(normalized_now))
+    )
+
+    buckets: dict[str, dict[str, int]] = {}
+    try:
+        snapshots = list(query.stream())
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "telemetry.summary.firestore_error",
+            extra={"user_id": user_id, "days": days},
+        )
+        raise FirestoreServiceError("Failed to read telemetry summary.") from exc
+
+    for snapshot in snapshots:
+        payload = dict(snapshot.to_dict() or {})
+        day = str(payload.get("ts") or "")[:10]
+        event_name = str(payload.get("name") or "").strip()
+        if len(day) != 10 or not event_name:
+            continue
+        day_counts = buckets.setdefault(day, {})
+        day_counts[event_name] = day_counts.get(event_name, 0) + 1
+
+    summary_buckets = [
+        TelemetryDailySummaryBucket(
+            day=day,
+            totalEvents=sum(event_counts.values()),
+            eventCounts=[
+                TelemetrySummaryEventCount(name=name, count=count)
+                for name, count in sorted(event_counts.items())
+            ],
+        )
+        for day, event_counts in sorted(buckets.items())
+    ]
+    return TelemetryDailySummaryResponse(
+        generatedAt=_serialize_timestamp(normalized_now),
+        days=days,
+        buckets=summary_buckets,
     )

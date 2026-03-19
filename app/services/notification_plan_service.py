@@ -16,6 +16,7 @@ from app.core.firestore_constants import (
     USERS_COLLECTION,
 )
 from app.db.firebase import get_firestore
+from app.services.nutrition_target_service import parse_target_kcal
 
 logger = logging.getLogger(__name__)
 
@@ -179,14 +180,6 @@ def _evaluate_notification_plan(
     return replace(notification, should_schedule=len(meals) == 0)
 
 
-def _parse_target_kcal(raw_user: dict[str, object]) -> float:
-    for key in ("calorieTarget", "targetKcal"):
-        value = raw_user.get(key)
-        if isinstance(value, (int, float)):
-            return float(value)
-    return 0.0
-
-
 def _validate_iso_range(start_iso: str, end_iso: str) -> None:
     datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
     datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
@@ -206,7 +199,7 @@ async def get_notification_plan(
         user_snapshot = user_ref.get()
         user_data = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else {}
         ai_style = _parse_ai_style(user_data.get("aiStyle"))
-        target_kcal = _parse_target_kcal(user_data)
+        target_kcal = parse_target_kcal(user_data)
 
         notification_snapshots = list(user_ref.collection(NOTIFICATIONS_SUBCOLLECTION).stream())
         notifications = [

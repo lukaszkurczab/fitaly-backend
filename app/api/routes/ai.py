@@ -51,17 +51,6 @@ def _resolve_language(request: AiAskRequest) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return "pl"
-
-
-def _resolve_action_type(request: AiAskRequest) -> str:
-    if request.context:
-        for key in ("actionType", "action_type"):
-            value = request.context.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return "chat"
-
-
 def _resolve_request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
@@ -74,7 +63,7 @@ def _with_gateway_runtime(
     result: ai_gateway_service.GatewayResult,
     *,
     latency_ms: float,
-    outcome: Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"] | None = None,
+    outcome: Literal["FORWARDED", "REJECTED", "UPSTREAM_ERROR"] | None = None,
     failure_reason: str | None = None,
     actual_tokens: int | None = None,
 ) -> ai_gateway_service.GatewayResult:
@@ -103,6 +92,9 @@ async def _log_gateway_result(
     tier: Literal["free", "premium"] | None = None,
     credit_cost: float | None = None,
 ) -> None:
+    if result["reason"] == ai_gateway_service.FORWARD_REASON_GATEWAY_DISABLED:
+        return
+
     try:
         ai_gateway_logger.log_gateway_decision(
             user_id,
@@ -166,18 +158,33 @@ async def _reject_gateway_request(
         result=_with_gateway_runtime(
             gateway_result,
             latency_ms=elapsed_ms,
-            outcome="BLOCKED",
+            outcome="REJECTED",
         ),
         response_time_ms=elapsed_ms,
         execution_time_ms=elapsed_ms,
         tier=tier,
         credit_cost=0.0,
     )
+    status_code = status.HTTP_400_BAD_REQUEST
+    detail_code = "AI_GATEWAY_BLOCKED"
+    detail_message = "AI request blocked by gateway"
+    if gateway_result["reason"] == ai_gateway_service.GUARD_REASON_RATE_LIMITED:
+        status_code = status.HTTP_429_TOO_MANY_REQUESTS
+        detail_code = "AI_GATEWAY_RATE_LIMITED"
+        detail_message = "AI request rate limited by gateway"
+    elif gateway_result["reason"] in {
+        ai_gateway_service.GUARD_REASON_MESSAGE_TOO_LONG,
+        ai_gateway_service.GUARD_REASON_PAYLOAD_TOO_LARGE,
+    }:
+        status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        detail_code = "AI_GATEWAY_PAYLOAD_TOO_LARGE"
+        detail_message = "AI request payload too large"
+
     raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=status_code,
         detail={
-            "message": "AI request blocked by gateway",
-            "code": "AI_GATEWAY_BLOCKED",
+            "message": detail_message,
+            "code": detail_code,
             "reason": gateway_result["reason"],
             "score": gateway_result["score"],
         },
@@ -281,9 +288,9 @@ async def _execute_ai_request(
     gateway_result: ai_gateway_service.GatewayResult,
     credit_cost: int,
     endpoint: str,
-    ai_call: Callable[[], Awaitable[Any]],
+    ai_call: Callable[[], Awaitable[tuple[Any, int | None]]],
     started_at: float,
-) -> tuple[Any, AiCreditsStatus]:
+) -> tuple[Any, AiCreditsStatus, int | None]:
     if gateway_result["decision"] != "FORWARD":
         await _reject_gateway_request(
             user_id=user_id,
@@ -301,7 +308,7 @@ async def _execute_ai_request(
     )
 
     try:
-        result = await ai_call()
+        result, actual_tokens = await ai_call()
     except OpenAIServiceError as exc:
         elapsed_ms = (perf_counter() - started_at) * 1000
         await _log_gateway_result(
@@ -314,6 +321,7 @@ async def _execute_ai_request(
                 latency_ms=elapsed_ms,
                 outcome="UPSTREAM_ERROR",
                 failure_reason=exc.__class__.__name__,
+                actual_tokens=None,
             ),
             response_time_ms=elapsed_ms,
             execution_time_ms=elapsed_ms,
@@ -338,6 +346,7 @@ async def _execute_ai_request(
             gateway_result,
             latency_ms=elapsed_ms,
             outcome="FORWARDED",
+            actual_tokens=actual_tokens,
         ),
         response_time_ms=elapsed_ms,
         execution_time_ms=elapsed_ms,
@@ -345,7 +354,7 @@ async def _execute_ai_request(
         credit_cost=float(credit_cost),
     )
 
-    return result, credits_status
+    return result, credits_status, actual_tokens
 
 
 @router.post("/ai/ask", response_model=AiAskResponse)
@@ -358,7 +367,7 @@ async def ask_ai(
     user_id = current_user.uid
 
     language = _resolve_language(request)
-    action_type = _resolve_action_type(request)
+    action_type = "chat"
     request_id = _resolve_request_id(http_request)
     gateway_result = ai_gateway_service.evaluate_request(
         user_id,
@@ -366,6 +375,7 @@ async def ask_ai(
         request.message,
         language=language,
         request_id=request_id,
+        raw_payload_chars=len(request.message.strip()),
     )
 
     sanitized_context = sanitization_service.sanitize_context(request.context)
@@ -382,7 +392,7 @@ async def ask_ai(
         else sanitized_message
     )
 
-    reply, credits_status = await _execute_ai_request(
+    reply, credits_status, _ = await _execute_ai_request(
         user_id=user_id,
         action_type=action_type,
         gateway_message=request.message,
@@ -390,7 +400,7 @@ async def ask_ai(
         gateway_result=gateway_result,
         credit_cost=settings.AI_CREDIT_COST_CHAT,
         endpoint="/ai/ask",
-        ai_call=lambda: openai_service.ask_chat(prompt_message),
+        ai_call=lambda: _execute_chat_completion(prompt_message),
         started_at=started_at,
     )
 
@@ -418,9 +428,10 @@ async def analyze_photo_ai(
         gateway_message,
         language=request.lang,
         request_id=_resolve_request_id(http_request),
+        raw_payload_chars=len(request.imageBase64.strip()),
     )
 
-    ingredients, credits_status = await _execute_ai_request(
+    ingredients, credits_status, _ = await _execute_ai_request(
         user_id=user_id,
         action_type="photo_analysis",
         gateway_message=gateway_message,
@@ -428,7 +439,7 @@ async def analyze_photo_ai(
         gateway_result=gateway_result,
         credit_cost=settings.AI_CREDIT_COST_PHOTO,
         endpoint="/ai/photo/analyze",
-        ai_call=lambda: openai_service.analyze_photo(
+        ai_call=lambda: _execute_photo_completion(
             request.imageBase64,
             lang=request.lang,
         ),
@@ -459,9 +470,10 @@ async def analyze_text_meal_ai(
         gateway_message,
         language=request.lang,
         request_id=_resolve_request_id(http_request),
+        raw_payload_chars=len(gateway_message),
     )
 
-    ingredients, credits_status = await _execute_ai_request(
+    ingredients, credits_status, _ = await _execute_ai_request(
         user_id=user_id,
         action_type="text_meal_analysis",
         gateway_message=gateway_message,
@@ -469,7 +481,7 @@ async def analyze_text_meal_ai(
         gateway_result=gateway_result,
         credit_cost=settings.AI_CREDIT_COST_TEXT_MEAL,
         endpoint="/ai/text-meal/analyze",
-        ai_call=lambda: text_meal_service.analyze_text_meal(
+        ai_call=lambda: _execute_text_meal_completion(
             request.payload,
             lang=request.lang,
         ),
@@ -483,3 +495,32 @@ async def analyze_text_meal_ai(
             gateway_result=gateway_result,
         ),
     )
+
+
+async def _execute_chat_completion(message: str) -> tuple[str, int | None]:
+    completion = await openai_service.ask_chat_completion(message)
+    return completion["content"], completion["usage"]["total_tokens"]
+
+
+async def _execute_photo_completion(
+    image_base64: str,
+    *,
+    lang: str,
+) -> tuple[list[dict[str, Any]], int | None]:
+    completion = await openai_service.analyze_photo_completion(
+        image_base64,
+        lang=lang,
+    )
+    return completion["ingredients"], completion["usage"]["total_tokens"]
+
+
+async def _execute_text_meal_completion(
+    payload: Any,
+    *,
+    lang: str,
+) -> tuple[list[dict[str, Any]], int | None]:
+    completion = await text_meal_service.analyze_text_meal_with_usage(
+        payload,
+        lang=lang,
+    )
+    return completion["ingredients"], completion["total_tokens"]

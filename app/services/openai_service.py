@@ -31,6 +31,22 @@ class AnalyzedIngredient(TypedDict):
     unit: NotRequired[str]
 
 
+class OpenAIUsage(TypedDict):
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+
+
+class ChatCompletionResult(TypedDict):
+    content: str
+    usage: OpenAIUsage
+
+
+class PhotoAnalysisResult(TypedDict):
+    ingredients: list[AnalyzedIngredient]
+    usage: OpenAIUsage
+
+
 def _extract_reply_content(response: Any) -> str:
     choices = response["choices"] if isinstance(response, dict) else response.choices
     if not choices:
@@ -48,6 +64,34 @@ def _extract_reply_content(response: Any) -> str:
         raise OpenAIServiceError("OpenAI returned an empty response.")
 
     return reply.strip()
+
+
+def _extract_usage(response: Any) -> OpenAIUsage:
+    usage = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
+    if usage is None:
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
+
+    if isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
+    else:
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+        total_tokens = getattr(usage, "total_tokens", None)
+
+    def _to_int(value: Any) -> int | None:
+        return int(value) if isinstance(value, int | float) else None
+
+    return {
+        "prompt_tokens": _to_int(prompt_tokens),
+        "completion_tokens": _to_int(completion_tokens),
+        "total_tokens": _to_int(total_tokens),
+    }
 
 
 def _parse_json_array(raw: str) -> list[Any]:
@@ -146,6 +190,16 @@ async def ask_chat(
     timeout: int = 30,
 ) -> str:
     """Send one user message to OpenAI and return the assistant reply."""
+    result = await ask_chat_completion(message, model=model, timeout=timeout)
+    return result["content"]
+
+
+async def ask_chat_completion(
+    message: str,
+    model: str = "gpt-4o-mini",
+    timeout: int = 30,
+) -> ChatCompletionResult:
+    """Send one user message to OpenAI and return reply plus usage metadata."""
     if not settings.OPENAI_API_KEY:
         raise OpenAIServiceError("OpenAI API key is not configured.")
 
@@ -167,7 +221,10 @@ async def ask_chat(
         logger.exception("OpenAI request failed.")
         raise OpenAIServiceError("OpenAI request failed.") from exc
 
-    return _extract_reply_content(response)
+    return {
+        "content": _extract_reply_content(response),
+        "usage": _extract_usage(response),
+    }
 
 
 async def analyze_photo(
@@ -177,6 +234,22 @@ async def analyze_photo(
     timeout: int = 30,
 ) -> list[AnalyzedIngredient]:
     """Analyze a meal photo and return normalized ingredient entries."""
+    result = await analyze_photo_completion(
+        image_base64,
+        lang=lang,
+        model=model,
+        timeout=timeout,
+    )
+    return result["ingredients"]
+
+
+async def analyze_photo_completion(
+    image_base64: str,
+    lang: str = "en",
+    model: str = "gpt-4o",
+    timeout: int = 30,
+) -> PhotoAnalysisResult:
+    """Analyze a meal photo and return normalized ingredient entries plus usage."""
     if not settings.OPENAI_API_KEY:
         raise OpenAIServiceError("OpenAI API key is not configured.")
 
@@ -222,4 +295,7 @@ async def analyze_photo(
         raise OpenAIServiceError("OpenAI photo analysis failed.") from exc
 
     reply = _extract_reply_content(response)
-    return parse_ingredients_reply(reply)
+    return {
+        "ingredients": parse_ingredients_reply(reply),
+        "usage": _extract_usage(response),
+    }

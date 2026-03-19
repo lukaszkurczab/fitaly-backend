@@ -12,7 +12,9 @@ with the ``REJECT_REASON_*`` constants below.
 
 from __future__ import annotations
 
+from collections import deque
 import math
+from time import monotonic
 import uuid
 from typing import Literal, NotRequired, TypedDict
 
@@ -20,7 +22,7 @@ from app.core.config import settings
 
 Decision = Literal["FORWARD", "REJECT", "LOCAL_ANSWER"]
 TaskType = Literal["chat", "photo_meal_analysis", "text_meal_analysis", "other"]
-GatewayOutcome = Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"]
+GatewayOutcome = Literal["FORWARDED", "REJECTED", "LOCAL", "UPSTREAM_ERROR"]
 
 # ---------------------------------------------------------------------------
 # Canonical reason codes — shared contract with mobile & tests
@@ -28,6 +30,9 @@ GatewayOutcome = Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"]
 # Reject reasons (mobile: GATEWAY_REJECT_REASONS set in useChatHistory.ts)
 REJECT_REASON_OFF_TOPIC = "OFF_TOPIC"
 REJECT_REASON_TOO_SHORT = "TOO_SHORT"
+GUARD_REASON_RATE_LIMITED = "RATE_LIMITED"
+GUARD_REASON_MESSAGE_TOO_LONG = "MESSAGE_TOO_LONG"
+GUARD_REASON_PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
 
 # Forward / pass-through reasons
 FORWARD_REASON_PASS_THROUGH = "PASS_THROUGH"
@@ -35,6 +40,13 @@ FORWARD_REASON_GATEWAY_DISABLED = "GATEWAY_DISABLED"
 
 # Hypothetical-only reasons (not enforced, logged for analytics)
 HYPOTHESIS_TRIVIAL_GREETING = "TRIVIAL_GREETING"
+
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+RATE_LIMIT_MAX_REQUESTS = 20
+MAX_CHAT_MESSAGE_CHARS = 4_000
+MAX_TEXT_PAYLOAD_CHARS = 4_000
+MAX_PHOTO_PAYLOAD_CHARS = 4_000_000
+_request_buckets: dict[str, deque[float]] = {}
 
 
 class GatewayResult(TypedDict):
@@ -66,6 +78,27 @@ def classify_task_type(action_type: str) -> TaskType:
     if "text" in normalized and "meal" in normalized:
         return "text_meal_analysis"
     return "other"
+
+
+def reset_rate_limit_state() -> None:
+    _request_buckets.clear()
+
+
+def _consume_rate_limit_slot(user_id: str) -> bool:
+    now = monotonic()
+    bucket = _request_buckets.setdefault(user_id, deque())
+    while bucket and now - bucket[0] >= RATE_LIMIT_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    bucket.append(now)
+    return True
+
+
+def _max_payload_chars(task_type: TaskType) -> int:
+    if task_type == "photo_meal_analysis":
+        return MAX_PHOTO_PAYLOAD_CHARS
+    return MAX_TEXT_PAYLOAD_CHARS
 
 
 def estimate_tokens(message: str, task_type: TaskType) -> int:
@@ -173,9 +206,14 @@ def evaluate_request(
     *,
     language: str = "pl",
     request_id: str | None = None,
+    raw_payload_chars: int | None = None,
 ) -> GatewayResult:
     """Evaluate whether a request should be forwarded to OpenAI."""
-    del user_id, language
+    del language
+
+    task_type = classify_task_type(action_type)
+    normalized_message = message.strip()
+    payload_chars = raw_payload_chars if raw_payload_chars is not None else len(normalized_message)
 
     if not settings.AI_GATEWAY_ENABLED:
         return build_gateway_result(
@@ -184,10 +222,41 @@ def evaluate_request(
             decision="FORWARD",
             reason=FORWARD_REASON_GATEWAY_DISABLED,
             request_id=request_id,
+            enforced=False,
+        )
+
+    if not _consume_rate_limit_slot(user_id):
+        return build_gateway_result(
+            action_type=action_type,
+            message=message,
+            decision="REJECT",
+            reason=GUARD_REASON_RATE_LIMITED,
+            request_id=request_id,
+            enforced=True,
+        )
+
+    if task_type == "chat" and len(normalized_message) > MAX_CHAT_MESSAGE_CHARS:
+        return build_gateway_result(
+            action_type=action_type,
+            message=message,
+            decision="REJECT",
+            reason=GUARD_REASON_MESSAGE_TOO_LONG,
+            request_id=request_id,
+            enforced=True,
+        )
+
+    if payload_chars > _max_payload_chars(task_type):
+        return build_gateway_result(
+            action_type=action_type,
+            message=message,
+            decision="REJECT",
+            reason=GUARD_REASON_PAYLOAD_TOO_LARGE,
+            request_id=request_id,
+            enforced=True,
         )
 
     hypothetical_decision, hypothetical_reason = _classify_hypothetical_decision(message)
-    if classify_task_type(action_type) == "chat" and hypothetical_decision == "REJECT":
+    if task_type == "chat" and hypothetical_decision == "REJECT":
         return build_gateway_result(
             action_type=action_type,
             message=message,

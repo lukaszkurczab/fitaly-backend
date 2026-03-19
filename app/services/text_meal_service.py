@@ -1,10 +1,18 @@
 """Backend-owned text meal analysis helpers."""
 
 import json
+from typing import TypedDict
 
 from app.core.exceptions import OpenAIServiceError
 from app.schemas.ai_text_meal import AiTextMealPayload
 from app.services import openai_service
+
+
+class TextMealAnalysisResult(TypedDict):
+    ingredients: list[openai_service.AnalyzedIngredient]
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
 
 
 def _none_if_blank(value: str | None) -> str | None:
@@ -65,17 +73,54 @@ async def analyze_text_meal(
     *,
     lang: str = "en",
 ) -> list[openai_service.AnalyzedIngredient]:
+    result = await analyze_text_meal_with_usage(payload, lang=lang)
+    return result["ingredients"]
+
+
+async def analyze_text_meal_with_usage(
+    payload: AiTextMealPayload,
+    *,
+    lang: str = "en",
+) -> TextMealAnalysisResult:
     prompt = build_text_meal_prompt(payload, lang)
-    reply = await openai_service.ask_chat(prompt)
-    ingredients = openai_service.parse_ingredients_reply(reply)
+    first_pass = await openai_service.ask_chat_completion(prompt)
+    ingredients = openai_service.parse_ingredients_reply(first_pass["content"])
     if _has_non_zero_nutrition(ingredients):
-        return ingredients
+        usage = first_pass["usage"]
+        return {
+            "ingredients": ingredients,
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "total_tokens": usage["total_tokens"],
+        }
 
     retry_prompt = build_text_meal_retry_prompt(payload, lang)
-    retry_reply = await openai_service.ask_chat(retry_prompt)
-    retry_ingredients = openai_service.parse_ingredients_reply(retry_reply)
+    retry_pass = await openai_service.ask_chat_completion(retry_prompt)
+    retry_ingredients = openai_service.parse_ingredients_reply(retry_pass["content"])
     if _has_non_zero_nutrition(retry_ingredients):
-        return retry_ingredients
+        first_usage = first_pass["usage"]
+        retry_usage = retry_pass["usage"]
+
+        def _sum_usage(first: int | None, second: int | None) -> int | None:
+            if first is None and second is None:
+                return None
+            return int(first or 0) + int(second or 0)
+
+        return {
+            "ingredients": retry_ingredients,
+            "prompt_tokens": _sum_usage(
+                first_usage["prompt_tokens"],
+                retry_usage["prompt_tokens"],
+            ),
+            "completion_tokens": _sum_usage(
+                first_usage["completion_tokens"],
+                retry_usage["completion_tokens"],
+            ),
+            "total_tokens": _sum_usage(
+                first_usage["total_tokens"],
+                retry_usage["total_tokens"],
+            ),
+        }
 
     raise OpenAIServiceError(
         "OpenAI returned ingredients without nutrition values."

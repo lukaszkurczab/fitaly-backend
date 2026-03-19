@@ -155,6 +155,34 @@ def _normalize_input_method(value: Any) -> str | None:
     return input_method if input_method in MEAL_INPUT_METHODS else None
 
 
+def _normalize_logged_at_local_min(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        normalized = int(value)
+        return normalized if 0 <= normalized <= 1439 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        normalized = int(value.strip())
+        return normalized if 0 <= normalized <= 1439 else None
+    return None
+
+
+def _normalize_tz_offset_min(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        normalized = int(value)
+        return normalized if -840 <= normalized <= 840 else None
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate.startswith(("+", "-")):
+            candidate = candidate[0] + "".join(ch for ch in candidate[1:] if ch.isdigit())
+        if candidate.lstrip("+-").isdigit():
+            normalized = int(candidate)
+            return normalized if -840 <= normalized <= 840 else None
+    return None
+
+
 def _normalize_ai_meta(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
@@ -210,6 +238,8 @@ def normalize_meal_payload(
         "mealId": meal_id,
         "timestamp": timestamp,
         "dayKey": day_key,
+        "loggedAtLocalMin": _normalize_logged_at_local_min(payload.get("loggedAtLocalMin")),
+        "tzOffsetMin": _normalize_tz_offset_min(payload.get("tzOffsetMin")),
         "type": _normalize_type(payload.get("type")),
         "name": coerce_optional_str(payload.get("name")),
         "ingredients": ingredients,

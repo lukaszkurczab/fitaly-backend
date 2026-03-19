@@ -19,6 +19,12 @@
     "carbs": 90.0,
     "fat": 28.0
   },
+  "overTarget": {
+    "kcal": 0.0,
+    "protein": 0.0,
+    "carbs": 0.0,
+    "fat": 0.0
+  },
   "quality": {
     "mealsLogged": 3,
     "missingNutritionMeals": 0,
@@ -28,8 +34,11 @@
     "available": true,
     "behavior": {
       "loggingDays7": 5,
+      "validLoggingDays7": 4,
       "loggingConsistency28": 0.75,
+      "validLoggingConsistency28": 0.61,
       "avgMealsPerLoggedDay14": 2.8,
+      "avgValidMealsPerValidLoggedDay14": 2.5,
       "mealTypeCoverage14": {
         "breakfast": true,
         "lunch": true,
@@ -38,6 +47,17 @@
         "other": false,
         "coveredCount": 3
       },
+      "mealTypeFrequency14": {
+        "breakfast": 2,
+        "lunch": 5,
+        "dinner": 4,
+        "snack": 1,
+        "other": 0
+      },
+      "dayCoverage14": {
+        "loggedDays": 10,
+        "validLoggedDays": 8
+      },
       "kcalAdherence14": 0.92,
       "kcalUnderTargetRatio14": 0.15,
       "proteinDaysHit14": {
@@ -45,10 +65,24 @@
         "eligibleDays": 12,
         "unknownDays": 2,
         "ratio": 0.67
+      },
+      "timingPatterns14": {
+        "available": true,
+        "observedDays": 8,
+        "firstMealMedianHour": 8.25,
+        "lastMealMedianHour": 19.0,
+        "eatingWindowHoursMedian": 10.5,
+        "breakfastMedianHour": 8.25,
+        "lunchMedianHour": 13.0,
+        "dinnerMedianHour": 19.0,
+        "snackMedianHour": 16.0,
+        "otherMedianHour": null
       }
     },
     "dataQuality": {
-      "daysWithUnknownMealDetails14": 1
+      "daysWithUnknownMealDetails14": 1,
+      "daysUsingTimestampDayFallback14": 0,
+      "daysUsingTimestampTimingFallback14": 2
     },
     "topRisk": "none",
     "coachPriority": "maintain"
@@ -70,6 +104,14 @@
       "chat": 1,
       "textMeal": 1,
       "photo": 5
+    }
+  },
+  "meta": {
+    "isDegraded": false,
+    "componentStatus": {
+      "habits": "ok",
+      "streak": "ok",
+      "ai": "ok"
     }
   }
 }

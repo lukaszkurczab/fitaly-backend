@@ -18,6 +18,7 @@ from app.core.firestore_constants import (
     USERS_COLLECTION,
 )
 from app.db.firebase import get_firestore
+from app.services.nutrition_target_service import parse_target_kcal
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +124,6 @@ def _meals_collection(
     client: firestore.Client, user_id: str
 ) -> firestore.CollectionReference:
     return client.collection(USERS_COLLECTION).document(user_id).collection(MEALS_SUBCOLLECTION)
-
-
-def _parse_target_kcal(raw_user: dict[str, object]) -> float:
-    for key in ("calorieTarget", "targetKcal"):
-        value = raw_user.get(key)
-        if isinstance(value, (int, float)):
-            return float(value)
-    return 0.0
 
 
 def _extract_meal_day_key(raw_meal: dict[str, object]) -> str | None:
@@ -443,7 +436,7 @@ async def sync_streak_from_meals(
     try:
         user_snapshot = user_ref.get()
         user_data = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else {}
-        target_kcal = _parse_target_kcal(user_data)
+        target_kcal = parse_target_kcal(user_data)
 
         meal_snapshots = list(meals_ref.where(filter=FieldFilter("deleted", "==", False)).stream())
         daily_kcal: dict[str, float] = {}

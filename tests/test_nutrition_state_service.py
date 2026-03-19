@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
@@ -11,6 +11,12 @@ from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 from app.services import nutrition_state_service
 
 NOW = datetime(2026, 3, 18, 9, 30, tzinfo=UTC)
+
+
+class _FilterLike(Protocol):
+    field_path: str
+    op_string: str
+    value: Any
 
 
 def _meal(
@@ -79,7 +85,7 @@ class _FakeQuery:
     def __init__(
         self,
         collection: "_FakeMealsCollection",
-        filters: list[object] | None = None,
+        filters: list[_FilterLike] | None = None,
     ) -> None:
         self._collection = collection
         self._filters = filters or []
@@ -102,7 +108,7 @@ class _FakeMealsCollection:
 
     def __init__(self, snapshots: list[object]) -> None:
         self.snapshots = snapshots
-        self.calls: list[list[tuple[str, str, object]]] = []
+        self.calls: list[list[tuple[str, str, Any]]] = []
 
     def where(self, *, filter) -> _FakeQuery:
         return _FakeQuery(self, [filter])
@@ -231,6 +237,12 @@ def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
         "carbs": 120.0,
         "fat": 40.0,
     }
+    assert response.overTarget.model_dump() == {
+        "kcal": 0.0,
+        "protein": 0.0,
+        "carbs": 0.0,
+        "fat": 0.0,
+    }
     assert response.quality.model_dump() == {
         "mealsLogged": 2,
         "missingNutritionMeals": 0,
@@ -242,6 +254,12 @@ def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
     assert response.streak.lastDate == "2026-03-18"
     assert response.ai.available is True
     assert response.ai.usedThisPeriod == 160
+    assert response.meta.isDegraded is False
+    assert response.meta.componentStatus.model_dump() == {
+        "habits": "ok",
+        "streak": "ok",
+        "ai": "ok",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +282,7 @@ def test_get_nutrition_state_returns_empty_day_defaults(mocker: MockerFixture) -
         ],
     )
     mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
+    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -280,6 +299,7 @@ def test_get_nutrition_state_returns_empty_day_defaults(mocker: MockerFixture) -
 
     assert response.consumed.kcal == 0
     assert response.remaining.kcal == 1800
+    assert response.overTarget.kcal == 0
     assert response.quality.mealsLogged == 0
     assert response.quality.dataCompletenessScore == 0
 
@@ -304,6 +324,7 @@ def test_get_nutrition_state_handles_missing_targets(mocker: MockerFixture) -> N
         ],
     )
     mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
+    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -325,6 +346,12 @@ def test_get_nutrition_state_handles_missing_targets(mocker: MockerFixture) -> N
         "fat": None,
     }
     assert response.remaining.model_dump() == {
+        "kcal": None,
+        "protein": None,
+        "carbs": None,
+        "fat": None,
+    }
+    assert response.overTarget.model_dump() == {
         "kcal": None,
         "protein": None,
         "carbs": None,
@@ -354,6 +381,7 @@ def test_get_nutrition_state_degrades_gracefully_for_subservices(
         ],
     )
     mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
+    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.build_habits_summary",
@@ -380,6 +408,12 @@ def test_get_nutrition_state_degrades_gracefully_for_subservices(
     assert response.streak.available is False
     assert response.ai.available is False
     assert response.consumed.kcal == 400
+    assert response.meta.isDegraded is True
+    assert response.meta.componentStatus.model_dump() == {
+        "habits": "error",
+        "streak": "error",
+        "ai": "error",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -695,7 +729,7 @@ def test_get_nutrition_state_wraps_core_firestore_errors(mocker: MockerFixture) 
 
 
 def test_response_contains_all_top_level_fields(mocker: MockerFixture) -> None:
-    """Verify the response shape has not regressed — all 8 top-level fields present."""
+    """Verify the response shape has not regressed — all canonical top-level fields present."""
     client, _ = _mock_firestore(
         mocker,
         profile={"calorieTarget": 2000},
@@ -723,9 +757,11 @@ def test_response_contains_all_top_level_fields(mocker: MockerFixture) -> None:
         "targets",
         "consumed",
         "remaining",
+        "overTarget",
         "quality",
         "habits",
         "streak",
         "ai",
+        "meta",
     }
     assert expected_keys == set(data.keys())

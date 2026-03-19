@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
@@ -10,6 +10,12 @@ from app.core.exceptions import FirestoreServiceError, HabitsDisabledError
 from app.services import habit_signal_service
 
 COMPUTED_AT = datetime(2026, 3, 18, 12, 0, tzinfo=UTC)
+
+
+class _FilterLike(Protocol):
+    field_path: str
+    op_string: str
+    value: Any
 
 
 def _meal(
@@ -23,6 +29,7 @@ def _meal(
     ingredients: list[dict[str, Any]] | None = None,
     ai_meta: dict[str, Any] | None = None,
     deleted: bool = False,
+    logged_at_local_min: int | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "mealId": meal_id,
@@ -39,6 +46,8 @@ def _meal(
         payload["dayKey"] = day_key
     if ai_meta is not None:
         payload["aiMeta"] = ai_meta
+    if logged_at_local_min is not None:
+        payload["loggedAtLocalMin"] = logged_at_local_min
     return payload
 
 
@@ -46,7 +55,7 @@ class _FakeQuery:
     def __init__(
         self,
         collection: "_FakeMealsCollection",
-        filters: list[object] | None = None,
+        filters: list[_FilterLike] | None = None,
     ) -> None:
         self._collection = collection
         self._filters = filters or []
@@ -67,7 +76,7 @@ class _FakeQuery:
 class _FakeMealsCollection:
     def __init__(self, snapshots: list[object]) -> None:
         self.snapshots = snapshots
-        self.calls: list[list[tuple[str, str, object]]] = []
+        self.calls: list[list[tuple[str, str, Any]]] = []
 
     def where(self, *, filter) -> _FakeQuery:
         return _FakeQuery(self, [filter])
@@ -95,7 +104,10 @@ def test_day_grouping_prefers_day_key_over_timestamp() -> None:
     )
 
     assert response.behavior.loggingDays7 == 2
+    assert response.behavior.validLoggingDays7 == 2
     assert response.behavior.avgMealsPerLoggedDay14 == 1.0
+    assert response.behavior.avgValidMealsPerValidLoggedDay14 == 1.0
+    assert response.dataQuality.daysUsingTimestampDayFallback14 == 1
 
 
 def test_day_grouping_falls_back_to_timestamp_when_day_key_is_invalid() -> None:
@@ -114,6 +126,7 @@ def test_day_grouping_falls_back_to_timestamp_when_day_key_is_invalid() -> None:
     )
 
     assert response.behavior.loggingDays7 == 1
+    assert response.behavior.validLoggingDays7 == 1
     assert response.behavior.avgMealsPerLoggedDay14 == 1.0
 
 
@@ -300,6 +313,128 @@ def test_unknown_meal_details_counts_low_detail_and_low_confidence_days() -> Non
     )
 
     assert response.dataQuality.daysWithUnknownMealDetails14 == 2
+    assert response.behavior.dayCoverage14.loggedDays == 2
+    assert response.behavior.dayCoverage14.validLoggedDays == 0
+    assert response.behavior.validLoggingDays7 == 0
+    assert response.behavior.avgValidMealsPerValidLoggedDay14 == 0
+
+
+def test_structurally_weak_meals_do_not_count_as_valid_logging_foundation() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile={"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}},
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T08:00:00Z",
+                kcal=0,
+                protein=0,
+                ingredients=[],
+            ),
+            _meal(
+                meal_id="meal-2",
+                day_key="2026-03-17",
+                timestamp="2026-03-17T08:00:00Z",
+                kcal=0,
+                protein=0,
+                ingredients=[],
+            ),
+            _meal(
+                meal_id="meal-3",
+                day_key="2026-03-16",
+                timestamp="2026-03-16T08:00:00Z",
+                kcal=650,
+                protein=42,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.loggingDays7 == 3
+    assert response.behavior.validLoggingDays7 == 1
+    assert response.behavior.dayCoverage14.loggedDays == 3
+    assert response.behavior.dayCoverage14.validLoggedDays == 1
+    assert response.topRisk == "under_logging"
+    assert response.coachPriority == "logging_foundation"
+
+
+def test_meal_type_frequency_counts_day_level_occurrence_for_valid_meals() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile=None,
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T08:00:00Z",
+                meal_type="breakfast",
+                kcal=300,
+                protein=15,
+            ),
+            _meal(
+                meal_id="meal-2",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T13:00:00Z",
+                meal_type="lunch",
+                kcal=600,
+                protein=35,
+            ),
+            _meal(
+                meal_id="meal-3",
+                day_key="2026-03-17",
+                timestamp="2026-03-17T08:00:00Z",
+                meal_type="breakfast",
+                kcal=320,
+                protein=18,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.mealTypeFrequency14.breakfast == 2
+    assert response.behavior.mealTypeFrequency14.lunch == 1
+    assert response.behavior.mealTypeFrequency14.dinner == 0
+
+
+def test_timing_patterns_prefer_logged_at_local_min_when_present() -> None:
+    response = habit_signal_service.compute_habit_signals(
+        profile=None,
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T07:00:00Z",
+                meal_type="breakfast",
+                kcal=300,
+                protein=15,
+                logged_at_local_min=8 * 60,
+            ),
+            _meal(
+                meal_id="meal-2",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T12:00:00Z",
+                meal_type="lunch",
+                kcal=600,
+                protein=30,
+                logged_at_local_min=13 * 60,
+            ),
+            _meal(
+                meal_id="meal-3",
+                day_key="2026-03-17",
+                timestamp="2026-03-17T18:00:00Z",
+                meal_type="dinner",
+                kcal=700,
+                protein=40,
+                logged_at_local_min=19 * 60,
+            ),
+        ],
+        computed_at=COMPUTED_AT,
+    )
+
+    assert response.behavior.timingPatterns14.available is True
+    assert response.behavior.timingPatterns14.breakfastMedianHour == 8.0
+    assert response.behavior.timingPatterns14.lunchMedianHour == 13.0
+    assert response.behavior.timingPatterns14.dinnerMedianHour == 19.0
+    assert response.dataQuality.daysUsingTimestampTimingFallback14 == 0
 
 
 def test_top_risk_and_coach_priority_prioritize_under_logging() -> None:

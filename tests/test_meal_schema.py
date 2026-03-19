@@ -17,6 +17,8 @@ def test_meal_upsert_request_accepts_input_method_and_ai_meta() -> None:
             "type": "lunch",
             "ingredients": [],
             "inputMethod": "photo",
+            "loggedAtLocalMin": 720,
+            "tzOffsetMin": 60,
             "aiMeta": {
                 "model": "gpt-4o-mini",
                 "runId": "run-1",
@@ -26,6 +28,8 @@ def test_meal_upsert_request_accepts_input_method_and_ai_meta() -> None:
     )
 
     assert payload.inputMethod == "photo"
+    assert payload.loggedAtLocalMin == 720
+    assert payload.tzOffsetMin == 60
     assert payload.aiMeta is not None
     assert payload.aiMeta.model == "gpt-4o-mini"
     assert payload.aiMeta.runId == "run-1"
@@ -59,6 +63,8 @@ def test_meal_item_serializes_input_method_and_ai_meta() -> None:
             "updatedAt": "2026-03-18T12:05:00.000Z",
             "cloudId": "meal-1",
             "inputMethod": "text",
+            "loggedAtLocalMin": 735,
+            "tzOffsetMin": 60,
             "aiMeta": {
                 "model": "gpt-4o-mini",
                 "runId": None,
@@ -69,6 +75,8 @@ def test_meal_item_serializes_input_method_and_ai_meta() -> None:
     )
 
     assert item.model_dump()["inputMethod"] == "text"
+    assert item.model_dump()["loggedAtLocalMin"] == 735
+    assert item.model_dump()["tzOffsetMin"] == 60
     assert item.model_dump()["aiMeta"] == {
         "model": "gpt-4o-mini",
         "runId": None,
@@ -163,6 +171,8 @@ _FULL_MEAL_PAYLOAD = {
     "mealId": "meal-full-1",
     "timestamp": "2026-03-18T12:00:00.000Z",
     "dayKey": "2026-03-18",
+    "loggedAtLocalMin": 720,
+    "tzOffsetMin": 60,
     "type": "lunch",
     "name": "Grilled chicken salad",
     "ingredients": [
@@ -204,6 +214,8 @@ def test_full_meal_request_parses_all_boundary_fields() -> None:
 
     assert req.mealId == "meal-full-1"
     assert req.dayKey == "2026-03-18"
+    assert req.loggedAtLocalMin == 720
+    assert req.tzOffsetMin == 60
     assert req.type == "lunch"
     assert req.name == "Grilled chicken salad"
     assert len(req.ingredients) == 1
@@ -234,6 +246,8 @@ def test_full_meal_response_serializes_all_boundary_fields() -> None:
     assert data["userUid"] == "user-1"
     assert data["mealId"] == "meal-full-1"
     assert data["dayKey"] == "2026-03-18"
+    assert data["loggedAtLocalMin"] == 720
+    assert data["tzOffsetMin"] == 60
     assert data["type"] == "lunch"
     assert data["source"] == "ai"
     assert data["inputMethod"] == "photo"

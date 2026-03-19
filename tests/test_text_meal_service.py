@@ -21,8 +21,17 @@ def test_analyze_text_meal_returns_first_valid_result(
     mocker: MockerFixture,
 ) -> None:
     ask_chat = mocker.patch(
-        "app.services.text_meal_service.openai_service.ask_chat",
-        new=mocker.AsyncMock(return_value='[{"name":"Kebab"}]'),
+        "app.services.text_meal_service.openai_service.ask_chat_completion",
+        new=mocker.AsyncMock(
+            return_value={
+                "content": '[{"name":"Kebab"}]',
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            }
+        ),
     )
     parse = mocker.patch(
         "app.services.text_meal_service.openai_service.parse_ingredients_reply",
@@ -49,11 +58,25 @@ def test_analyze_text_meal_retries_when_first_reply_has_zero_nutrition(
     mocker: MockerFixture,
 ) -> None:
     ask_chat = mocker.patch(
-        "app.services.text_meal_service.openai_service.ask_chat",
+        "app.services.text_meal_service.openai_service.ask_chat_completion",
         new=mocker.AsyncMock(
             side_effect=[
-                '[{"name":"Kebab"}]',
-                '[{"name":"Kebab corrected"}]',
+                {
+                    "content": '[{"name":"Kebab"}]',
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                },
+                {
+                    "content": '[{"name":"Kebab corrected"}]',
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 7,
+                        "total_tokens": 19,
+                    },
+                },
             ]
         ),
     )
@@ -93,11 +116,25 @@ def test_analyze_text_meal_raises_when_retry_is_still_zero_nutrition(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch(
-        "app.services.text_meal_service.openai_service.ask_chat",
+        "app.services.text_meal_service.openai_service.ask_chat_completion",
         new=mocker.AsyncMock(
             side_effect=[
-                '[{"name":"Kebab"}]',
-                '[{"name":"Kebab again"}]',
+                {
+                    "content": '[{"name":"Kebab"}]',
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                },
+                {
+                    "content": '[{"name":"Kebab again"}]',
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 7,
+                        "total_tokens": 19,
+                    },
+                },
             ]
         ),
     )

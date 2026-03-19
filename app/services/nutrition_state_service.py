@@ -19,10 +19,13 @@ from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.nutrition_state import (
     NutritionAiSummary,
+    NutritionComponentStatus,
     NutritionConsumed,
     NutritionHabitsSummary,
+    NutritionOverTarget,
     NutritionQuality,
     NutritionRemaining,
+    NutritionStateMeta,
     NutritionStateResponse,
     NutritionStreakSummary,
     NutritionTargets,
@@ -209,6 +212,23 @@ def _build_remaining(
     )
 
 
+def _build_over_target(
+    *,
+    targets: NutritionTargets,
+    consumed: NutritionConsumed,
+) -> NutritionOverTarget:
+    return NutritionOverTarget(
+        kcal=max(round_metric(consumed.kcal - targets.kcal, 2), 0) if targets.kcal is not None else None,
+        protein=max(round_metric(consumed.protein - targets.protein, 2), 0)
+        if targets.protein is not None
+        else None,
+        carbs=max(round_metric(consumed.carbs - targets.carbs, 2), 0)
+        if targets.carbs is not None
+        else None,
+        fat=max(round_metric(consumed.fat - targets.fat, 2), 0) if targets.fat is not None else None,
+    )
+
+
 def _build_quality(meals: list[dict[str, Any]]) -> NutritionQuality:
     meals_logged = len(meals)
     missing_nutrition_meals = sum(1 for meal in meals if _is_unknown_meal_details(meal))
@@ -316,6 +336,22 @@ def _default_ai_summary() -> NutritionAiSummary:
     return NutritionAiSummary()
 
 
+def _build_state_meta(
+    *,
+    habits_status: str,
+    streak_status: str,
+    ai_status: str,
+) -> NutritionStateMeta:
+    return NutritionStateMeta(
+        isDegraded=any(status == "error" for status in (habits_status, streak_status, ai_status)),
+        componentStatus=NutritionComponentStatus(
+            habits=habits_status,
+            streak=streak_status,
+            ai=ai_status,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -363,7 +399,11 @@ async def get_nutrition_state(
     targets = NutritionTargets(**targets_map)
     consumed = _sum_consumed(requested_day_meals)
     remaining = _build_remaining(targets=targets, consumed=consumed)
+    over_target = _build_over_target(targets=targets, consumed=consumed)
     quality = _build_quality(requested_day_meals)
+    habits_status = "disabled" if not settings.HABITS_ENABLED else "ok"
+    streak_status = "ok"
+    ai_status = "ok"
 
     try:
         habits = build_habits_summary(
@@ -377,6 +417,7 @@ async def get_nutrition_state(
             extra={"user_id": user_id, "day_key": resolved_day_key},
         )
         habits = _default_habits_summary()
+        habits_status = "error" if settings.HABITS_ENABLED else "disabled"
 
     # Streak: read the authoritative streak document directly instead of
     # recomputing from unbounded meal history.
@@ -388,6 +429,7 @@ async def get_nutrition_state(
             extra={"user_id": user_id, "day_key": resolved_day_key},
         )
         streak = _default_streak_summary()
+        streak_status = "error"
 
     try:
         ai = await build_ai_summary(user_id)
@@ -397,6 +439,7 @@ async def get_nutrition_state(
             extra={"user_id": user_id, "day_key": resolved_day_key},
         )
         ai = _default_ai_summary()
+        ai_status = "error"
 
     return NutritionStateResponse(
         computedAt=_serialize_datetime(computed_at),
@@ -404,8 +447,14 @@ async def get_nutrition_state(
         targets=targets,
         consumed=consumed,
         remaining=remaining,
+        overTarget=over_target,
         quality=quality,
         habits=habits,
         streak=streak,
         ai=ai,
+        meta=_build_state_meta(
+            habits_status=habits_status,
+            streak_status=streak_status,
+            ai_status=ai_status,
+        ),
     )

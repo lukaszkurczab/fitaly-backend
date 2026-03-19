@@ -3,6 +3,8 @@
   "mealId": "meal-contract-1",
   "timestamp": "2026-03-18T12:00:00.000Z",
   "dayKey": "2026-03-18",
+  "loggedAtLocalMin": 780,
+  "tzOffsetMin": 60,
   "type": "lunch",
   "name": "Grilled chicken salad",
   "ingredients": [

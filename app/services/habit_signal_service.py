@@ -20,14 +20,17 @@ from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.habits import (
     CoachPriority,
+    DayCoverage14,
     HabitBehavior,
     HabitDataQuality,
+    HabitTimingPatterns14,
     HabitSignalsResponse,
     MealTypeCoverage14,
+    MealTypeFrequency14,
     ProteinDaysHit14,
     TopRisk,
 )
-from app.services.streak_service import _parse_target_kcal
+from app.services.nutrition_target_service import parse_target_kcal
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +49,24 @@ class NormalizedMeal:
     kcal: float
     protein: float
     unknown_details: bool
+    timing_minute: int | None
+    used_timestamp_day_fallback: bool = False
+    used_timestamp_timing_fallback: bool = False
 
 
 @dataclass
 class DailyAggregate:
     meal_count: int = 0
+    valid_meal_count: int = 0
     kcal: float = 0.0
     protein: float = 0.0
     meal_types: set[str] = field(default_factory=set)
+    valid_meal_types: set[str] = field(default_factory=set)
     has_unknown_details: bool = False
+    timing_minutes: list[int] = field(default_factory=list)
+    timing_minutes_by_type: dict[str, list[int]] = field(default_factory=dict)
+    used_timestamp_day_fallback: bool = False
+    used_timestamp_timing_fallback: bool = False
 
 
 def _to_date(day_key: str) -> date | None:
@@ -64,18 +76,57 @@ def _to_date(day_key: str) -> date | None:
         return None
 
 
-def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
+def _derive_day_key_parts(raw_meal: dict[str, Any]) -> tuple[str | None, bool]:
     """Use valid dayKey as the habit source of truth, otherwise fall back to UTC timestamp day."""
     day_key = raw_meal.get("dayKey")
     if isinstance(day_key, str):
         normalized_day_key = day_key.strip()
         if _to_date(normalized_day_key) is not None:
-            return normalized_day_key
+            return normalized_day_key, False
 
     timestamp = parse_flexible_datetime(raw_meal.get("timestamp"))
     if timestamp is None:
+        return None, False
+    return timestamp.date().isoformat(), True
+
+
+def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
+    day_key, _ = _derive_day_key_parts(raw_meal)
+    return day_key
+
+
+def _parse_wall_clock_minute(value: Any) -> int | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            parsed = parse_flexible_datetime(value)
+        if parsed is None:
+            return None
+        return parsed.hour * 60 + parsed.minute
+
+    parsed = parse_flexible_datetime(value)
+    if parsed is None:
         return None
-    return timestamp.date().isoformat()
+    return parsed.hour * 60 + parsed.minute
+
+
+def _extract_logged_at_local_min(raw_meal: dict[str, Any]) -> tuple[int | None, bool]:
+    explicit = raw_meal.get("loggedAtLocalMin")
+    if isinstance(explicit, int) and 0 <= explicit <= 1439:
+        return explicit, False
+    if isinstance(explicit, float) and 0 <= int(explicit) <= 1439:
+        return int(explicit), False
+
+    fallback_minute = _parse_wall_clock_minute(raw_meal.get("timestamp"))
+    if fallback_minute is None:
+        return None, False
+    return fallback_minute, True
 
 
 
@@ -170,13 +221,14 @@ def _is_deleted_meal(raw_meal: dict[str, Any]) -> bool:
 
 
 def _normalize_meal(raw_meal: dict[str, Any]) -> NormalizedMeal | None:
-    day_key = _derive_day_key(raw_meal)
+    day_key, used_timestamp_day_fallback = _derive_day_key_parts(raw_meal)
     if day_key is None:
         return None
 
     meal_type = raw_meal.get("type")
     normalized_meal_type = meal_type if isinstance(meal_type, str) and meal_type in VALID_MEAL_TYPES else "other"
     kcal, protein = _extract_totals(raw_meal)
+    timing_minute, used_timestamp_timing_fallback = _extract_logged_at_local_min(raw_meal)
 
     return NormalizedMeal(
         day_key=day_key,
@@ -184,6 +236,9 @@ def _normalize_meal(raw_meal: dict[str, Any]) -> NormalizedMeal | None:
         kcal=kcal,
         protein=protein,
         unknown_details=_is_unknown_meal_details(raw_meal),
+        timing_minute=timing_minute,
+        used_timestamp_day_fallback=used_timestamp_day_fallback,
+        used_timestamp_timing_fallback=used_timestamp_timing_fallback,
     )
 
 
@@ -235,10 +290,29 @@ def _aggregate_days(
 
         aggregate = aggregates.setdefault(normalized.day_key, DailyAggregate())
         aggregate.meal_count += 1
+        aggregate.meal_types.add(normalized.meal_type)
+        aggregate.has_unknown_details = (
+            aggregate.has_unknown_details or normalized.unknown_details
+        )
+        aggregate.used_timestamp_day_fallback = (
+            aggregate.used_timestamp_day_fallback or normalized.used_timestamp_day_fallback
+        )
+        aggregate.used_timestamp_timing_fallback = (
+            aggregate.used_timestamp_timing_fallback or normalized.used_timestamp_timing_fallback
+        )
+        if normalized.timing_minute is not None:
+            aggregate.timing_minutes.append(normalized.timing_minute)
+            aggregate.timing_minutes_by_type.setdefault(normalized.meal_type, []).append(
+                normalized.timing_minute
+            )
+
+        if normalized.unknown_details:
+            continue
+
+        aggregate.valid_meal_count += 1
         aggregate.kcal += normalized.kcal
         aggregate.protein += normalized.protein
-        aggregate.meal_types.add(normalized.meal_type)
-        aggregate.has_unknown_details = aggregate.has_unknown_details or normalized.unknown_details
+        aggregate.valid_meal_types.add(normalized.meal_type)
 
     return aggregates
 
@@ -263,7 +337,7 @@ def _build_meal_type_coverage(day_keys: list[str], aggregates: dict[str, DailyAg
     covered_types = {
         meal_type
         for day_key in day_keys
-        for meal_type in aggregates[day_key].meal_types
+        for meal_type in aggregates[day_key].valid_meal_types
     }
     return MealTypeCoverage14(
         breakfast="breakfast" in covered_types,
@@ -273,6 +347,21 @@ def _build_meal_type_coverage(day_keys: list[str], aggregates: dict[str, DailyAg
         other="other" in covered_types,
         coveredCount=len(covered_types),
     )
+
+
+def _build_meal_type_frequency(
+    day_keys: list[str],
+    aggregates: dict[str, DailyAggregate],
+) -> MealTypeFrequency14:
+    frequency_by_type = {
+        meal_type: sum(
+            1
+            for day_key in day_keys
+            if meal_type in aggregates[day_key].valid_meal_types
+        )
+        for meal_type in VALID_MEAL_TYPES
+    }
+    return MealTypeFrequency14(**frequency_by_type)
 
 
 def _build_protein_days_hit(
@@ -303,16 +392,71 @@ def _build_protein_days_hit(
     )
 
 
+def _median(values: list[int]) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    mid = len(sorted_values) // 2
+    if len(sorted_values) % 2 == 1:
+        return float(sorted_values[mid])
+    return (sorted_values[mid - 1] + sorted_values[mid]) / 2
+
+
+def _median_hour(values: list[int]) -> float | None:
+    median_minute = _median(values)
+    if median_minute is None:
+        return None
+    return round_metric(median_minute / 60, 2)
+
+
+def _build_timing_patterns(
+    day_keys: list[str],
+    aggregates: dict[str, DailyAggregate],
+) -> HabitTimingPatterns14:
+    timing_day_values = [
+        sorted(aggregates[day_key].timing_minutes)
+        for day_key in day_keys
+        if aggregates[day_key].timing_minutes
+    ]
+    observed_days = len(timing_day_values)
+    if observed_days == 0:
+        return HabitTimingPatterns14()
+
+    first_meal_minutes = [day_values[0] for day_values in timing_day_values]
+    last_meal_minutes = [day_values[-1] for day_values in timing_day_values]
+    eating_window_minutes = [day_values[-1] - day_values[0] for day_values in timing_day_values]
+
+    def _minutes_for(meal_type: str) -> list[int]:
+        return [
+            minute
+            for day_key in day_keys
+            for minute in aggregates[day_key].timing_minutes_by_type.get(meal_type, [])
+        ]
+
+    return HabitTimingPatterns14(
+        available=True,
+        observedDays=observed_days,
+        firstMealMedianHour=_median_hour(first_meal_minutes),
+        lastMealMedianHour=_median_hour(last_meal_minutes),
+        eatingWindowHoursMedian=round_metric((_median(eating_window_minutes) or 0) / 60, 2),
+        breakfastMedianHour=_median_hour(_minutes_for("breakfast")),
+        lunchMedianHour=_median_hour(_minutes_for("lunch")),
+        dinnerMedianHour=_median_hour(_minutes_for("dinner")),
+        snackMedianHour=_median_hour(_minutes_for("snack")),
+        otherMedianHour=_median_hour(_minutes_for("other")),
+    )
+
+
 def _derive_top_risk_and_priority(
     *,
-    logging_days_7: int,
-    logging_consistency_28: float,
+    valid_logging_days_7: int,
+    valid_logging_consistency_28: float,
     days_with_unknown_details_14: int,
     logged_days_14: int,
     kcal_under_target_ratio_14: float | None,
     protein_days_hit_14: ProteinDaysHit14,
 ) -> tuple[TopRisk, CoachPriority]:
-    if logging_days_7 < 4 or logging_consistency_28 < 0.5:
+    if valid_logging_days_7 < 4 or valid_logging_consistency_28 < 0.5:
         return "under_logging", "logging_foundation"
 
     if logged_days_14 > 0 and days_with_unknown_details_14 / logged_days_14 >= 0.4:
@@ -403,38 +547,77 @@ def compute_habit_signals(
     logging_days_7 = len(day_keys_7)
     logging_days_14 = len(day_keys_14)
     logging_days_28 = len(day_keys_28)
+    valid_day_keys_7 = [
+        day_key for day_key in day_keys_7 if aggregates[day_key].valid_meal_count > 0
+    ]
+    valid_day_keys_14 = [
+        day_key for day_key in day_keys_14 if aggregates[day_key].valid_meal_count > 0
+    ]
+    valid_day_keys_28 = [
+        day_key for day_key in day_keys_28 if aggregates[day_key].valid_meal_count > 0
+    ]
+    valid_logging_days_7 = len(valid_day_keys_7)
+    valid_logging_days_14 = len(valid_day_keys_14)
+    valid_logging_days_28 = len(valid_day_keys_28)
 
     total_meals_14 = sum(aggregates[day_key].meal_count for day_key in day_keys_14)
+    total_valid_meals_14 = sum(
+        aggregates[day_key].valid_meal_count for day_key in valid_day_keys_14
+    )
     avg_meals_per_logged_day_14 = (
         round_metric(total_meals_14 / logging_days_14) if logging_days_14 else 0.0
     )
+    avg_valid_meals_per_valid_logged_day_14 = (
+        round_metric(total_valid_meals_14 / valid_logging_days_14)
+        if valid_logging_days_14
+        else 0.0
+    )
     logging_consistency_28 = round_metric(logging_days_28 / CONSISTENCY_WINDOW_DAYS)
+    valid_logging_consistency_28 = round_metric(
+        valid_logging_days_28 / CONSISTENCY_WINDOW_DAYS
+    )
 
-    calorie_target = _parse_target_kcal(profile or {})
+    calorie_target = parse_target_kcal(profile or {})
     protein_target = _extract_protein_target(profile)
     kcal_adherence_14: float | None = None
     kcal_under_target_ratio_14: float | None = None
 
-    if calorie_target > 0 and logging_days_14 > 0:
-        kcal_ratios = [aggregates[day_key].kcal / calorie_target for day_key in day_keys_14]
+    if calorie_target > 0 and valid_logging_days_14 > 0:
+        kcal_ratios = [
+            aggregates[day_key].kcal / calorie_target for day_key in valid_day_keys_14
+        ]
         kcal_adherence_14 = round_metric(sum(kcal_ratios) / len(kcal_ratios))
         kcal_under_target_days = sum(
-            1 for day_key in day_keys_14 if aggregates[day_key].kcal < calorie_target * 0.9
+            1
+            for day_key in valid_day_keys_14
+            if aggregates[day_key].kcal < calorie_target * 0.9
         )
-        kcal_under_target_ratio_14 = round_metric(kcal_under_target_days / logging_days_14)
+        kcal_under_target_ratio_14 = round_metric(
+            kcal_under_target_days / valid_logging_days_14
+        )
 
     protein_days_hit_14 = _build_protein_days_hit(
-        day_keys_14=day_keys_14,
+        day_keys_14=valid_day_keys_14,
         aggregates=aggregates,
         protein_target=protein_target,
     )
     days_with_unknown_details_14 = sum(
         1 for day_key in day_keys_14 if aggregates[day_key].has_unknown_details
     )
+    days_using_timestamp_day_fallback_14 = sum(
+        1
+        for day_key in day_keys_14
+        if aggregates[day_key].used_timestamp_day_fallback
+    )
+    days_using_timestamp_timing_fallback_14 = sum(
+        1
+        for day_key in day_keys_14
+        if aggregates[day_key].used_timestamp_timing_fallback
+    )
 
     top_risk, coach_priority = _derive_top_risk_and_priority(
-        logging_days_7=logging_days_7,
-        logging_consistency_28=logging_consistency_28,
+        valid_logging_days_7=valid_logging_days_7,
+        valid_logging_consistency_28=valid_logging_consistency_28,
         days_with_unknown_details_14=days_with_unknown_details_14,
         logged_days_14=logging_days_14,
         kcal_under_target_ratio_14=kcal_under_target_ratio_14,
@@ -445,15 +628,26 @@ def compute_habit_signals(
         computedAt=normalized_now.isoformat().replace("+00:00", "Z"),
         behavior=HabitBehavior(
             loggingDays7=logging_days_7,
+            validLoggingDays7=valid_logging_days_7,
             loggingConsistency28=logging_consistency_28,
+            validLoggingConsistency28=valid_logging_consistency_28,
             avgMealsPerLoggedDay14=avg_meals_per_logged_day_14,
-            mealTypeCoverage14=_build_meal_type_coverage(day_keys_14, aggregates),
+            avgValidMealsPerValidLoggedDay14=avg_valid_meals_per_valid_logged_day_14,
+            mealTypeCoverage14=_build_meal_type_coverage(valid_day_keys_14, aggregates),
+            mealTypeFrequency14=_build_meal_type_frequency(valid_day_keys_14, aggregates),
+            dayCoverage14=DayCoverage14(
+                loggedDays=logging_days_14,
+                validLoggedDays=valid_logging_days_14,
+            ),
             kcalAdherence14=kcal_adherence_14,
             kcalUnderTargetRatio14=kcal_under_target_ratio_14,
             proteinDaysHit14=protein_days_hit_14,
+            timingPatterns14=_build_timing_patterns(day_keys_14, aggregates),
         ),
         dataQuality=HabitDataQuality(
             daysWithUnknownMealDetails14=days_with_unknown_details_14,
+            daysUsingTimestampDayFallback14=days_using_timestamp_day_fallback_14,
+            daysUsingTimestampTimingFallback14=days_using_timestamp_timing_fallback_14,
         ),
         topRisk=top_risk,
         coachPriority=coach_priority,

@@ -1,14 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from app.api.deps import AuthenticatedUser, get_optional_authenticated_user
+from app.api.deps import (
+    AuthenticatedUser,
+    get_optional_authenticated_user,
+    get_required_authenticated_user,
+)
 from app.core.exceptions import (
     FirestoreServiceError,
     TelemetryDisabledError,
     TelemetryPayloadTooLargeError,
     TelemetryRateLimitError,
 )
-from app.schemas.telemetry import TelemetryBatchIngestResponse, TelemetryBatchRequest
-from app.services.telemetry_service import TelemetryRequestContext, ingest_batch
+from app.schemas.telemetry import (
+    TelemetryBatchIngestResponse,
+    TelemetryBatchRequest,
+    TelemetryDailySummaryResponse,
+)
+from app.services.telemetry_service import (
+    TelemetryRequestContext,
+    get_daily_summary,
+    ingest_batch,
+)
 
 router = APIRouter()
 
@@ -56,4 +68,32 @@ def ingest_telemetry_batch(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to ingest telemetry batch",
+        ) from exc
+
+
+@router.get(
+    "/telemetry/events/summary/daily",
+    response_model=TelemetryDailySummaryResponse,
+    summary="Read daily telemetry summary for the current user",
+    description=(
+        "Returns a per-day summary of the authenticated user's telemetry "
+        "events grouped by canonical event name. This is a lightweight "
+        "consumption layer for product and rollout validation."
+    ),
+)
+def get_telemetry_daily_summary(
+    days: int = Query(7, ge=1, le=30),
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> TelemetryDailySummaryResponse:
+    try:
+        return get_daily_summary(user_id=current_user.uid, days=days)
+    except TelemetryDisabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telemetry ingestion is disabled",
+        ) from exc
+    except FirestoreServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read telemetry summary",
         ) from exc
