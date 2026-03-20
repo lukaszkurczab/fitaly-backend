@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD` is a technical surface for backend-owned reminder decision semantics.
+`GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD&tzOffsetMin=<int>` is a technical surface for backend-owned reminder decision semantics.
 
 - It is deterministic and rule-based.
 - It consumes nutrition state, habit semantics, reminder preferences, and current-time context.
@@ -61,6 +61,7 @@ Current v1 suppression reasons include:
 
 - `reminders_disabled`
 - `quiet_hours`
+- `frequency_cap_reached`
 - `already_logged_recently`
 - `recent_activity_detected`
 
@@ -74,11 +75,10 @@ Interpretation rules:
 
 Current v1 does **not** claim backend support for:
 
-- delivery frequency caps
 - device push-permission state
+- delivery confirmation (cap counts decisions, not deliveries)
 
-Those concerns are outside the backend decision contract today and are not
-expressed as reminder reason codes in v1.
+Those concerns are outside the backend decision contract today.
 
 ## Noop vs Suppress vs Failure
 
@@ -89,7 +89,7 @@ expressed as reminder reason codes in v1.
 - `suppress`
   - the system computed successfully
   - a reminder candidate is being intentionally blocked
-  - typical reason: preferences, quiet hours, recent activity
+  - typical reason: preferences, quiet hours, frequency cap, recent activity
 - `failure`
   - the system did not compute a valid reminder decision
   - backend must return an explicit HTTP failure, not `noop`

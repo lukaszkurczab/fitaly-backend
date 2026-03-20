@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.config import settings
@@ -16,6 +18,8 @@ from app.services.nutrition_state_service import get_nutrition_state
 from app.services.reminder_decision_store import record_send_decision
 from app.services.reminder_inputs import build_reminder_inputs
 from app.services.reminder_rule_engine import ReminderContextInput, evaluate_reminder_decision
+
+logger = logging.getLogger(__name__)
 
 
 async def get_reminder_decision(
@@ -51,6 +55,19 @@ async def get_reminder_decision(
         raise ReminderDecisionContractError(
             f"Rule engine produced an invalid decision: {exc}"
         ) from exc
+
+    logger.info(
+        "reminder.decision.computed",
+        extra={
+            "user_id": user_id,
+            "day_key": state.dayKey,
+            "decision": decision.decision,
+            "kind": decision.kind,
+            "reason_codes": decision.reasonCodes,
+            "confidence": decision.confidence,
+            "tz_offset_min": tz_offset_min,
+        },
+    )
 
     if decision.decision == "send":
         await record_send_decision(user_id, state.dayKey)

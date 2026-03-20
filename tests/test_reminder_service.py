@@ -321,3 +321,53 @@ def test_get_reminder_decision_does_not_record_send_for_suppress(
 
     assert response.decision == "suppress"
     record_send.assert_not_called()
+
+
+def test_get_reminder_decision_emits_structured_log_on_success(
+    mocker: MockerFixture,
+    caplog,
+) -> None:
+    """Every computed decision must emit a structured INFO log for observability."""
+    import logging
+
+    state = _load_state_fixture()
+    decision = _load_decision_fixture()
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
+    mocker.patch(
+        "app.services.reminder_service.get_nutrition_state",
+        return_value=state,
+    )
+    mocker.patch(
+        "app.services.reminder_service.get_notification_prefs",
+        return_value={},
+    )
+    mocker.patch(
+        "app.services.reminder_service.build_reminder_inputs",
+        return_value=ReminderInputs(
+            preferences=ReminderPreferencesInput(reminders_enabled=True),
+            activity=ReminderActivityInput(),
+            now_local=datetime(2026, 3, 18, 13, 0, tzinfo=timezone(timedelta(minutes=60))),
+        ),
+    )
+    mocker.patch(
+        "app.services.reminder_service.evaluate_reminder_decision",
+        return_value=decision,
+    )
+    mocker.patch("app.services.reminder_service.record_send_decision")
+    mocker.patch(
+        "app.services.reminder_service.utc_now",
+        return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.services.reminder_service"):
+        asyncio.run(get_reminder_decision("user-1", day_key="2026-03-18", tz_offset_min=60))
+
+    log_messages = [r.message for r in caplog.records if r.name == "app.services.reminder_service"]
+    assert any("reminder.decision.computed" in msg for msg in log_messages)
+
+    log_record = next(r for r in caplog.records if "reminder.decision.computed" in r.message)
+    assert log_record.user_id == "user-1"
+    assert log_record.day_key == "2026-03-18"
+    assert log_record.decision == decision.decision
+    assert log_record.kind == decision.kind
+    assert log_record.tz_offset_min == 60

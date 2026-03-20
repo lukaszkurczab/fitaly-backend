@@ -1,104 +1,225 @@
-# Smart Reminders v1 Rollout (Backend)
+# Smart Reminders v1 — Rollout Runbook
 
-## Preconditions
+## 1. Prerequisites
 
-Smart Reminders v1 requires an explicit backend flag and the existing foundation surfaces:
+### Backend flags (all required)
 
-- `SMART_REMINDERS_ENABLED=true`
-- `STATE_ENABLED=true`
-- `HABITS_ENABLED=true`
+| Flag | Required value | Purpose |
+|---|---|---|
+| `STATE_ENABLED` | `true` | Nutrition state endpoint — reminder input source |
+| `HABITS_ENABLED` | `true` | Habit signals embedded in state — decision quality |
+| `SMART_REMINDERS_ENABLED` | `true` | Decision endpoint gate |
+| `TELEMETRY_ENABLED` | `true` | Accept mobile telemetry for observability |
 
-Coach Insights v1 are not part of Smart Reminders v1 rollout preconditions. Reminder
-runtime in v1 depends on state, habit signals already exposed through state, and
-existing reminder preferences only.
+### Mobile flags (all required)
 
-Telemetry ingest is separate, but required if Smart Reminders telemetry from clients should be accepted:
+| Flag | Required value | Purpose |
+|---|---|---|
+| `EXPO_PUBLIC_ENABLE_V2_STATE` | `true` | State data layer |
+| `EXPO_PUBLIC_ENABLE_SMART_REMINDERS` | `true` | Smart Reminders data layer + scheduling |
+| `EXPO_PUBLIC_ENABLE_TELEMETRY` | `true` | Emit telemetry events |
 
-- `TELEMETRY_ENABLED=true`
+### Flag dependency order
 
-Before rollout, confirm:
+```
+STATE_ENABLED  ─┐
+HABITS_ENABLED ─┤─→ SMART_REMINDERS_ENABLED
+                └─→ (both must be true before enabling reminders)
+```
 
-1. `GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD` returns `200` with a valid `ReminderDecision`.
-2. hard preference bounds return `decision="suppress"` with explicit suppression reason codes.
-3. strong positive cases can return `decision="send"` for `log_first_meal`, `log_next_meal`, and `complete_day`.
-4. weak-evidence cases return `decision="noop"` with `insufficient_signal`.
-5. day-complete cases return `decision="noop"` with `day_already_complete`.
-6. foundation outages produce `503`, not fake `noop`.
-7. enabled reminder definitions can surface `preferred_window_open` for active windows and `preferred_window_today` for future windows later in the same day.
-8. telemetry ingest accepts only the Smart Reminders allowlist fields.
-9. `send` decisions carry canonical `scheduledAtUtc`, and mobile schedules from that field instead of reconstructing local time from `dayKey`.
-10. meal-driven notification reconcile on mobile also re-runs Smart Reminders scheduling, so recent activity can cancel stale reminders promptly.
-11. mobile emits only:
-   - `smart_reminder_suppressed`
-   - `smart_reminder_scheduled`
-   - `smart_reminder_noop`
-   - `smart_reminder_decision_failed`
-   - `smart_reminder_schedule_failed`
-   - generic `notification_opened` for actual reminder opens
+Enable in order: `STATE_ENABLED` → `HABITS_ENABLED` → `SMART_REMINDERS_ENABLED`.
+Disable in reverse order.
 
-## Observability Checklist
+### Infrastructure
 
-During staged rollout, verify:
+- Firestore read/write access (state, preferences, `reminderDailyStats` collection)
+- No external AI dependency in the decision path
+- No push notification infrastructure required (backend is decision-only)
 
-1. `smart_reminder_scheduled` appears only for `decision="send"`.
-2. `smart_reminder_suppressed` appears only for `decision="suppress"`.
-3. `smart_reminder_noop` appears only for `decision="noop"`.
-4. `smart_reminder_decision_failed` appears for runtime fetch/contract failures, especially `service_unavailable` and `invalid_payload`.
-5. `smart_reminder_schedule_failed` appears for local execution failures such as permission-unavailable, invalid delivery time, or scheduler errors.
-6. `smart_reminder_decision_computed` does not appear in telemetry summary, because it is not an allowlisted runtime event in v1.
-7. `smart_reminder_opened` does not appear in telemetry summary, because reminder opens are currently observed through generic `notification_opened`.
-8. `notification_opened` for smart reminders continues to carry `origin="system_notifications"` on mobile.
-9. rollback by `SMART_REMINDERS_ENABLED=false` turns decision fetches into `503` instead of creating silent `noop`.
+## 2. What the endpoint does
 
-## Rollout Notes
+```
+GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD&tzOffsetMin=<int>
+```
 
-This endpoint is a decision surface only.
+- Computes a `ReminderDecision` for the given user and day
+- Returns `send`, `suppress`, or `noop` with deterministic reason codes
+- Does NOT schedule, send, or deliver notifications
+- Mobile is the sole consumer; it schedules local notifications based on `send` decisions
 
-- backend computes decision semantics
-- backend does not schedule notifications
-- backend does not send push notifications
-- mobile or another consumer must treat `send` as an instruction candidate, not proof of delivery
-- backend v1 does not consume Coach Insights as a reminder input
-- mobile owns reminder-type scheduling only while backend decision fetch is healthy; when decision is unavailable, mobile falls back to legacy meal/day scheduling
+### Query parameters
 
-## Suppression Behavior To Verify
+| Param | Required | Validation | Purpose |
+|---|---|---|---|
+| `day` | No | `YYYY-MM-DD`, 10 chars | Day key for decision (defaults to today UTC) |
+| `tzOffsetMin` | No | `int`, `[-840, 840]` | Client timezone offset (minutes east of UTC) |
 
-During rollout, explicitly verify that these paths suppress instead of sending:
+### Timezone resolution precedence
 
-- reminders disabled
-- quiet hours
-- already logged recently
-- recent backfill/edit activity detected
+1. **Client `tzOffsetMin`** — if provided in query param
+2. **Meal heuristic** — `tzOffsetMin` or `loggedAtLocalMin` from latest meal
+3. **UTC fallback** — when no offset source is available
 
-Expected effect:
+## 3. Expected HTTP responses
 
-- `decision="suppress"`
-- explicit suppression reason code
-- no fake downgrade to `noop`
+| Status | When | Meaning |
+|---|---|---|
+| `200` | Decision computed | Valid `ReminderDecision` payload |
+| `400` | Invalid `day` format | Client input error |
+| `422` | `tzOffsetMin` out of range | FastAPI validation rejection |
+| `500` | Firestore failure, contract violation | Backend bug — investigate |
+| `503` | Feature disabled, foundation unavailable | Expected during rollback |
 
-Out of scope for backend v1 decision semantics:
+## 4. Decision semantics
 
-- frequency caps without delivery history
-- device permission state
-- Coach Insights v1 as a reminder input
+| Decision | Meaning | `kind` | `scheduledAtUtc` |
+|---|---|---|---|
+| `send` | Schedule a reminder | present | present |
+| `suppress` | Reminder blocked by hard constraint | `null` | `null` |
+| `noop` | No credible reminder opportunity | `null` | `null` |
 
-## Rollback Path
+### Suppression reasons (hard constraints)
 
-Primary rollback:
+- `reminders_disabled` — user turned off smart reminders
+- `quiet_hours` — current local time is in quiet hours
+- `frequency_cap_reached` — daily send limit (3) exceeded
+- `already_logged_recently` — meal logged in last 90 min
+- `recent_activity_detected` — meal edited/backfilled recently
 
-- set `SMART_REMINDERS_ENABLED=false`
+### Noop reasons
 
-Expected effect after rollback:
+- `insufficient_signal` — not enough habit data to make a decision
+- `day_already_complete` — day is fully logged
 
-- `/api/v2/users/me/reminders/decision` returns `503 Service Unavailable`
-- no new Smart Reminders decisions are produced
-- existing notification delivery infrastructure remains untouched
+## 5. Verification steps after deploy
 
-Secondary rollback if reminder foundations are unstable:
+### 5a. Endpoint health
 
-- set `HABITS_ENABLED=false` or `STATE_ENABLED=false`
+```bash
+# Should return 200 with valid ReminderDecision
+curl -H "Authorization: Bearer <token>" \
+  "https://<host>/api/v2/users/me/reminders/decision?day=2026-03-20&tzOffsetMin=60"
 
-Expected effect:
+# Verify response shape
+# - dayKey matches request
+# - decision is one of: send, suppress, noop
+# - reasonCodes array is non-empty
+# - computedAt and validUntil are canonical UTC (YYYY-MM-DDTHH:MM:SSZ)
+# - confidence is 0.0–1.0
+```
 
-- reminder decision API becomes unavailable with `503`
-- failures stay explicit instead of surfacing as `noop`
+### 5b. Suppression paths
+
+```bash
+# Quiet hours (request during night hours for the user's timezone)
+# Expected: decision=suppress, reasonCodes=["quiet_hours"]
+
+# After 3 send decisions for same user+day
+# Expected: decision=suppress, reasonCodes=["frequency_cap_reached"]
+```
+
+### 5c. Failure paths
+
+```bash
+# With SMART_REMINDERS_ENABLED=false → 503
+# With invalid day format → 400
+# With tzOffsetMin=9999 → 422
+```
+
+### 5d. Backend structured log
+
+After every successful decision computation, the backend emits:
+
+```
+INFO  reminder.decision.computed
+  user_id=<uid>
+  day_key=2026-03-20
+  decision=send|suppress|noop
+  kind=log_next_meal|null
+  reason_codes=[...]
+  confidence=0.84
+  tz_offset_min=60|null
+```
+
+Verify this log appears in production log stream after deploy.
+Filter: `reminder.decision.computed` at INFO level.
+
+### 5e. Mobile telemetry (via TELEMETRY_ENABLED)
+
+After mobile reconcile, these events should appear in telemetry ingest:
+
+| Event | When | Key props |
+|---|---|---|
+| `smart_reminder_scheduled` | `decision=send` + successfully scheduled | `reminderKind`, `confidenceBucket`, `scheduledWindow` |
+| `smart_reminder_suppressed` | `decision=suppress` | `suppressionReason`, `confidenceBucket` |
+| `smart_reminder_noop` | `decision=noop` | `noopReason`, `confidenceBucket` |
+| `smart_reminder_decision_failed` | Backend unreachable or invalid payload | `failureReason` |
+| `smart_reminder_schedule_failed` | Local scheduling error | `failureReason`, `reminderKind` |
+
+### 5f. Strict failure policy (mobile)
+
+When Smart Reminders are enabled on mobile, legacy `meal_reminder` and `day_fill` scheduling
+is suppressed unconditionally. Decision failure (service_unavailable, invalid_payload, crash)
+results in **no notification**, not a silent fallback to legacy scheduling.
+
+Verify: with backend down and smart reminders enabled, no legacy meal/day reminders fire.
+
+## 6. Rollback
+
+### Primary: disable Smart Reminders only
+
+```env
+SMART_REMINDERS_ENABLED=false
+```
+
+Effect:
+- Backend returns `503` for all decision requests
+- Mobile receives `service_unavailable` → cancels any scheduled smart reminders
+- Mobile strict failure policy means no legacy fallback either
+- Other notification types (calorie_goal, system) unaffected
+- No data loss — `reminderDailyStats` collection remains but is inert
+
+### Secondary: disable foundations
+
+```env
+HABITS_ENABLED=false
+# or
+STATE_ENABLED=false
+```
+
+Effect:
+- Reminder decision returns `503` (foundation unavailable)
+- Also affects Coach Insights and state endpoint — broader impact
+
+### Emergency: mobile-side kill
+
+```env
+EXPO_PUBLIC_ENABLE_SMART_REMINDERS=false
+```
+
+Effect:
+- Mobile stops fetching decisions entirely
+- `getReminderDecision` returns `disabled` status without network call
+- Legacy meal/day scheduling resumes (feature is off, not failing)
+
+### Rollback verification
+
+After rollback, confirm:
+1. `GET /api/v2/users/me/reminders/decision` → `503`
+2. No new `reminder.decision.computed` logs in backend
+3. No new `smart_reminder_*` events in telemetry
+4. Existing scheduled notifications still fire (they're local)
+
+## 7. Firestore collections
+
+| Collection | Path | Purpose | Cleanup needed on rollback? |
+|---|---|---|---|
+| `reminderDailyStats` | `users/{uid}/reminderDailyStats/{dayKey}` | Daily send count for frequency cap | No — inert when feature is off |
+
+## 8. Known limitations in v1
+
+- **No per-user rollout** — `SMART_REMINDERS_ENABLED` is global, not per-user
+- **No IANA timezone** — uses fixed offset, not named timezone; DST transitions resolve on next reconcile
+- **No delivery confirmation** — backend counts `send` decisions, not actual deliveries
+- **No staleness guard** — if mobile caches a decision and never re-reconciles, the decision stays
+- **Frequency cap is per-decision, not per-delivery** — 3 `send` decisions/day regardless of actual notification delivery
