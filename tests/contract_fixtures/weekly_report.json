@@ -1,0 +1,10 @@
+{
+  "status": "insufficient_data",
+  "period": {
+    "startDay": "2026-03-09",
+    "endDay": "2026-03-15"
+  },
+  "summary": "Log a few complete days to unlock a weekly report.",
+  "insights": [],
+  "priorities": []
+}

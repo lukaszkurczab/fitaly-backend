@@ -56,6 +56,10 @@ class ReminderDecisionContractError(Exception):
     """
 
 
+class WeeklyReportsDisabledError(Exception):
+    """Raised when Weekly Reports are disabled by configuration."""
+
+
 class AiGatewayRateLimitError(Exception):
     """Raised when a user exceeds the AI gateway request rate limit."""
 
