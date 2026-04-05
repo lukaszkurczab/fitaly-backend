@@ -10,7 +10,7 @@ try:
 except ImportError:
     sentry_sdk = None
 
-logger = logging.getLogger("caloriai")
+logger = logging.getLogger("fitaly")
 logger.setLevel(logging.INFO)
 
 

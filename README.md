@@ -113,6 +113,7 @@ Telemetry props must stay categorical and bounded. Do not send copy, raw reason 
 | `STATE_ENABLED` | `false` | Serve v2 nutrition state. Also requires mobile `EXPO_PUBLIC_ENABLE_V2_STATE=true`. |
 | `HABITS_ENABLED` | `false` | Compute habit signals (consumed inside state endpoint and standalone). |
 | `SMART_REMINDERS_ENABLED` | `false` | Rollout flag for the v2 Smart Reminders decision surface. Keep separate from existing reminder delivery controls for precise rollback. |
+| `WEEKLY_REPORTS_ENABLED` | `false` | Rollout flag for `GET /api/v2/users/me/weekly-reports`. |
 | `AI_GATEWAY_ENABLED` | `true` | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass. |
 | `AI_GATEWAY_ML_ENABLED` | `false` | ML classifier for gateway. Do not enable without a trained model. |
 
@@ -163,6 +164,8 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `TELEMETRY_ENABLED` | No | `false` | Accept v2 telemetry batches |
 | `HABITS_ENABLED` | No | `false` | Compute habit signals |
 | `STATE_ENABLED` | No | `false` | Serve v2 nutrition state |
+| `SMART_REMINDERS_ENABLED` | No | `false` | Serve v2 Smart Reminders decision endpoint |
+| `WEEKLY_REPORTS_ENABLED` | No | `false` | Serve v2 weekly reports endpoint |
 | `PORT` | Railway only | set by Railway | Runtime HTTP port |
 
 Example local `.env`:
@@ -182,7 +185,11 @@ FIREBASE_CLIENT_EMAIL=your_service_account_email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
 SENTRY_ENVIRONMENT=development
-AI_DAILY_LIMIT_FREE=20
+AI_CREDITS_FREE=100
+AI_CREDITS_PREMIUM=800
+AI_CREDIT_COST_CHAT=1
+AI_CREDIT_COST_TEXT_MEAL=1
+AI_CREDIT_COST_PHOTO=5
 ```
 
 ## Railway Deployment
@@ -202,7 +209,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_DAILY_LIMIT_FREE`, `ENVIRONMENT`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
@@ -235,29 +242,29 @@ For Firebase and Firestore, generate a service account in the Firebase Console o
 
 ## AI Endpoints
 
-Before using AI endpoints, ensure `OPENAI_API_KEY` and `AI_DAILY_LIMIT_FREE` are set in `.env` (see `.env.example`).
+Before using AI endpoints, ensure `OPENAI_API_KEY` and credits settings (`AI_CREDITS_*`, `AI_CREDIT_COST_*`) are set in `.env` (see `.env.example`).
 
-`GET /api/v1/ai/usage?userId=<id>` returns current daily AI usage.
-
-Example request:
-
-```http
-GET /api/v1/ai/usage?userId=abc
-```
+`GET /api/v1/ai/credits` returns current credits status for the authenticated user.
 
 Example response:
 
 ```json
 {
   "userId": "abc",
-  "dateKey": "2026-03-01",
-  "usageCount": 3,
-  "dailyLimit": 20,
-  "remaining": 17
+  "tier": "free",
+  "balance": 95,
+  "allocation": 100,
+  "periodStartAt": "2026-03-01T08:00:00Z",
+  "periodEndAt": "2026-04-01T08:00:00Z",
+  "costs": {
+    "chat": 1,
+    "textMeal": 1,
+    "photo": 5
+  }
 }
 ```
 
-`POST /api/v1/ai/ask` is the single backend AI text entrypoint used by the mobile app. It accepts chat-style requests, checks content policy, sanitizes the prompt, increments usage, and forwards the request to OpenAI. User identity is derived from the Bearer token and chat persistence is backend-owned.
+`POST /api/v1/ai/ask` is the single backend AI text entrypoint used by the mobile app. It accepts chat-style requests, checks content policy, sanitizes the prompt, deducts credits, and forwards the request to OpenAI. User identity is derived from the Bearer token and chat persistence is backend-owned.
 
 Example request:
 
@@ -276,11 +283,17 @@ Example response:
 
 ```json
 {
-  "userId": "abc",
   "reply": "Try grilled chicken, rice, and a side salad.",
-  "usageCount": 4,
-  "remaining": 16,
-  "dateKey": "2026-03-01",
+  "balance": 94,
+  "allocation": 100,
+  "tier": "free",
+  "periodStartAt": "2026-03-01T08:00:00Z",
+  "periodEndAt": "2026-04-01T08:00:00Z",
+  "costs": {
+    "chat": 1,
+    "textMeal": 1,
+    "photo": 5
+  },
   "version": "0.1.0",
   "persistence": "backend_owned"
 }
@@ -292,7 +305,10 @@ Error responses:
 
 ```json
 {
-  "detail": "AI usage limit exceeded"
+  "detail": {
+    "message": "AI credits exhausted",
+    "code": "AI_CREDITS_EXHAUSTED"
+  }
 }
 ```
 
