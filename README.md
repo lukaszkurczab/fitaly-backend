@@ -132,6 +132,7 @@ Every HTTP response includes `X-Request-ID`.  Use it to correlate client failure
 
 ## Operator docs
 
+- Launch Runbook (mobile repo): `../fitaly/docs/launch-runbook.md` — Go/No-Go, rollback matrix, kill-switch strategy
 - [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
 - [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
@@ -139,7 +140,7 @@ Every HTTP response includes `X-Request-ID`.  Use it to correlate client failure
 
 ## Required Environment Variables
 
-Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
+Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. In `ENVIRONMENT=production`, startup now fails fast when critical integrations are missing or misconfigured (`CORS_ORIGINS`, `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, Firebase credentials).
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
@@ -147,12 +148,12 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `VERSION` | No | `0.1.0` | API version exposed by app |
 | `DEBUG` | No | `false` | FastAPI debug mode |
 | `ENVIRONMENT` | No | `local` | `local`, `development`, `staging`, `production` |
-| `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
-| `CORS_ORIGINS` | No | `*` fallback | Comma-separated frontend origins |
-| `FIREBASE_PROJECT_ID` | Yes (Firestore) | - | Firebase project selection |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Optional | - | Path to Firebase service account JSON |
-| `FIREBASE_CLIENT_EMAIL` | Yes (Firestore) | - | Service account email; preferred on Railway |
-| `FIREBASE_PRIVATE_KEY` | Yes (Firestore) | - | Service account private key; preferred on Railway |
+| `OPENAI_API_KEY` | Yes in production | - | Auth for OpenAI API calls |
+| `CORS_ORIGINS` | Yes in production | - | Comma-separated frontend origins (`*` forbidden in production) |
+| `FIREBASE_PROJECT_ID` | Yes in production | - | Firebase project selection |
+| `GOOGLE_APPLICATION_CREDENTIALS` | One of required in production | - | Path to Firebase service account JSON |
+| `FIREBASE_CLIENT_EMAIL` | One of required in production | - | Service account email; preferred on Railway |
+| `FIREBASE_PRIVATE_KEY` | One of required in production | - | Service account private key; preferred on Railway |
 | `SENTRY_DSN` | No | empty | Sentry DSN; empty disables Sentry |
 | `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
 | `AI_CREDITS_FREE` | No | `100` | Monthly AI credit allocation for free users |

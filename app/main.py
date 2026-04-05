@@ -19,14 +19,68 @@ from app.db.firebase import get_firestore
 logger = logging.getLogger(__name__)
 
 
+def _is_production_environment() -> bool:
+    return settings.ENVIRONMENT == "production"
+
+
+def _parse_cors_origins() -> list[str]:
+    return [
+        origin.strip()
+        for origin in settings.CORS_ORIGINS.split(",")
+        if origin.strip()
+    ]
+
+
+def _has_firebase_credentials_configured() -> bool:
+    if settings.GOOGLE_APPLICATION_CREDENTIALS.strip():
+        return True
+    return bool(
+        settings.FIREBASE_CLIENT_EMAIL.strip()
+        and settings.FIREBASE_PRIVATE_KEY.strip()
+    )
+
+
+def _validate_production_startup_config(cors_origins: list[str]) -> None:
+    if not _is_production_environment():
+        return
+
+    if not cors_origins:
+        raise RuntimeError(
+            "Invalid production configuration: CORS_ORIGINS must contain at least one explicit origin."
+        )
+    if "*" in cors_origins:
+        raise RuntimeError(
+            "Invalid production configuration: wildcard CORS ('*') is not allowed."
+        )
+    if not settings.OPENAI_API_KEY.strip():
+        raise RuntimeError(
+            "Invalid production configuration: OPENAI_API_KEY must be configured."
+        )
+    if not settings.FIREBASE_PROJECT_ID.strip():
+        raise RuntimeError(
+            "Invalid production configuration: FIREBASE_PROJECT_ID must be configured."
+        )
+    if not _has_firebase_credentials_configured():
+        raise RuntimeError(
+            "Invalid production configuration: provide GOOGLE_APPLICATION_CREDENTIALS "
+            "or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY."
+        )
+
+
+def _resolve_cors_origins() -> list[str]:
+    cors_origins = _parse_cors_origins()
+    _validate_production_startup_config(cors_origins)
+    if cors_origins:
+        return cors_origins
+    return ["*"]
+
+
 def create_app() -> FastAPI:
     api_version_note = (
         f"Current API: {CURRENT_API_VERSION} ({CURRENT_API_PREFIX}). "
         f"Breaking changes must be released in {NEXT_API_VERSION}."
     )
-    cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
-    if not cors_origins:
-        cors_origins = ["*"]
+    cors_origins = _resolve_cors_origins()
 
     app = FastAPI(
         title=settings.APP_NAME,
@@ -56,6 +110,8 @@ def create_app() -> FastAPI:
         get_firestore()
     except Exception:
         logger.exception("Failed to initialize Firebase during application startup.")
+        if _is_production_environment():
+            raise
 
     return app
 

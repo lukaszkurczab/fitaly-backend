@@ -200,7 +200,7 @@ For each change-set, include:
 
 ## Frontend sync
 
-During tasks check if changes require other changes on frontend part (food-scanner-ai).
+During tasks check if changes require other changes on frontend part (fitaly).
 
 ### Cross-repo contract checklist
 

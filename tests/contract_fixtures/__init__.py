@@ -8,6 +8,6 @@ When updating a fixture:
 1. Change the JSON here.
 2. Run backend tests: ``pytest tests/test_contract_alignment.py``
 3. Copy the updated JSON to the mobile mirror:
-   ``food-scanner-ai/src/__contract_fixtures__/``
+   ``fitaly/src/__contract_fixtures__/``
 4. Run mobile tests: ``npm test -- contract``
 """
