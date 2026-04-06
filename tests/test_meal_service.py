@@ -101,6 +101,8 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
         "mealId": "meal-1",
         "timestamp": "2026-03-03T12:30:00.000Z",
         "dayKey": None,
+        "loggedAtLocalMin": None,
+        "tzOffsetMin": None,
         "type": "other",
         "name": None,
         "ingredients": [],

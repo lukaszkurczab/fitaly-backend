@@ -252,6 +252,8 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "dayKey": None,
+            "loggedAtLocalMin": None,
+            "tzOffsetMin": None,
             "type": "lunch",
             "name": None,
             "ingredients": [],

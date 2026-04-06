@@ -997,7 +997,7 @@ def _sr_event(
     return {
         "eventId": event_id,
         "name": name,
-        "ts": f"{resolved_day}T10:00:00Z",
+        "ts": f"{resolved_day}T00:00:00Z",
         "props": props or {},
         "sessionId": "sess-sr",
         "userHash": user_hash,
@@ -1006,7 +1006,7 @@ def _sr_event(
         "build": None,
         "locale": "pl-PL",
         "tzOffsetMin": 60,
-        "ingestedAt": f"{resolved_day}T10:00:01Z",
+        "ingestedAt": f"{resolved_day}T00:00:01Z",
     }
 
 
