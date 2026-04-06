@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -262,15 +263,18 @@ def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
         "app.services.reminder_service.evaluate_reminder_decision",
         side_effect=PydanticValidationError.from_exception_data(
             title="ReminderDecision",
-            line_errors=[
-                {
-                    "type": "string_too_long",
-                    "loc": ("computedAt",),
-                    "msg": "String should have at most 20 characters",
-                    "input": "2026-03-18T13:00:33.999999Z",
-                    "ctx": {"max_length": 20},
-                }
-            ],
+            line_errors=cast(
+                Any,
+                [
+                    {
+                        "type": "string_too_long",
+                        "loc": ("computedAt",),
+                        "msg": "String should have at most 20 characters",
+                        "input": "2026-03-18T13:00:33.999999Z",
+                        "ctx": {"max_length": 20},
+                    }
+                ],
+            ),
         ),
     )
 

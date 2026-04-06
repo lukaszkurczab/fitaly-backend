@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from app.services.reminder_decision_store import (
@@ -39,7 +40,7 @@ def test_build_decision_key_different_scheduled_at_produces_different_key() -> N
 # ---------------------------------------------------------------------------
 
 
-def _mock_doc(exists: bool, data: dict | None = None) -> MagicMock:
+def _mock_doc(exists: bool, data: dict[str, Any] | None = None) -> MagicMock:
     doc = MagicMock()
     doc.exists = exists
     doc.to_dict.return_value = data if data else {}
@@ -346,7 +347,7 @@ def test_concurrent_calls_for_same_decision_key_result_in_count_one() -> None:
     decision_key = "2026-03-18:log_first_meal:2026-03-18T08:20:00Z"
 
     # Mutable state representing the Firestore document.
-    doc_state: dict = {"exists": False, "data": {}}
+    doc_state: dict[str, Any] = {"exists": False, "data": {}}
 
     def make_doc_snapshot():
         snapshot = MagicMock()

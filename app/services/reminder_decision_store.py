@@ -94,7 +94,8 @@ async def get_daily_send_count(user_id: str, day_key: str) -> DailySendCountResu
             )
             return DailySendCountResult(count=0, degraded=False)
 
-        count = int(doc.to_dict().get("sendCount", 0))
+        payload = doc.to_dict() or {}
+        count = int(payload.get("sendCount", 0))
         logger.debug(
             "reminder.store.read_count",
             extra={

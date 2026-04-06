@@ -71,6 +71,10 @@ async def get_reminder_decision(
     )
 
     if decision.decision == "send":
+        if decision.kind is None or decision.scheduledAtUtc is None:
+            raise ReminderDecisionContractError(
+                "Rule engine returned send decision without kind/scheduledAtUtc."
+            )
         await record_send_decision_if_new(
             user_id,
             state.dayKey,
