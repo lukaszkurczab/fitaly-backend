@@ -29,3 +29,10 @@ htmlcov/
 
 # secrets and local credentials
 service-account.json
+service-account*.json
+firebase-adminsdk*.json
+google-credentials*.json
+*.p12
+*.key
+*.pem
+*.mobileprovision
