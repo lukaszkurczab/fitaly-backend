@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Check smoke health endpoint
         run: bash scripts/check-health-endpoint.sh smoke https://fitaly-backend-smoke.up.railway.app/api/v1/health 3000
