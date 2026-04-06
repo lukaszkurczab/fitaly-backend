@@ -25,7 +25,7 @@ pytest-mock>=3.10.0
 httpx==0.28.1
 
 # Lint
-ruff==0.9.7
+ruff==0.15.9
 
 # Type checking
 pyright==1.1.397
