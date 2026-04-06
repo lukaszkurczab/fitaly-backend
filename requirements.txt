@@ -30,5 +30,8 @@ httpx==0.28.1
 # Lint
 ruff==0.9.7
 
+# Security
+pip-audit>=2.7
+
 # Type checking
 pyright==1.1.397

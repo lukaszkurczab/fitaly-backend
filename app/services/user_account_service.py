@@ -42,7 +42,7 @@ DELETE_SUBCOLLECTIONS = (
     "feedback",
 )
 BATCH_DELETE_LIMIT = 500
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
         "unitsSystem",
