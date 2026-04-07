@@ -92,6 +92,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     prefs_collection_ref = mocker.Mock()
     notif_meta_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
+    badges_collection_ref = mocker.Mock()
+    streak_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
     meals_doc_1 = mocker.Mock()
     meals_doc_2 = mocker.Mock()
@@ -102,6 +104,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_doc = mocker.Mock()
     feedback_doc = mocker.Mock()
     feedback_doc.to_dict.return_value = {}
+    badge_doc = mocker.Mock()
+    streak_doc = mocker.Mock()
     chat_thread_doc = mocker.Mock()
     chat_thread_messages_collection_ref = mocker.Mock()
     chat_thread_message_doc = mocker.Mock()
@@ -121,6 +125,10 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return notif_meta_collection_ref
         if name == "feedback":
             return feedback_collection_ref
+        if name == "badges":
+            return badges_collection_ref
+        if name == "streak":
+            return streak_collection_ref
         if name == "chat_threads":
             return chat_threads_collection_ref
         raise AssertionError(f"Unexpected subcollection {name}")
@@ -133,6 +141,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     prefs_collection_ref.stream.return_value = [prefs_doc]
     notif_meta_collection_ref.stream.return_value = [notif_meta_doc]
     feedback_collection_ref.stream.return_value = [feedback_doc]
+    badges_collection_ref.stream.return_value = [badge_doc]
+    streak_collection_ref.stream.return_value = [streak_doc]
     chat_threads_collection_ref.stream.return_value = [chat_thread_doc]
     chat_thread_doc.reference.collection.return_value = chat_thread_messages_collection_ref
     chat_thread_messages_collection_ref.stream.return_value = [chat_thread_message_doc]
@@ -150,6 +160,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     batch_7 = mocker.Mock()
     batch_8 = mocker.Mock()
     batch_9 = mocker.Mock()
+    batch_10 = mocker.Mock()
+    batch_11 = mocker.Mock()
     client.batch.side_effect = [
         batch_1,
         batch_2,
@@ -160,6 +172,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
         batch_7,
         batch_8,
         batch_9,
+        batch_10,
+        batch_11,
     ]
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     bucket = mocker.Mock()
@@ -190,10 +204,14 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     batch_6.commit.assert_called_once_with()
     batch_7.delete.assert_called_once_with(feedback_doc.reference)
     batch_7.commit.assert_called_once_with()
-    batch_8.delete.assert_called_once_with(chat_thread_message_doc.reference)
+    batch_8.delete.assert_called_once_with(badge_doc.reference)
     batch_8.commit.assert_called_once_with()
-    batch_9.delete.assert_called_once_with(chat_thread_doc.reference)
+    batch_9.delete.assert_called_once_with(streak_doc.reference)
     batch_9.commit.assert_called_once_with()
+    batch_10.delete.assert_called_once_with(chat_thread_message_doc.reference)
+    batch_10.commit.assert_called_once_with()
+    batch_11.delete.assert_called_once_with(chat_thread_doc.reference)
+    batch_11.commit.assert_called_once_with()
     usernames_collection_ref.document.assert_called_once_with("neo")
     username_ref.delete.assert_called_once_with()
     user_ref.delete.assert_called_once_with()

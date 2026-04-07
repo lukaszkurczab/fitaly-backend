@@ -22,10 +22,12 @@ from app.services import streak_service
 from app.services.username_service import normalize_username
 
 from app.core.firestore_constants import (
+    BADGES_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MY_MEALS_SUBCOLLECTION,
+    STREAK_SUBCOLLECTION,
     USERNAMES_COLLECTION,
     USERS_COLLECTION,
 )
@@ -40,6 +42,8 @@ DELETE_SUBCOLLECTIONS = (
     "prefs",
     "notif_meta",
     "feedback",
+    BADGES_SUBCOLLECTION,
+    STREAK_SUBCOLLECTION,
 )
 BATCH_DELETE_LIMIT = 500
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
