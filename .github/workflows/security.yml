@@ -36,7 +36,7 @@ jobs:
         run: pip-audit -r requirements.txt
 
   secret-scan:
-    name: gitleaks (working tree)
+    name: gitleaks (full git history)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -51,4 +51,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: detect --no-git --redact
+          args: detect --redact
