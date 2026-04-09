@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from app.core.config import settings
 from app.core.datetime_utils import utc_now
 from app.schemas.weekly_reports import WeeklyReportPeriod, WeeklyReportResponse
 from app.services.weekly_report_aggregation import WeeklyAggregate, collect_weekly_aggregate
@@ -72,9 +71,6 @@ async def get_weekly_report(
     period = build_weekly_report_period(resolved_week_end)
     context = WeeklyReportRequestContext(user_id=user_id, period=period)
 
-    if not settings.WEEKLY_REPORTS_ENABLED:
-        return _build_not_available_response(context)
-
     foundation = await _collect_weekly_report_foundation(context)
     if not foundation.signals.has_sufficient_data:
         return _build_insufficient_data_response(context)
@@ -88,18 +84,6 @@ async def _collect_weekly_report_foundation(
     aggregate = collect_weekly_aggregate(context.user_id, period=context.period)
     signals = derive_weekly_signals(aggregate)
     return WeeklyReportFoundation(aggregate=aggregate, signals=signals)
-
-
-def _build_not_available_response(
-    context: WeeklyReportRequestContext,
-) -> WeeklyReportResponse:
-    return WeeklyReportResponse(
-        status="not_available",
-        period=context.period,
-        summary="Weekly reports are not available yet.",
-        insights=[],
-        priorities=[],
-    )
 
 
 def _build_insufficient_data_response(

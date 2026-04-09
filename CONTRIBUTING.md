@@ -27,6 +27,8 @@ cp .env.example .env          # fill in local values
 uvicorn app.main:app --reload
 ```
 
+If `.venv/bin/python` points to an old path after moving the repo, recreate `.venv` before continuing.
+
 Health check: `curl http://localhost:8000/api/v1/health`
 
 ## Running checks
@@ -78,7 +80,10 @@ Before tagging a production deploy:
 - [ ] `CHANGELOG.md` updated
 - [ ] `Settings.VERSION` bumped in `app/core/config.py`
 - [ ] All CI checks green on `main`
+- [ ] `firestore-backup.yml` latest run is green and artifact is readable
+- [ ] `firestore-restore-drill.yml` latest run is green and artifact is readable
 - [ ] `CORS_ORIGINS` set correctly in Railway production environment
 - [ ] `ENVIRONMENT=production` set in Railway
 - [ ] `FIRESTORE_DATABASE_ID=(default)` confirmed for prod
 - [ ] Sentry DSN configured
+- [ ] `OPS_ALERT_DISCORD_WEBHOOK_URL` configured for workflow alerts

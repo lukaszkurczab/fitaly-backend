@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import CoachUnavailableError, FirestoreServiceError, StateDisabledError
+from app.core.exceptions import CoachUnavailableError, FirestoreServiceError
 from app.main import app
 from app.schemas.coach import CoachInsight, CoachMeta, CoachResponse
 
@@ -83,21 +83,6 @@ def test_get_coach_returns_400_for_invalid_day(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid day key. Expected YYYY-MM-DD."}
-
-
-def test_get_coach_returns_503_when_state_is_disabled(
-    mocker: MockerFixture,
-    auth_headers,
-) -> None:
-    mocker.patch(
-        "app.api.routes.coach.get_coach_response",
-        side_effect=StateDisabledError("disabled"),
-    )
-
-    response = client.get("/api/v2/users/me/coach", headers=auth_headers("user-1"))
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Coach insights are unavailable"}
 
 
 def test_get_coach_returns_503_when_habits_foundation_is_unavailable(

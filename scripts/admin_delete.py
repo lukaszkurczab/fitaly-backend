@@ -114,16 +114,12 @@ def _confirm(uid: str, email_hint: str | None) -> None:
 
 def _count_collection(user_ref: object, name: str) -> int:
     """Return document count for a subcollection (for dry-run reporting)."""
-    from google.cloud import firestore
-
     ref = user_ref  # type: ignore[assignment]
     return sum(1 for _ in ref.collection(name).stream())  # type: ignore[union-attr]
 
 
 def _dry_run_report(uid: str) -> None:
     """Print a summary of what *would* be deleted without touching anything."""
-    from google.cloud import firestore as _fs
-
     client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(uid)
     snapshot = user_ref.get()
@@ -187,8 +183,6 @@ def _dry_run_report(uid: str) -> None:
 
 async def _delete_extra_subcollections(uid: str, dry_run: bool) -> None:
     """Delete subcollections not covered by delete_account_data (badges, streak)."""
-    from google.cloud import firestore
-
     client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(uid)
 
@@ -271,7 +265,7 @@ async def run(uid: str, dry_run: bool) -> None:
     logger.info("Account deletion complete. UID=%s  started=%s  ended=%s", uid, start, end)
     print()
     print("✓ Deletion complete. Update the DSAR register:")
-    print(f"    compliance/templates/dsar-register.md")
+    print("    compliance/templates/dsar-register.md")
     print(f"  Fields to fill: completed={end}, outcome=completed")
     print()
     print("Residual data not deleted by this script:")

@@ -23,3 +23,22 @@ jobs:
 
       - name: Check production health endpoint
         run: bash scripts/check-health-endpoint.sh production https://fitaly-backend-production.up.railway.app/api/v1/health 2000
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - backend-health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: production
+          WORKFLOW_NAME: Ops Monitoring
+          WORKFLOW_OWNER: backend-oncall
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh

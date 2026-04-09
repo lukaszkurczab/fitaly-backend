@@ -29,7 +29,7 @@ This runbook is implementation-focused and complements external legal documents 
 2. Backend endpoint:
    - `POST /api/v1/users/me/delete`
 3. Backend removes user-owned records from primary collections/subcollections.
-4. If deletion fails, retry once and escalate to incident channel.
+4. If deletion fails, retry once and escalate in Discord `launch-ops`.
 
 ## Retention & Review Cadence
 
@@ -44,11 +44,14 @@ This runbook is implementation-focused and complements external legal documents 
 
 ## Incident Handling (Privacy-Relevant)
 
-1. Open incident channel immediately.
+1. Open Discord `launch-ops` immediately and ACK within 15 minutes.
 2. Freeze releases touching data pipelines.
-3. Capture affected scope, time window, and user impact estimate.
-4. Apply feature kill-switches if needed.
-5. Publish post-incident remediation tasks with owners and due dates.
+3. Review Sentry and Railway dashboards before mitigation:
+   - `https://sentry.io/organizations/<org-slug>/projects/<backend-project-slug>/`
+   - `https://railway.app/project/<project-id>/service/<service-id>`
+4. Capture affected scope, time window, and user impact estimate.
+5. Apply feature kill-switches if needed.
+6. Publish post-incident remediation tasks with owners and due dates.
 
 ## Audit Trail (Minimal)
 

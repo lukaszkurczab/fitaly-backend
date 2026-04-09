@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request, raise_http_exception, raise_service_unavailable
-from app.core.exceptions import CoachUnavailableError, FirestoreServiceError, StateDisabledError
+from app.core.exceptions import CoachUnavailableError, FirestoreServiceError
 from app.schemas.coach import CoachResponse
 from app.services.coach_service import get_coach_response
 
@@ -27,7 +27,7 @@ async def get_user_coach_me(
         return await get_coach_response(current_user.uid, day_key=day)
     except ValueError as exc:
         raise_bad_request(exc)
-    except (StateDisabledError, CoachUnavailableError) as exc:
+    except CoachUnavailableError as exc:
         raise_service_unavailable(exc, detail="Coach insights are unavailable")
     except FirestoreServiceError as exc:
         raise_http_exception(

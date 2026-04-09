@@ -12,9 +12,8 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import round_metric
-from app.core.config import settings
 from app.core.datetime_utils import utc_now
-from app.core.exceptions import FirestoreServiceError, StateDisabledError
+from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.nutrition_state import (
@@ -271,9 +270,6 @@ def build_habits_summary(
     meals: list[dict[str, Any]],
     reference_day_key: str,
 ) -> NutritionHabitsSummary:
-    if not settings.HABITS_ENABLED:
-        return NutritionHabitsSummary()
-
     reference_dt = datetime.combine(
         datetime.strptime(reference_day_key, "%Y-%m-%d").date(),
         time(hour=12),
@@ -364,9 +360,6 @@ async def get_nutrition_state(
     day_key: str | None = None,
     now: datetime | None = None,
 ) -> NutritionStateResponse:
-    if not settings.STATE_ENABLED:
-        raise StateDisabledError("Nutrition state computation is disabled")
-
     computed_at = (now or utc_now()).astimezone(UTC)
     resolved_day_key = resolve_requested_day_key(day_key, now=computed_at)
 
@@ -402,7 +395,7 @@ async def get_nutrition_state(
     remaining = _build_remaining(targets=targets, consumed=consumed)
     over_target = _build_over_target(targets=targets, consumed=consumed)
     quality = _build_quality(requested_day_meals)
-    habits_status = "disabled" if not settings.HABITS_ENABLED else "ok"
+    habits_status = "ok"
     streak_status = "ok"
     ai_status = "ok"
 
@@ -418,7 +411,7 @@ async def get_nutrition_state(
             extra={"user_id": user_id, "day_key": resolved_day_key},
         )
         habits = _default_habits_summary()
-        habits_status = "error" if settings.HABITS_ENABLED else "disabled"
+        habits_status = "error"
 
     # Streak: read the authoritative streak document directly instead of
     # recomputing from unbounded meal history.

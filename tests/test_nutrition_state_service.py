@@ -6,7 +6,7 @@ import pytest
 from google.api_core.exceptions import GoogleAPICallError
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import FirestoreServiceError, StateDisabledError
+from app.core.exceptions import FirestoreServiceError
 from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 from app.services import nutrition_state_service
 
@@ -201,8 +201,6 @@ def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
         meals=meals,
         streak={"current": 5, "lastDate": "2026-03-18"},
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
-    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -281,8 +279,6 @@ def test_get_nutrition_state_returns_empty_day_defaults(mocker: MockerFixture) -
             )
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
-    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -323,8 +319,6 @@ def test_get_nutrition_state_handles_missing_targets(mocker: MockerFixture) -> N
             )
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
-    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -380,8 +374,6 @@ def test_get_nutrition_state_degrades_gracefully_for_subservices(
             )
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
-    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.build_habits_summary",
@@ -444,7 +436,6 @@ def test_get_nutrition_state_uses_deterministic_default_day_handling(
             ),
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -487,7 +478,6 @@ def test_get_nutrition_state_excludes_deleted_meals(mocker: MockerFixture) -> No
             ),
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -529,7 +519,6 @@ def test_get_nutrition_state_uses_bounded_queries(mocker: MockerFixture) -> None
             )
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -599,7 +588,6 @@ def test_only_requested_day_contributes_to_consumed(mocker: MockerFixture) -> No
             ),
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -635,7 +623,6 @@ def test_streak_reads_from_document(mocker: MockerFixture) -> None:
         meals=[],
         streak={"current": 42, "lastDate": "2026-03-17"},
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -675,7 +662,6 @@ def test_remaining_clamps_overshoot_to_zero(mocker: MockerFixture) -> None:
             ),
         ],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
@@ -699,18 +685,12 @@ def test_remaining_clamps_overshoot_to_zero(mocker: MockerFixture) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_nutrition_state_raises_when_disabled() -> None:
-    with pytest.raises(StateDisabledError):
-        asyncio.run(nutrition_state_service.get_nutrition_state("user-1"))
-
-
 def test_get_nutrition_state_wraps_core_firestore_errors(mocker: MockerFixture) -> None:
     client = mocker.Mock()
     user_ref = mocker.Mock()
     user_ref.get.side_effect = GoogleAPICallError("boom")
     client.collection.return_value.document.return_value = user_ref
 
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
 
     with pytest.raises(FirestoreServiceError):
@@ -735,7 +715,6 @@ def test_response_contains_all_top_level_fields(mocker: MockerFixture) -> None:
         profile={"calorieTarget": 2000},
         meals=[],
     )
-    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", True)
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
     mocker.patch(
         "app.services.nutrition_state_service.ai_credits_service.get_credits_status",

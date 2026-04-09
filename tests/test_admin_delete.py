@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -24,7 +24,11 @@ import scripts.admin_delete as admin_delete  # noqa: E402
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _make_doc_snap(*, exists: bool = True, data: dict | None = None) -> MagicMock:
+def _make_doc_snap(
+    *,
+    exists: bool = True,
+    data: dict[str, object] | None = None,
+) -> MagicMock:
     snap = MagicMock()
     snap.exists = exists
     snap.to_dict.return_value = data or {}

@@ -52,3 +52,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: detect --redact
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - pip-audit
+      - secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: security
+          WORKFLOW_NAME: Security Scan
+          WORKFLOW_OWNER: backend-oncall
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh

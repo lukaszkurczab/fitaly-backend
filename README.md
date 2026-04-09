@@ -53,6 +53,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+If the repo was moved and `.venv` points to an old interpreter path, recreate it before running tests:
+
+```bash
+rm -rf .venv
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 Health check:
 
 ```text
@@ -89,11 +98,11 @@ The backend exposes two API versions:
 - `GET /api/v1/users/me/meals/changes` — meal sync (paginated)
 - `POST /api/v1/logs/error` — client error forwarding
 
-**v2 (Foundation Sprint)** — behind feature flags:
+**v2 (Foundation Sprint)**:
 
 - `POST /api/v2/telemetry/events/batch` — telemetry ingest (requires `TELEMETRY_ENABLED=true`)
-- `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state (requires `STATE_ENABLED=true`)
-- `GET /api/v2/users/me/habits` — habit signals (requires `HABITS_ENABLED=true`)
+- `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state
+- `GET /api/v2/users/me/habits` — habit signals
 
 **v2 follow-up technical surface**:
 
@@ -112,14 +121,12 @@ Telemetry props must stay categorical and bounded. Do not send copy, raw reason 
 | Flag                      | Default | What it controls                                                                                                                       |
 | ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `TELEMETRY_ENABLED`       | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`.                                            |
-| `STATE_ENABLED`           | `false` | Serve v2 nutrition state. Also requires mobile `EXPO_PUBLIC_ENABLE_V2_STATE=true`.                                                     |
-| `HABITS_ENABLED`          | `false` | Compute habit signals (consumed inside state endpoint and standalone).                                                                 |
-| `SMART_REMINDERS_ENABLED` | `false` | Rollout flag for the v2 Smart Reminders decision surface. Keep separate from existing reminder delivery controls for precise rollback. |
-| `WEEKLY_REPORTS_ENABLED`  | `false` | Rollout flag for `GET /api/v2/users/me/weekly-reports`.                                                                                |
+| `STATE_ENABLED`           | `true`  | Legacy compatibility flag. Launch runtime serves v2 nutrition state by default.                                                       |
+| `HABITS_ENABLED`          | `true`  | Legacy compatibility flag. Launch runtime computes habit signals by default.                                                           |
+| `SMART_REMINDERS_ENABLED` | `true`  | Legacy compatibility flag. Launch runtime serves v2 Smart Reminders decision endpoint by default.                                     |
+| `WEEKLY_REPORTS_ENABLED`  | `true`  | Legacy compatibility flag. Launch runtime serves v2 weekly reports endpoint by default.                                                |
 | `AI_GATEWAY_ENABLED`      | `true`  | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass.                                                              |
 | `AI_GATEWAY_ML_ENABLED`   | `false` | ML classifier for gateway. Do not enable without a trained model.                                                                      |
-
-To enable a foundation surface for QA/internal, set the backend flag in `.env` or Railway, restart, then enable the paired mobile flag and rebuild the app. See [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) for the current rollout and rollback notes.
 
 ## Backend setup
 
@@ -168,10 +175,10 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `AI_CREDIT_COST_TEXT_MEAL`       | No                            | `1`                       | Credits per text meal analysis                                 |
 | `AI_GATEWAY_ENABLED`             | No                            | `true`                    | Enforce AI gateway rules                                       |
 | `TELEMETRY_ENABLED`              | No                            | `false`                   | Accept v2 telemetry batches                                    |
-| `HABITS_ENABLED`                 | No                            | `false`                   | Compute habit signals                                          |
-| `STATE_ENABLED`                  | No                            | `false`                   | Serve v2 nutrition state                                       |
-| `SMART_REMINDERS_ENABLED`        | No                            | `false`                   | Serve v2 Smart Reminders decision endpoint                     |
-| `WEEKLY_REPORTS_ENABLED`         | No                            | `false`                   | Serve v2 weekly reports endpoint                               |
+| `HABITS_ENABLED`                 | No                            | `true`                    | Compute habit signals                                          |
+| `STATE_ENABLED`                  | No                            | `true`                    | Serve v2 nutrition state                                       |
+| `SMART_REMINDERS_ENABLED`        | No                            | `true`                    | Serve v2 Smart Reminders decision endpoint                     |
+| `WEEKLY_REPORTS_ENABLED`         | No                            | `true`                    | Serve v2 weekly reports endpoint                               |
 | `PORT`                           | Railway only                  | set by Railway            | Runtime HTTP port                                              |
 
 Example local `.env`:
@@ -237,6 +244,16 @@ GET https://<your-domain>/api/v1/version
 
 Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish development, staging, and production events.
 Sentry initialization is skipped automatically when `ENVIRONMENT=local` and during `pytest` runs, so local tests do not send synthetic failures.
+
+Repository-level release/ops workflows additionally expect these GitHub secrets:
+
+- `OPS_ALERT_DISCORD_WEBHOOK_URL`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_SERVICE_ACCOUNT_EMAIL`
+- `FIRESTORE_SOURCE_PROJECT_ID`
+- `FIRESTORE_BACKUP_BUCKET`
+- `FIRESTORE_RESTORE_PROJECT_ID`
+- `RESTORE_BACKEND_BASE_URL`
 
 For Firebase and Firestore, generate a service account in the Firebase Console or Google Cloud Console. On Railway, the preferred setup is to copy `client_email` into `FIREBASE_CLIENT_EMAIL` and `private_key` into `FIREBASE_PRIVATE_KEY`, keeping them as protected variables. For local development, you can still use the downloaded service account JSON file with `GOOGLE_APPLICATION_CREDENTIALS`. Never commit that JSON file to the repository, and rotate credentials if they are ever exposed.
 

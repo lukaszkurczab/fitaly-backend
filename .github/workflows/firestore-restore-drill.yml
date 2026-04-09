@@ -1,0 +1,79 @@
+name: Firestore Restore Drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_path:
+        description: "Optional backup path to import. Leave empty to use the latest backup."
+        required: false
+        default: ""
+      restore_backend_base_url:
+        description: "Optional recovery backend base URL. Leave empty to use the repository secret."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  restore-drill:
+    name: Import latest backup into recovery project
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run Firestore restore drill
+        id: restore
+        env:
+          FIRESTORE_EXPORT_PATH: ${{ inputs.export_path }}
+          FIRESTORE_BACKUP_BUCKET: ${{ secrets.FIRESTORE_BACKUP_BUCKET }}
+          FIRESTORE_RESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_RESTORE_PROJECT_ID }}
+          RESTORE_BACKEND_BASE_URL_INPUT: ${{ inputs.restore_backend_base_url }}
+          RESTORE_BACKEND_BASE_URL_SECRET: ${{ secrets.RESTORE_BACKEND_BASE_URL }}
+        run: |
+          if [[ -n "${RESTORE_BACKEND_BASE_URL_INPUT}" ]]; then
+            export RESTORE_BACKEND_BASE_URL="${RESTORE_BACKEND_BASE_URL_INPUT}"
+          else
+            export RESTORE_BACKEND_BASE_URL="${RESTORE_BACKEND_BASE_URL_SECRET}"
+          fi
+          bash scripts/firestore-restore-drill.sh
+
+      - name: Upload restore drill artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-restore-drill
+          path: |
+            ${{ steps.restore.outputs.manifest_path }}
+            ${{ steps.restore.outputs.summary_path }}
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - restore-drill
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: recovery
+          WORKFLOW_NAME: Firestore Restore Drill
+          WORKFLOW_OWNER: ops-lead
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh

@@ -6,8 +6,6 @@ from app.core.exceptions import (
     FirestoreServiceError,
     ReminderDecisionContractError,
     ReminderUnavailableError,
-    SmartRemindersDisabledError,
-    StateDisabledError,
 )
 from app.schemas.reminders import ReminderDecision
 from app.services.reminder_service import get_reminder_decision
@@ -37,11 +35,7 @@ async def get_user_reminder_decision_me(
             day_key=day,
             tz_offset_min=tzOffsetMin,
         )
-    except (
-        StateDisabledError,
-        SmartRemindersDisabledError,
-        ReminderUnavailableError,
-    ) as exc:
+    except ReminderUnavailableError as exc:
         raise_service_unavailable(exc, detail="Smart reminders are unavailable")
     except ReminderDecisionContractError as exc:
         raise_http_exception(

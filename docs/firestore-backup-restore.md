@@ -11,9 +11,9 @@ This runbook defines minimum backup and recovery operations for production Fires
 
 ## Frequency
 
-- Daily automated backup export
+- Daily automated backup export via `firestore-backup.yml`
 - Weekly verification that the latest backup exists and is readable
-- Monthly restore drill to a non-production project
+- Monthly restore drill to a non-production project via `firestore-restore-drill.yml`
 
 ## Prerequisites
 
@@ -26,6 +26,16 @@ This runbook defines minimum backup and recovery operations for production Fires
 - Dedicated GCS bucket for backups (for example `gs://fitaly-firestore-backups`)
 
 ## Backup Procedure (Export)
+
+The repository automation is the default path for production launch readiness:
+
+- GitHub workflow: `../.github/workflows/firestore-backup.yml`
+- Artifact expectation: latest successful run uploads `firestore-backup-manifest.json` and `firestore-backup-summary.md`
+- Launch rule: “latest backup available” means a green `firestore-backup.yml` run with:
+  - workflow run ID
+  - run date/time (UTC)
+  - artifact name `firestore-backup`
+  - readable `firestore-backup-manifest.json`
 
 1. Set variables:
 
@@ -54,6 +64,17 @@ gcloud firestore operations list --project="${SOURCE_PROJECT_ID}" \
 
 ## Restore Procedure (Import to Staging/Recovery Project)
 
+The repository automation is the default path for restore drills:
+
+- GitHub workflow: `../.github/workflows/firestore-restore-drill.yml`
+- Required repo secret: `RESTORE_BACKEND_BASE_URL`
+- Artifact expectation: latest successful run uploads `firestore-restore-manifest.json` and `firestore-restore-summary.md`
+- Launch rule: “monthly restore drill documented” means a green `firestore-restore-drill.yml` run with:
+  - workflow run ID
+  - run date/time (UTC)
+  - artifact name `firestore-restore-drill`
+  - readable `firestore-restore-manifest.json`
+
 1. Set variables:
 
 ```bash
@@ -75,6 +96,7 @@ gcloud firestore operations list --project="${TARGET_PROJECT_ID}" \
 ```
 
 4. Run backend health check and selected smoke checks against the restored environment.
+   - default automated checks: `GET /api/v1/health`, `GET /api/v1/health/firestore`, `GET /api/v1/version`
 
 ## Monthly Restore Drill Checklist
 
@@ -96,6 +118,6 @@ gcloud firestore operations list --project="${TARGET_PROJECT_ID}" \
 
 ## Failure Handling
 
-- If export fails: retry once, then escalate to incident channel.
+- If export fails: retry once, then escalate in Discord `launch-ops`.
 - If restore fails: capture operation id, error output, and open a production-risk incident.
 - Do not run restore into production without incident commander approval.

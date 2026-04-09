@@ -29,20 +29,8 @@ class TelemetryRateLimitError(Exception):
     """Raised when a telemetry client exceeds the allowed request rate."""
 
 
-class HabitsDisabledError(Exception):
-    """Raised when habit signal computation is disabled by configuration."""
-
-
-class StateDisabledError(Exception):
-    """Raised when nutrition state computation is disabled by configuration."""
-
-
 class CoachUnavailableError(Exception):
     """Raised when coach insights cannot be computed from required foundations."""
-
-
-class SmartRemindersDisabledError(Exception):
-    """Raised when Smart Reminders decision surface is disabled by configuration."""
 
 
 class ReminderUnavailableError(Exception):
@@ -54,10 +42,6 @@ class ReminderDecisionContractError(Exception):
 
     This is always an internal error (500), never a client input error (400).
     """
-
-
-class WeeklyReportsDisabledError(Exception):
-    """Raised when Weekly Reports are disabled by configuration."""
 
 
 class AiGatewayRateLimitError(Exception):

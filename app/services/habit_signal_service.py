@@ -13,9 +13,8 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import coerce_float, round_metric
-from app.core.config import settings
 from app.core.datetime_utils import parse_flexible_datetime, utc_now
-from app.core.exceptions import FirestoreServiceError, HabitsDisabledError
+from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.habits import (
@@ -659,9 +658,6 @@ async def get_habit_signals(
     *,
     computed_at: datetime | None = None,
 ) -> HabitSignalsResponse:
-    if not settings.HABITS_ENABLED:
-        raise HabitsDisabledError("Habit signal computation is disabled")
-
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
 

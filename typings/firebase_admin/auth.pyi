@@ -16,6 +16,9 @@ class UserDisabledError(Exception): ...
 class CertificateFetchError(Exception): ...
 
 
+class UserNotFoundError(Exception): ...
+
+
 def verify_id_token(
     id_token: str,
     app: Any | None = ...,
