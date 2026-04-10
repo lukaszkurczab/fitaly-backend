@@ -145,29 +145,10 @@ def test_build_weekly_report_period_builds_closed_7_day_window() -> None:
     assert period.endDay == "2026-03-15"
 
 
-def test_get_weekly_report_returns_not_available_when_disabled(
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", False)
-
-    response = asyncio.run(
-        get_weekly_report(
-            "user-1",
-            week_end="2026-03-15",
-            now=datetime(2026, 3, 21, 8, 0, tzinfo=UTC),
-        )
-    )
-
-    assert response.status == "not_available"
-    assert response.insights == []
-    assert response.priorities == []
-
-
-def test_get_weekly_report_returns_insufficient_data_placeholder_when_enabled(
+def test_get_weekly_report_returns_insufficient_data_placeholder(
     mocker: MockerFixture,
 ) -> None:
     fixture = _load_fixture()
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch(
         "app.services.weekly_report_service.collect_weekly_aggregate",
         return_value=build_weekly_aggregate_from_meals(
@@ -221,7 +202,6 @@ def test_get_weekly_report_returns_ready_when_week_has_enough_valid_days(
         ),
     ]
     client, meals_collection = _mock_firestore(mocker, meals=meals)
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch("app.services.weekly_report_aggregation.get_firestore", return_value=client)
 
     response = asyncio.run(
@@ -268,7 +248,6 @@ def test_get_weekly_report_returns_insufficient_data_for_three_valid_days(
         ),
     ]
     client, _ = _mock_firestore(mocker, meals=meals)
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch("app.services.weekly_report_aggregation.get_firestore", return_value=client)
 
     response = asyncio.run(
@@ -416,7 +395,6 @@ def test_get_weekly_report_builds_expected_payload_for_strong_week(
         ),
     ]
     client, _ = _mock_firestore(mocker, meals=meals)
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch("app.services.weekly_report_aggregation.get_firestore", return_value=client)
 
     response = asyncio.run(
@@ -531,7 +509,6 @@ def test_get_weekly_report_builds_expected_payload_for_weekend_drift_week(
         ),
     ]
     client, _ = _mock_firestore(mocker, meals=meals)
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch("app.services.weekly_report_aggregation.get_firestore", return_value=client)
 
     response = asyncio.run(
@@ -561,7 +538,6 @@ def test_get_weekly_report_returns_insufficient_data_for_empty_week(
     mocker: MockerFixture,
 ) -> None:
     client, _ = _mock_firestore(mocker, meals=[])
-    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", True)
     mocker.patch("app.services.weekly_report_aggregation.get_firestore", return_value=client)
 
     response = asyncio.run(

@@ -72,7 +72,11 @@ def _resolve_cors_origins() -> list[str]:
     _validate_production_startup_config(cors_origins)
     if cors_origins:
         return cors_origins
-    return ["*"]
+    if not _is_production_environment():
+        return ["*"]
+    raise RuntimeError(
+        f"CORS_ORIGINS must be configured for environment '{settings.ENVIRONMENT}'"
+    )
 
 
 def create_app() -> FastAPI:
@@ -99,8 +103,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
     register_exception_handlers(app)
     app.include_router(api_router)

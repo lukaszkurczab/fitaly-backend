@@ -1,0 +1,74 @@
+name: Security Scan
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "30 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt
+
+  secret-scan:
+    name: gitleaks (full git history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: detect --redact
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - pip-audit
+      - secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: security
+          WORKFLOW_NAME: Security Scan
+          WORKFLOW_OWNER: backend-oncall
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh

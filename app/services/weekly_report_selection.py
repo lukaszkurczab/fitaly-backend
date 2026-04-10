@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 from app.schemas.weekly_reports import (
     WeeklyReportInsight,
+    WeeklyReportInsightImportance,
+    WeeklyReportInsightTone,
+    WeeklyReportInsightType,
     WeeklyReportPriority,
 )
 from app.services.weekly_report_signals import WeeklySignals
@@ -341,9 +344,9 @@ def _candidate(
     *,
     score: int,
     tone_rank: int,
-    type: str,
-    importance: str,
-    tone: str,
+    type: WeeklyReportInsightType,
+    importance: WeeklyReportInsightImportance,
+    tone: WeeklyReportInsightTone,
     title: str,
     body: str,
     reason_codes: list[str],

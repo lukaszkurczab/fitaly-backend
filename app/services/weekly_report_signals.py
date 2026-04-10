@@ -299,23 +299,25 @@ def derive_weekly_signals(aggregate: WeeklyAggregate) -> WeeklySignals:
         and weekday_valid_ratio is not None
         and valid_logged_day_count >= MIN_VALID_LOGGED_DAYS_FOR_REPORT
     )
-    weekend_delta = (
-        round_metric(weekend_valid_ratio - weekday_valid_ratio)
-        if weekend_drift_available
-        else None
-    )
+    weekend_delta: float | None = None
+    if weekend_drift_available:
+        assert weekend_valid_ratio is not None
+        assert weekday_valid_ratio is not None
+        weekend_delta = round_metric(weekend_valid_ratio - weekday_valid_ratio)
     if not weekend_drift_available:
         weekend_pattern: WeeklyWeekendDriftPattern = "unknown"
         weekend_reason_codes: tuple[str, ...] = ("weekend_drift_insufficient_data",)
-    elif weekend_delta <= -WEEKEND_DRIFT_RATIO_THRESHOLD:
-        weekend_pattern = "weekend_drop"
-        weekend_reason_codes = ("weekend_logging_below_weekday",)
-    elif weekend_delta >= WEEKEND_DRIFT_RATIO_THRESHOLD:
-        weekend_pattern = "weekend_lift"
-        weekend_reason_codes = ("weekend_logging_above_weekday",)
     else:
-        weekend_pattern = "none"
-        weekend_reason_codes = ("weekend_logging_stable",)
+        assert weekend_delta is not None
+        if weekend_delta <= -WEEKEND_DRIFT_RATIO_THRESHOLD:
+            weekend_pattern = "weekend_drop"
+            weekend_reason_codes = ("weekend_logging_below_weekday",)
+        elif weekend_delta >= WEEKEND_DRIFT_RATIO_THRESHOLD:
+            weekend_pattern = "weekend_lift"
+            weekend_reason_codes = ("weekend_logging_above_weekday",)
+        else:
+            weekend_pattern = "none"
+            weekend_reason_codes = ("weekend_logging_stable",)
     weekend_drift = WeeklyWeekendDriftSignal(
         type="weekend_drift",
         available=weekend_drift_available,
@@ -328,19 +330,21 @@ def derive_weekly_signals(aggregate: WeeklyAggregate) -> WeeklySignals:
 
     previous_valid_day_count = len(previous_valid_logged_days)
     improvement_available = previous_valid_day_count > 0
-    delta = valid_logged_day_count - previous_valid_day_count if improvement_available else None
+    delta: int | None = None
     if not improvement_available:
         improvement_direction: WeeklyImprovementDirection = "unknown"
         improvement_reason_codes: tuple[str, ...] = ("previous_week_missing",)
-    elif delta >= IMPROVEMENT_DELTA_THRESHOLD:
-        improvement_direction = "improving"
-        improvement_reason_codes = ("valid_logged_days_up",)
-    elif delta <= -IMPROVEMENT_DELTA_THRESHOLD:
-        improvement_direction = "declining"
-        improvement_reason_codes = ("valid_logged_days_down",)
     else:
-        improvement_direction = "stable"
-        improvement_reason_codes = ("valid_logged_days_flat",)
+        delta = valid_logged_day_count - previous_valid_day_count
+        if delta >= IMPROVEMENT_DELTA_THRESHOLD:
+            improvement_direction = "improving"
+            improvement_reason_codes = ("valid_logged_days_up",)
+        elif delta <= -IMPROVEMENT_DELTA_THRESHOLD:
+            improvement_direction = "declining"
+            improvement_reason_codes = ("valid_logged_days_down",)
+        else:
+            improvement_direction = "stable"
+            improvement_reason_codes = ("valid_logged_days_flat",)
     improving_vs_previous_week = WeeklyImprovementSignal(
         type="improving_vs_previous_week",
         available=improvement_available,

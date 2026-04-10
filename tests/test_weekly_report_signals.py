@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.schemas.weekly_reports import WeeklyReportPeriod
 from app.services.weekly_report_aggregation import build_weekly_aggregate_from_meals
 from app.services.weekly_report_signals import derive_weekly_signals
@@ -11,9 +13,9 @@ def _meal(
     meal_type: str = "lunch",
     kcal: float = 500,
     protein: float = 25,
-    ingredients: list[dict] | None = None,
+    ingredients: list[dict[str, Any]] | None = None,
     logged_at_local_min: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     payload = {
         "mealId": meal_id,
         "cloudId": meal_id,

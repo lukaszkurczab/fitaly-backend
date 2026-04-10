@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ from hashlib import sha256
 from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 
+from cachetools import TTLCache
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, RetryError
 from google.cloud import firestore
@@ -63,7 +65,11 @@ COLLECTION_NAME = "telemetry_events"
 MAX_BATCH_PAYLOAD_BYTES = 64 * 1024
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 60
-_request_buckets: dict[str, deque[float]] = {}
+_BUCKET_LOCK = threading.Lock()
+_request_buckets: TTLCache[str, deque[float]] = TTLCache(
+    maxsize=5_000,
+    ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
+)
 TELEMETRY_RETENTION_DAYS = 30
 
 
@@ -74,7 +80,8 @@ class TelemetryRequestContext:
 
 
 def reset_rate_limit_state() -> None:
-    _request_buckets.clear()
+    with _BUCKET_LOCK:
+        _request_buckets.clear()
 
 
 def build_bucket_key(context: TelemetryRequestContext) -> str:
@@ -86,20 +93,21 @@ def build_bucket_key(context: TelemetryRequestContext) -> str:
 
 def _check_rate_limit(bucket_key: str) -> None:
     now = monotonic()
-    bucket = _request_buckets.setdefault(bucket_key, deque())
-    threshold = now - RATE_LIMIT_WINDOW_SECONDS
-
-    while bucket and bucket[0] <= threshold:
-        bucket.popleft()
-
-    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
-        logger.warning(
-            "telemetry.ingest.rate_limited",
-            extra={"bucket_key": bucket_key, "window_size": len(bucket)},
-        )
-        raise TelemetryRateLimitError("Too many telemetry requests")
-
-    bucket.append(now)
+    with _BUCKET_LOCK:
+        bucket = _request_buckets.get(bucket_key)
+        if bucket is None:
+            bucket = deque()
+            _request_buckets[bucket_key] = bucket
+        threshold = now - RATE_LIMIT_WINDOW_SECONDS
+        while bucket and bucket[0] <= threshold:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+            logger.warning(
+                "telemetry.ingest.rate_limited",
+                extra={"bucket_key": bucket_key, "window_size": len(bucket)},
+            )
+            raise TelemetryRateLimitError("Too many telemetry requests")
+        bucket.append(now)
 
 
 def _validate_payload_size(request: TelemetryBatchRequest) -> None:

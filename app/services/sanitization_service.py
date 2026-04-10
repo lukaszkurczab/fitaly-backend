@@ -30,7 +30,7 @@ def _sanitize_free_text(value: str) -> str:
         return match.group(0)
 
     sanitized = re.sub(r"\b\d+\b", replace_number, value)
-    sanitized = re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "[email]", sanitized)
+    sanitized = re.sub(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", "[email]", sanitized)
     return sanitized
 
 

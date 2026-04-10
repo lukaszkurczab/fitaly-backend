@@ -1,5 +1,4 @@
 from functools import lru_cache
-from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -25,6 +24,7 @@ class Settings(BaseSettings):
     FIREBASE_CLIENT_EMAIL: str = ""
     FIREBASE_PRIVATE_KEY: str = ""
     FIREBASE_STORAGE_BUCKET: str = ""
+    FIRESTORE_DATABASE_ID: str = "(default)"
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "development"
@@ -37,15 +37,8 @@ class Settings(BaseSettings):
     AI_CREDIT_COST_PHOTO: int = Field(default=5, ge=0)
     AI_GATEWAY_ENABLED: bool = True
     TELEMETRY_ENABLED: bool = False
-    HABITS_ENABLED: bool = False
-    STATE_ENABLED: bool = False
-    SMART_REMINDERS_ENABLED: bool = False
-    WEEKLY_REPORTS_ENABLED: bool = False
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
-    AI_GATEWAY_ML_ENABLED: bool = False
-    AI_GATEWAY_ML_MODEL_PATH: Path = Path("models/ai_gateway_classifier.joblib")
-    AI_GATEWAY_ML_THRESHOLD_OFF_TOPIC: float = Field(default=0.35, ge=0.0, le=1.0)
 
     # Billing integrations
     REVENUECAT_WEBHOOK_SECRET: str = ""

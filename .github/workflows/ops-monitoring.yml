@@ -1,0 +1,44 @@
+name: Ops Monitoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-health:
+    name: Backend health and latency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check smoke health endpoint
+        run: bash scripts/check-health-endpoint.sh smoke https://fitaly-backend-smoke.up.railway.app/api/v1/health 3000
+
+      - name: Check production health endpoint
+        run: bash scripts/check-health-endpoint.sh production https://fitaly-backend-production.up.railway.app/api/v1/health 2000
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - backend-health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: production
+          WORKFLOW_NAME: Ops Monitoring
+          WORKFLOW_OWNER: backend-oncall
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh

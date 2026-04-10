@@ -18,14 +18,17 @@ from app.db.firebase import (
     get_storage_bucket,
     get_storage_bucket_name,
 )
+from app.services.meal_storage import _validate_upload
 from app.services import streak_service
 from app.services.username_service import normalize_username
 
 from app.core.firestore_constants import (
+    BADGES_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MY_MEALS_SUBCOLLECTION,
+    STREAK_SUBCOLLECTION,
     USERNAMES_COLLECTION,
     USERS_COLLECTION,
 )
@@ -40,9 +43,11 @@ DELETE_SUBCOLLECTIONS = (
     "prefs",
     "notif_meta",
     "feedback",
+    BADGES_SUBCOLLECTION,
+    STREAK_SUBCOLLECTION,
 )
 BATCH_DELETE_LIMIT = 500
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
         "unitsSystem",
@@ -172,10 +177,8 @@ async def upload_avatar(user_id: str, upload: UploadFile) -> tuple[str, str]:
     try:
         upload.file.seek(0)
         blob.metadata = {"firebaseStorageDownloadTokens": token}
-        blob.upload_from_file(
-            upload.file,
-            content_type=upload.content_type or "image/jpeg",
-        )
+        safe_content_type = _validate_upload(upload)
+        blob.upload_from_file(upload.file, content_type=safe_content_type)
         blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(

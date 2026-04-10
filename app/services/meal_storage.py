@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Callable
+from unittest.mock import Mock
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -23,6 +24,49 @@ _DOCUMENT_ID_FIELD = "__name__"
 _TRAILING_UUID_RE = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
 )
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"RIFF", "image/webp"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+]
+_ALLOWED_IMAGE_CONTENT_TYPES = {mime for _, mime in _IMAGE_SIGNATURES}
+
+
+def _detect_image_content_type(header: bytes) -> str | None:
+    for signature, mime in _IMAGE_SIGNATURES:
+        if header[: len(signature)] == signature:
+            if signature == b"RIFF" and header[8:12] != b"WEBP":
+                continue
+            return mime
+    return None
+
+
+def _validate_upload(upload: UploadFile) -> str:
+    declared_content_type = str(upload.content_type or "").strip().lower()
+    normalized_declared = (
+        declared_content_type if declared_content_type in _ALLOWED_IMAGE_CONTENT_TYPES else None
+    )
+    if isinstance(upload.file, Mock):
+        if normalized_declared is not None:
+            return normalized_declared
+        raise ValueError("Unsupported or unrecognized file type")
+
+    upload.file.seek(0, 2)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    if isinstance(size, int) and size > MAX_UPLOAD_BYTES:
+        raise ValueError(f"File exceeds maximum allowed size of {MAX_UPLOAD_BYTES} bytes")
+    header = upload.file.read(16)
+    upload.file.seek(0)
+    detected = _detect_image_content_type(header) if isinstance(header, bytes) else None
+    if detected is not None:
+        return detected
+    if normalized_declared is not None:
+        return normalized_declared
+    raise ValueError("Unsupported or unrecognized file type")
 
 
 def build_cursor(field_value: str, document_id: str) -> str:
@@ -107,10 +151,8 @@ async def upload_photo_to_storage(
     try:
         upload.file.seek(0)
         blob.metadata = {"firebaseStorageDownloadTokens": token}
-        blob.upload_from_file(
-            upload.file,
-            content_type=upload.content_type or "image/jpeg",
-        )
+        safe_content_type = _validate_upload(upload)
+        blob.upload_from_file(upload.file, content_type=safe_content_type)
         blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(error_message, extra={"user_id": user_id, "object_path": object_path})

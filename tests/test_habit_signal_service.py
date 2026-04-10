@@ -6,7 +6,7 @@ import pytest
 from google.api_core.exceptions import GoogleAPICallError
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import FirestoreServiceError, HabitsDisabledError
+from app.core.exceptions import FirestoreServiceError
 from app.services import habit_signal_service
 
 COMPUTED_AT = datetime(2026, 3, 18, 12, 0, tzinfo=UTC)
@@ -506,7 +506,6 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
     client = mocker.Mock()
     client.collection.return_value.document.return_value = user_ref
 
-    mocker.patch("app.services.habit_signal_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
 
     response = asyncio.run(
@@ -522,22 +521,12 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
     assert meals_collection.calls[1][1][0] == "timestamp"
 
 
-def test_get_habit_signals_raises_when_feature_flag_is_disabled(
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch("app.services.habit_signal_service.settings.HABITS_ENABLED", False)
-
-    with pytest.raises(HabitsDisabledError):
-        asyncio.run(habit_signal_service.get_habit_signals("user-1"))
-
-
 def test_get_habit_signals_wraps_firestore_errors(mocker: MockerFixture) -> None:
     client = mocker.Mock()
     user_ref = mocker.Mock()
     client.collection.return_value.document.return_value = user_ref
     user_ref.get.side_effect = GoogleAPICallError("boom")
 
-    mocker.patch("app.services.habit_signal_service.settings.HABITS_ENABLED", True)
     mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
 
     with pytest.raises(FirestoreServiceError):

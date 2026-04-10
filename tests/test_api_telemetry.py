@@ -10,7 +10,6 @@ from google.api_core.exceptions import AlreadyExists
 from pytest_mock import MockerFixture
 
 from app.api.v2.router import router as v2_router
-from app.schemas.telemetry import SMART_REMINDER_EVENT_NAMES
 from app.services import telemetry_service
 
 
@@ -997,7 +996,7 @@ def _sr_event(
     return {
         "eventId": event_id,
         "name": name,
-        "ts": f"{resolved_day}T10:00:00Z",
+        "ts": f"{resolved_day}T00:00:00Z",
         "props": props or {},
         "sessionId": "sess-sr",
         "userHash": user_hash,
@@ -1006,7 +1005,7 @@ def _sr_event(
         "build": None,
         "locale": "pl-PL",
         "tzOffsetMin": 60,
-        "ingestedAt": f"{resolved_day}T10:00:01Z",
+        "ingestedAt": f"{resolved_day}T00:00:01Z",
     }
 
 

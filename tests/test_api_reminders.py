@@ -5,8 +5,6 @@ from app.core.exceptions import (
     FirestoreServiceError,
     ReminderDecisionContractError,
     ReminderUnavailableError,
-    SmartRemindersDisabledError,
-    StateDisabledError,
 )
 from app.main import app
 from app.schemas.reminders import ReminderDecision
@@ -161,24 +159,6 @@ def test_get_reminder_decision_returns_400_for_invalid_day(
     assert response.json() == {"detail": "Invalid day key. Expected YYYY-MM-DD."}
 
 
-def test_get_reminder_decision_returns_503_when_feature_is_disabled(
-    mocker: MockerFixture,
-    auth_headers,
-) -> None:
-    mocker.patch(
-        "app.api.routes.reminders.get_reminder_decision",
-        side_effect=SmartRemindersDisabledError("disabled"),
-    )
-
-    response = client.get(
-        "/api/v2/users/me/reminders/decision",
-        headers=auth_headers("user-1"),
-    )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Smart reminders are unavailable"}
-
-
 def test_get_reminder_decision_returns_503_when_required_foundations_are_unavailable(
     mocker: MockerFixture,
     auth_headers,
@@ -186,24 +166,6 @@ def test_get_reminder_decision_returns_503_when_required_foundations_are_unavail
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
         side_effect=ReminderUnavailableError("unavailable"),
-    )
-
-    response = client.get(
-        "/api/v2/users/me/reminders/decision",
-        headers=auth_headers("user-1"),
-    )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Smart reminders are unavailable"}
-
-
-def test_get_reminder_decision_returns_503_when_state_is_disabled(
-    mocker: MockerFixture,
-    auth_headers,
-) -> None:
-    mocker.patch(
-        "app.api.routes.reminders.get_reminder_decision",
-        side_effect=StateDisabledError("disabled"),
     )
 
     response = client.get(

@@ -710,7 +710,7 @@ class TestSmartRemindersContractSnapshotFreshness:
         import sys
 
         sys.path.insert(0, str(FIXTURES_DIR.parent.parent / "scripts"))
-        from export_reminder_contract import build_contract
+        from export_reminder_contract import build_contract  # pyright: ignore[reportMissingImports]
 
         expected = json.dumps(build_contract(), indent=2, ensure_ascii=False) + "\n"
         committed = (FIXTURES_DIR / "smart_reminders_v1.contract.json").read_text(

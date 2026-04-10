@@ -2,6 +2,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,7 +13,6 @@ from app.core.exceptions import (
     FirestoreServiceError,
     ReminderDecisionContractError,
     ReminderUnavailableError,
-    SmartRemindersDisabledError,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
@@ -74,7 +74,6 @@ def test_get_reminder_decision_returns_rule_engine_output(
     record_send = mocker.patch(
         "app.services.reminder_service.record_send_decision_if_new",
     )
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.utc_now",
         return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
@@ -144,7 +143,6 @@ def test_get_reminder_decision_passes_tz_offset_min_to_input_builder(
         return_value=decision,
     )
     mocker.patch("app.services.reminder_service.record_send_decision_if_new")
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.utc_now",
         return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
@@ -154,23 +152,12 @@ def test_get_reminder_decision_passes_tz_offset_min_to_input_builder(
 
     assert build_inputs.call_args.kwargs["tz_offset_min"] == 120
 
-
-def test_get_reminder_decision_raises_when_feature_is_disabled(
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", False)
-
-    with pytest.raises(SmartRemindersDisabledError):
-        asyncio.run(get_reminder_decision("user-1"))
-
-
 def test_get_reminder_decision_raises_when_habits_foundation_is_unavailable(
     mocker: MockerFixture,
 ) -> None:
     state = _load_state_fixture()
     state.habits.available = False
     state.meta.componentStatus.habits = "error"
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,
@@ -183,7 +170,6 @@ def test_get_reminder_decision_raises_when_habits_foundation_is_unavailable(
 def test_get_reminder_decision_propagates_state_failures_instead_of_masking_as_noop(
     mocker: MockerFixture,
 ) -> None:
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         side_effect=FirestoreServiceError("state failed"),
@@ -197,7 +183,6 @@ def test_get_reminder_decision_propagates_preference_failures_instead_of_masking
     mocker: MockerFixture,
 ) -> None:
     state = _load_state_fixture()
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,
@@ -215,7 +200,6 @@ def test_get_reminder_decision_propagates_input_builder_failures_instead_of_mask
     mocker: MockerFixture,
 ) -> None:
     state = _load_state_fixture()
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,
@@ -241,7 +225,6 @@ def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
     it must surface as ReminderDecisionContractError — not as a bare
     PydanticValidationError or, worse, a ValueError mapped to 400."""
     state = _load_state_fixture()
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,
@@ -262,15 +245,18 @@ def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
         "app.services.reminder_service.evaluate_reminder_decision",
         side_effect=PydanticValidationError.from_exception_data(
             title="ReminderDecision",
-            line_errors=[
-                {
-                    "type": "string_too_long",
-                    "loc": ("computedAt",),
-                    "msg": "String should have at most 20 characters",
-                    "input": "2026-03-18T13:00:33.999999Z",
-                    "ctx": {"max_length": 20},
-                }
-            ],
+            line_errors=cast(
+                Any,
+                [
+                    {
+                        "type": "string_too_long",
+                        "loc": ("computedAt",),
+                        "msg": "String should have at most 20 characters",
+                        "input": "2026-03-18T13:00:33.999999Z",
+                        "ctx": {"max_length": 20},
+                    }
+                ],
+            ),
         ),
     )
 
@@ -293,7 +279,6 @@ def test_get_reminder_decision_does_not_record_send_for_suppress(
         confidence=1.0,
         validUntil="2026-03-18T23:59:59Z",
     )
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,
@@ -337,7 +322,6 @@ def test_get_reminder_decision_emits_structured_log_on_success(
 
     state = _load_state_fixture()
     decision = _load_decision_fixture()
-    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.get_nutrition_state",
         return_value=state,

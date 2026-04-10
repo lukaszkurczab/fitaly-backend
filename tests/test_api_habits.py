@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
 from app.api.v2.router import router as v2_router
-from app.core.exceptions import HabitsDisabledError
+from app.core.exceptions import FirestoreServiceError
 from app.schemas.habits import (
     DayCoverage14,
     HabitBehavior,
@@ -155,17 +155,17 @@ def test_get_user_habits_returns_response_shape(
     }
 
 
-def test_get_user_habits_returns_503_when_feature_flag_is_disabled(
+def test_get_user_habits_returns_500_when_backend_fails(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
     mocker.patch(
         "app.api.routes.habits.get_habit_signals",
-        side_effect=HabitsDisabledError("disabled"),
+        side_effect=FirestoreServiceError("firestore failed"),
     )
     client = create_test_client()
 
     response = client.get("/api/v2/users/me/habits", headers=auth_headers("user-1"))
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Habit signals are disabled"}
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to compute habit signals"}

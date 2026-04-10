@@ -1,0 +1,63 @@
+name: Firestore Backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 2 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  backup:
+    name: Export production Firestore backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run Firestore export
+        id: backup
+        env:
+          SOURCE_PROJECT_ID: ${{ secrets.FIRESTORE_SOURCE_PROJECT_ID }}
+          FIRESTORE_BACKUP_BUCKET: ${{ secrets.FIRESTORE_BACKUP_BUCKET }}
+        run: bash scripts/firestore-backup.sh
+
+      - name: Upload backup artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-backup
+          path: |
+            ${{ steps.backup.outputs.manifest_path }}
+            ${{ steps.backup.outputs.summary_path }}
+
+  notify-on-failure:
+    name: Notify Discord on failure
+    if: ${{ failure() }}
+    needs:
+      - backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Notify Discord
+        env:
+          OPS_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.OPS_ALERT_DISCORD_WEBHOOK_URL }}
+          WORKFLOW_ENVIRONMENT: production
+          WORKFLOW_NAME: Firestore Backup
+          WORKFLOW_OWNER: ops-lead
+          WORKFLOW_STATUS: failure
+        run: bash scripts/notify-ops-discord.sh
