@@ -6,7 +6,6 @@ from app.api.routes.nutrition_state import router as nutrition_state_router
 from app.api.routes.reminders import router as reminders_router
 from app.api.routes.telemetry import router as telemetry_router
 from app.api.routes.weekly_reports import router as weekly_reports_router
-from app.core.config import settings
 
 router = APIRouter()
 
