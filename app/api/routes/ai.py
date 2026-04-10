@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from time import perf_counter
@@ -232,32 +233,40 @@ async def _refund_credits_after_ai_failure(
     action: str,
     endpoint: str,
 ) -> None:
-    try:
-        credits_status = await ai_credits_service.refund_credits(
-            user_id,
-            cost=cost,
-            action=action,
-        )
-        logger.info(
-            "Refunded AI credits after upstream failure.",
-            extra={
-                "user_id": user_id,
-                "endpoint": endpoint,
-                "cost": cost,
-                "balance": credits_status.balance,
-                "allocation": credits_status.allocation,
-                "tier": credits_status.tier,
-            },
-        )
-    except (FirestoreServiceError, ValueError):
-        logger.exception(
-            "Failed to refund AI credits after upstream failure.",
-            extra={
-                "user_id": user_id,
-                "endpoint": endpoint,
-                "cost": cost,
-            },
-        )
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            credits_status = await ai_credits_service.refund_credits(
+                user_id,
+                cost=cost,
+                action=action,
+            )
+            logger.info(
+                "Refunded AI credits after upstream failure.",
+                extra={
+                    "user_id": user_id,
+                    "endpoint": endpoint,
+                    "cost": cost,
+                    "balance": credits_status.balance,
+                    "allocation": credits_status.allocation,
+                    "tier": credits_status.tier,
+                    "attempt": attempt,
+                },
+            )
+            return
+        except (FirestoreServiceError, ValueError):
+            if attempt < max_attempts:
+                await asyncio.sleep(0.5)
+                continue
+            logger.exception(
+                "Failed to refund AI credits after upstream failure — all retries exhausted. Credits lost.",
+                extra={
+                    "user_id": user_id,
+                    "endpoint": endpoint,
+                    "cost": cost,
+                    "attempts": max_attempts,
+                },
+            )
 
 
 def _build_ai_response_fields(

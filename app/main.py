@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.errors import register_exception_handlers
 from app.api.middleware.ip_rate_limit import IpRateLimitMiddleware
 from app.api.middleware import request_logging
+from app.api.middleware.idempotency import IdempotencyMiddleware
 from app.api.routes.webhooks import router as webhooks_router
 from app.api.router import api_router
 from app.core.api_version import (
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     )
     init_sentry()
     app.add_middleware(request_logging.RequestLoggingMiddleware)
+    app.add_middleware(IdempotencyMiddleware)
     app.add_middleware(IpRateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
