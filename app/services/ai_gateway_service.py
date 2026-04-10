@@ -15,10 +15,12 @@ from __future__ import annotations
 from collections import deque
 import logging
 import math
-from time import time
+import threading
+from time import monotonic, time
 import uuid
 from typing import Literal, NotRequired, TypedDict
 
+from cachetools import TTLCache
 from google.cloud import firestore
 
 from app.core.config import settings
@@ -56,6 +58,26 @@ MAX_PHOTO_PAYLOAD_CHARS = 4_000_000
 
 # In-memory fallback used only by tests (patched via mocker).
 _request_buckets: dict[str, deque[float]] = {}
+_FALLBACK_LOCK = threading.Lock()
+_FALLBACK_MAX_REQUESTS = 5
+_fallback_buckets: TTLCache[str, deque[float]] = TTLCache(
+    maxsize=10_000,
+    ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
+)
+
+
+def _consume_fallback_slot(user_id: str) -> bool:
+    now = monotonic()
+    with _FALLBACK_LOCK:
+        bucket = _fallback_buckets.get(user_id, deque())
+        threshold = now - RATE_LIMIT_WINDOW_SECONDS
+        while bucket and bucket[0] <= threshold:
+            bucket.popleft()
+        if len(bucket) >= _FALLBACK_MAX_REQUESTS:
+            return False
+        bucket.append(now)
+        _fallback_buckets[user_id] = bucket
+        return True
 
 
 class GatewayResult(TypedDict):
@@ -128,8 +150,11 @@ async def _consume_rate_limit_slot(user_id: str) -> bool:
         transaction = client.transaction()
         return _consume_rate_limit_transaction(transaction, ref, time())
     except Exception:
-        logger.exception("Rate-limit Firestore check failed for user %s — allowing request", user_id)
-        return True
+        logger.warning(
+            "Rate-limit Firestore unavailable for user %s — applying local fallback limit",
+            user_id,
+        )
+        return _consume_fallback_slot(user_id)
 
 
 def _max_payload_chars(task_type: TaskType) -> int:

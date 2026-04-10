@@ -17,7 +17,6 @@ from app.core.config import settings
 from app.core.exceptions import OpenAIServiceError
 
 logger = logging.getLogger(__name__)
-openai.api_key = settings.OPENAI_API_KEY
 OPENAI_ERROR = getattr(openai, "OpenAIError")
 
 

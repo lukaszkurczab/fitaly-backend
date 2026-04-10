@@ -1,6 +1,8 @@
+import threading
 from collections import deque
 from time import monotonic
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.deps import AuthenticatedUser, get_optional_authenticated_user
@@ -10,24 +12,29 @@ from app.services import error_logger
 router = APIRouter()
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 30
-_request_buckets: dict[str, deque[float]] = {}
+_BUCKET_LOCK = threading.Lock()
+_request_buckets: TTLCache[str, deque[float]] = TTLCache(
+    maxsize=5_000,
+    ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
+)
 
 
 def _check_rate_limit(bucket_key: str) -> None:
     now = monotonic()
-    bucket = _request_buckets.setdefault(bucket_key, deque())
-    threshold = now - RATE_LIMIT_WINDOW_SECONDS
-
-    while bucket and bucket[0] <= threshold:
-        bucket.popleft()
-
-    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many log requests",
-        )
-
-    bucket.append(now)
+    with _BUCKET_LOCK:
+        bucket = _request_buckets.get(bucket_key)
+        if bucket is None:
+            bucket = deque()
+            _request_buckets[bucket_key] = bucket
+        threshold = now - RATE_LIMIT_WINDOW_SECONDS
+        while bucket and bucket[0] <= threshold:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many log requests",
+            )
+        bucket.append(now)
 
 
 @router.post("/logs/error", status_code=status.HTTP_201_CREATED)

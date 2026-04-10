@@ -25,7 +25,6 @@ def _extract_header_secret(authorization: str | None) -> str | None:
 def _verify_webhook_secret(
     *,
     authorization: str | None,
-    revenuecat_signature: str | None,
 ) -> None:
     expected_secret = settings.REVENUECAT_WEBHOOK_SECRET.strip()
     if not expected_secret:
@@ -33,16 +32,9 @@ def _verify_webhook_secret(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="RevenueCat webhook secret is not configured",
         )
-
-    candidates = []
-    if revenuecat_signature and revenuecat_signature.strip():
-        candidates.append(revenuecat_signature.strip())
-    extracted = _extract_header_secret(authorization)
-    if extracted:
-        candidates.append(extracted)
-
-    if not any(
-        hmac.compare_digest(expected_secret.encode(), c.encode()) for c in candidates
+    received = _extract_header_secret(authorization)
+    if not received or not hmac.compare_digest(
+        expected_secret.encode(), received.encode()
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -93,12 +85,9 @@ def _extract_expiration(event: dict[str, object]) -> datetime | None:
 async def revenuecat_webhook(
     payload: RevenueCatWebhookPayload,
     authorization: str | None = Header(default=None, alias="Authorization"),
-    revenuecat_signature: str | None = Header(default=None, alias="X-RevenueCat-Signature"),
+    signature: str | None = Header(default=None, alias="X-RevenueCat-Signature"),
 ) -> dict[str, object]:
-    _verify_webhook_secret(
-        authorization=authorization,
-        revenuecat_signature=revenuecat_signature,
-    )
+    _verify_webhook_secret(authorization=authorization or signature)
 
     event = payload.event
     event_type_raw = event.get("type")
