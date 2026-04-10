@@ -83,23 +83,3 @@ def get_optional_authenticated_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ) -> AuthenticatedUser | None:
     return _build_authenticated_user(credentials)
-
-
-def ensure_authenticated_user_matches(
-    current_user: AuthenticatedUser,
-    requested_user_id: str,
-) -> str:
-    normalized_user_id = requested_user_id.strip()
-    if not normalized_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing user ID",
-        )
-
-    if current_user.uid != normalized_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden",
-        )
-
-    return current_user.uid
