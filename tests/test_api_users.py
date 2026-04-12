@@ -6,7 +6,6 @@ from app.main import app
 from app.services.user_account_service import (
     AvatarMetadataValidationError,
     EmailValidationError,
-    UserProfileValidationError,
 )
 
 client = TestClient(app)
@@ -80,13 +79,13 @@ def test_post_user_profile_returns_updated_payload(
     )
 
 
-def test_post_user_profile_returns_400_for_forbidden_fields(
+def test_post_user_profile_returns_422_for_unknown_profile_fields(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
-    mocker.patch(
+    upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
-        side_effect=UserProfileValidationError("Forbidden profile fields: username"),
+        return_value={"uid": "user-1"},
     )
 
     response = client.post(
@@ -95,8 +94,49 @@ def test_post_user_profile_returns_400_for_forbidden_fields(
         headers=auth_headers("user-1"),
     )
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Forbidden profile fields: username"}
+    assert response.status_code == 422
+    assert "extra_forbidden" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_returns_422_for_empty_payload(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "must not be empty" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_returns_422_for_invalid_enum_value(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={"unitsSystem": "si"},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "unitsSystem" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
 
 
 def test_post_email_pending_returns_400_for_invalid_email(

@@ -11,6 +11,7 @@ from app.schemas.user_account import (
     UserOnboardingRequest,
     UserOnboardingResponse,
     UserExportResponse,
+    UserProfilePatchRequest,
     UserProfileResponse,
     UserProfileUpdateResponse,
 )
@@ -36,7 +37,7 @@ async def get_user_profile_me(
 
 @router.post("/users/me/profile", response_model=UserProfileUpdateResponse)
 async def upsert_user_profile_me(
-    payload: dict[str, object],
+    payload: UserProfilePatchRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> UserProfileUpdateResponse:
     auth_email = current_user.claims.get("email")
@@ -44,7 +45,7 @@ async def upsert_user_profile_me(
     try:
         profile = await user_account_service.upsert_user_profile_data(
             current_user.uid,
-            payload,
+            payload.to_patch(),
             auth_email=auth_email if isinstance(auth_email, str) else None,
         )
     except UserProfileValidationError as exc:
