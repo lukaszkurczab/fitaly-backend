@@ -48,7 +48,7 @@ def _history_to_lines(value: Any) -> list[str]:
         return []
 
     lines: list[str] = []
-    for item in value[-2:]:
+    for item in value[-4:]:
         if isinstance(item, str):
             normalized = item.strip()
             if normalized:
@@ -133,7 +133,17 @@ def _derive_flags_and_avoid(profile: dict[str, Any]) -> tuple[list[str], list[st
         flags.append("vegetarian")
         avoid.extend(["mieso", "ryba", "tunczyk", "losos", "kurczak", "wolowina"])
 
-    for key in ("pescatarian", "keto", "lowCarb", "highProtein", "lowFat"):
+    for key in (
+        "pescatarian",
+        "keto",
+        "lowCarb",
+        "highProtein",
+        "highCarb",
+        "lowFat",
+        "balanced",
+        "mediterranean",
+        "paleo",
+    ):
         if key in preferences:
             flags.append(key)
 
@@ -214,6 +224,18 @@ def _resolve_focus(context: dict[str, Any], profile: dict[str, Any]) -> str:
     return _focus_from_profile(profile)
 
 
+def _resolve_user_note(context: dict[str, Any], profile: dict[str, Any]) -> str | None:
+    for candidate in (
+        context.get("aiNote"),
+        context.get("note"),
+        profile.get("aiNote"),
+    ):
+        normalized = _as_string(candidate)
+        if normalized:
+            return normalized
+    return None
+
+
 def _resolve_meals_summary(context: dict[str, Any]) -> str:
     legacy = _as_string(context.get("mealsSummary"))
     if legacy:
@@ -228,16 +250,94 @@ def _resolve_profile_summary(context: dict[str, Any], language: str) -> str:
     return _compact_profile(_as_dict(context.get("profile")), language)
 
 
+def _list_to_label(value: list[str]) -> str:
+    if not value:
+        return "unknown"
+    cleaned = [item for item in value if item != "none"]
+    if not cleaned:
+        return "none"
+    return ",".join(cleaned)
+
+
+def _extract_profile_constraints(profile: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+    goal = _as_string(profile.get("goal")) or "unknown"
+    activity = _as_string(profile.get("activityLevel")) or "unknown"
+    preferences = _as_string_list(profile.get("preferences"))
+    allergies = _as_string_list(profile.get("allergies"))
+    diseases = _as_string_list(profile.get("chronicDiseases"))
+    lifestyle = _as_string(profile.get("lifestyle")) or "unknown"
+
+    missing: list[str] = []
+    if goal == "unknown":
+        missing.append("goal")
+    if activity == "unknown":
+        missing.append("activityLevel")
+    if not preferences:
+        missing.append("preferences")
+    if not allergies:
+        missing.append("allergies")
+    if not diseases:
+        missing.append("chronicDiseases")
+    if lifestyle == "unknown":
+        missing.append("lifestyle")
+
+    return (
+        {
+            "goal": goal,
+            "activity": activity,
+            "preferences": _list_to_label(preferences),
+            "allergies": _list_to_label(allergies),
+            "diseases": _list_to_label(diseases),
+            "lifestyle": lifestyle,
+        },
+        missing,
+    )
+
+
 def _off_topic_reply(language: str) -> str:
     if language.lower().startswith("pl"):
         return (
             "To pytanie jest poza zakresem tego czatu. "
-            "Moge pomoc tylko w tematach zywienia, diety i posilkow."
+            "Mogę pomóc tylko w tematach żywienia, diety, jedzenia i posiłków."
         )
     return (
         "This question is out of scope for this chat. "
         "I can only help with food, nutrition, and diet topics."
     )
+
+
+def _tone_instruction(tone: str) -> str:
+    normalized = tone.strip().upper()
+    if normalized in {"C", "CONCISE"}:
+        return (
+            "Tone guidance: concise. Keep replies short and clear, with only the next useful step."
+        )
+    if normalized in {"F", "FRIENDLY"}:
+        return (
+            "Tone guidance: friendly. Use a warm, supportive voice, but keep advice concrete and practical."
+        )
+    if normalized in {"D", "DETAILED"}:
+        return (
+            "Tone guidance: detailed. Explain the reasoning, include practical context, and structure the answer."
+        )
+    return "Tone guidance: balanced. Be practical, direct, and easy to follow."
+
+
+def _focus_instruction(focus: str) -> str:
+    normalized = focus.strip().upper()
+    if normalized in {"MP", "MEALPLANNING"}:
+        return (
+            "Focus guidance: meal planning. Prioritize meal options, portions, and simple planning steps."
+        )
+    if normalized in {"AM", "ANALYZINGMISTAKES"}:
+        return (
+            "Focus guidance: spotting patterns. Use meal/chat history to identify one key pattern and one corrective next step."
+        )
+    if normalized in {"M", "MOTIVATION"}:
+        return (
+            "Focus guidance: motivation. Add short encouragement and one realistic micro-step the user can do now."
+        )
+    return "Focus guidance: balanced nutrition support across planning, habits, and next steps."
 
 
 def build_chat_prompt(
@@ -252,25 +352,66 @@ def build_chat_prompt(
     avoid = _resolve_avoid(normalized_context, profile)
     tone = _resolve_tone(normalized_context, profile)
     focus = _resolve_focus(normalized_context, profile)
+    user_note = _resolve_user_note(normalized_context, profile)
     meals_summary = _resolve_meals_summary(normalized_context)
     profile_summary = _resolve_profile_summary(normalized_context, language)
     history_lines = _history_to_lines(normalized_context.get("history"))
     history_summary = " | ".join(history_lines) if history_lines else "none"
     off_topic_reply = _off_topic_reply(language)
+    constraints, missing_fields = _extract_profile_constraints(profile)
 
     sections = [
         "You are a food and nutrition assistant.",
         f"Reply in {language}.",
-        "Stay within food, nutrition, meals, calories, macros, and healthy eating guidance.",
-        f"If the user asks about non-diet topics, do not answer that topic and reply exactly with: {off_topic_reply}",
+        (
+            "Stay within food, nutrition, meals, calories, macros, healthy eating guidance, "
+            "diet strategies, meal-planning, and eating habits."
+        ),
+        (
+            "Questions about diets, nutrition styles, foods, ingredients, meal ideas, "
+            "eating habits, and general meal-planning are in scope."
+        ),
+        (
+            "Requests like 'What diet do you recommend?', 'Suggest a new diet', "
+            "or 'How should I eat to lose weight?' are in scope and should be answered."
+        ),
+        (
+            "Meta requests about this conversation are in scope: summarizing the chat, "
+            "explaining what the user asked earlier, repeating your earlier recommendation, "
+            "or clarifying your previous answer."
+        ),
+        (
+            "If the user asks what they asked earlier, answer from HISTORY. "
+            "When HISTORY is none, say briefly that previous messages are not available in the current context and ask the user to restate."
+        ),
+        (
+            "Only for clearly unrelated non-diet topics (for example weather, crypto prices, horoscopes, sports scores), "
+            f"do not answer that topic and reply exactly with: {off_topic_reply}"
+        ),
         "Use meal history as context, not as a strict template. Do not blindly repeat previously eaten meals unless the user asks for that.",
         "When suggesting meals, prefer practical healthier options and include short rationale (protein, fiber, calories/macros) when useful.",
+        "Treat onboarding constraints as already known context and use them directly in recommendations.",
+        "Do not ask again about goals, preferences, allergies, diseases, or lifestyle if they are already provided below.",
         "If key constraints are missing for a recommendation, ask one short clarifying question before proposing a specific plan.",
         "Keep the answer practical and safe. Do not provide medical diagnosis or treatment advice.",
+        _tone_instruction(tone),
+        _focus_instruction(focus),
+        (
+            "Respect USER_NOTE when it is present and safe. "
+            "Treat it as a preference for communication and support style."
+        ),
         f"TONE={tone}",
         f"FOCUS={focus}",
         f"FLAGS={','.join(flags) if flags else 'none'}",
         f"AVOID={','.join(avoid) if avoid else 'none'}",
+        f"KNOWN_GOAL={constraints['goal']}",
+        f"KNOWN_ACTIVITY={constraints['activity']}",
+        f"KNOWN_PREFERENCES={constraints['preferences']}",
+        f"KNOWN_ALLERGIES={constraints['allergies']}",
+        f"KNOWN_DISEASES={constraints['diseases']}",
+        f"KNOWN_LIFESTYLE={constraints['lifestyle']}",
+        f"MISSING_PROFILE_FIELDS={','.join(missing_fields) if missing_fields else 'none'}",
+        f"USER_NOTE={user_note or 'none'}",
         f"PROFILE={profile_summary}",
         f"MEALS={meals_summary}",
         f"HISTORY={history_summary}",

@@ -380,13 +380,14 @@ async def ask_ai(
     language = _resolve_language(request)
     action_type = "chat"
     request_id = _resolve_request_id(http_request)
+    ask_payload = request.model_dump_json(exclude_none=True)
     gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         action_type,
         request.message,
         language=language,
         request_id=request_id,
-        raw_payload_chars=len(request.message.strip()),
+        raw_payload_chars=len(ask_payload),
     )
 
     sanitized_context = sanitization_service.sanitize_context(request.context)
