@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - Python < 3.11 compatibility
     from typing_extensions import NotRequired
 
 import openai
+from openai.types.chat import ChatCompletionMessageParam
 
 from app.core.config import settings
 from app.core.exceptions import OpenAIServiceError
@@ -49,6 +50,36 @@ class ChatCompletionResult(TypedDict):
 class PhotoAnalysisResult(TypedDict):
     ingredients: list[AnalyzedIngredient]
     usage: OpenAIUsage
+
+
+def _resolve_chat_messages(message: str) -> list[ChatCompletionMessageParam]:
+    marker = "\nUSER_MESSAGE="
+    marker_index = message.rfind(marker)
+    direct_user_message: ChatCompletionMessageParam = {
+        "role": "user",
+        "content": message,
+    }
+    if marker_index == -1:
+        return [direct_user_message]
+
+    system_prompt = message[:marker_index].strip()
+    user_message = message[marker_index + len(marker) :].strip()
+    if not system_prompt or not user_message:
+        return [direct_user_message]
+
+    system_message: ChatCompletionMessageParam = {
+        "role": "system",
+        "content": system_prompt,
+    }
+    user_message_param: ChatCompletionMessageParam = {
+        "role": "user",
+        "content": user_message,
+    }
+
+    return [
+        system_message,
+        user_message_param,
+    ]
 
 
 def _extract_reply_content(response: Any) -> str:
@@ -208,12 +239,13 @@ async def ask_chat_completion(
         raise OpenAIServiceError("OpenAI API key is not configured.")
 
     client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=timeout)
+    messages = _resolve_chat_messages(message)
 
     try:
         response = await asyncio.wait_for(
             client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": message}],
+                messages=messages,
                 temperature=0.2,
             ),
             timeout=timeout,

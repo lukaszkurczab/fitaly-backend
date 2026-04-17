@@ -135,6 +135,30 @@ async def test_evaluate_request_forwards_diet_related_chat() -> None:
     assert "hypothetical_decision" not in result
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Jaką dietę polecasz?",
+        "Nowa dieta na redukcję",
+        "Co jeść, żeby zwiększyć białko?",
+    ],
+)
+async def test_evaluate_request_forwards_general_diet_requests(message: str) -> None:
+    result = await evaluate_request("user-1", "chat", message)
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert "hypothetical_decision" not in result
+
+
+async def test_evaluate_request_forwards_chat_history_meta_question() -> None:
+    result = await evaluate_request("user-1", "chat", "O co pytałem wcześniej?")
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert "hypothetical_decision" not in result
+
+
 # ---------------------------------------------------------------------------
 # Disabled gateway — always FORWARD
 # ---------------------------------------------------------------------------
