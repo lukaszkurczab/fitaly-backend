@@ -1,4 +1,5 @@
 """Tests for /ai/credits/sync-tier fallback reconciliation endpoint."""
+from tests.types import AuthHeaders
 
 from datetime import datetime, timezone
 from typing import Literal
@@ -41,7 +42,7 @@ def test_sync_tier_requires_authentication() -> None:
 
 def test_sync_tier_repairs_to_premium_when_entitlement_is_active(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
@@ -89,7 +90,7 @@ def test_sync_tier_repairs_to_premium_when_entitlement_is_active(
 
 def test_sync_tier_transitions_to_free_when_entitlement_is_missing(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
@@ -125,7 +126,7 @@ def test_sync_tier_transitions_to_free_when_entitlement_is_missing(
 
 def test_sync_tier_keeps_current_free_cycle_when_no_entitlement(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
@@ -154,7 +155,7 @@ def test_sync_tier_keeps_current_free_cycle_when_no_entitlement(
 
 def test_sync_tier_returns_503_when_revenuecat_api_key_is_missing(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch.object(settings, "REVENUECAT_API_KEY", "")
 

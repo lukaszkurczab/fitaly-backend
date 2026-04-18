@@ -4,13 +4,14 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.schemas.weekly_reports import WeeklyReportPeriod, WeeklyReportResponse
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_weekly_report_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.weekly_reports.ai_credits_service.get_credits_status",
@@ -45,7 +46,7 @@ def test_get_weekly_report_returns_backend_payload(
 
 def test_get_weekly_report_returns_400_for_invalid_week_end(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.weekly_reports.ai_credits_service.get_credits_status",
@@ -67,7 +68,7 @@ def test_get_weekly_report_returns_400_for_invalid_week_end(
 
 def test_get_weekly_report_returns_500_for_backend_failures(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.weekly_reports.ai_credits_service.get_credits_status",
@@ -89,7 +90,7 @@ def test_get_weekly_report_returns_500_for_backend_failures(
 
 def test_get_weekly_report_returns_403_for_free_users(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     get_weekly_report = mocker.patch("app.api.routes.weekly_reports.get_weekly_report")
     mocker.patch(

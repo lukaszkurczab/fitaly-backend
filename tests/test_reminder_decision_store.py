@@ -1,6 +1,8 @@
 """Tests for idempotent send-opportunity tracking in reminder_decision_store."""
+from tests.types import LogCaptureFixture
 
 import asyncio
+from collections.abc import Callable
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,6 +13,8 @@ from app.services.reminder_decision_store import (
     get_daily_send_count,
     record_send_decision_if_new,
 )
+
+_TransactionFn = Callable[[object], object]
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +90,11 @@ def _patch_firestore_with_transaction(doc_mock: MagicMock):
     mock_client.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
     mock_client.transaction.return_value = mock_transaction
 
-    def fake_transactional(func):
+    def fake_transactional(func: _TransactionFn) -> _TransactionFn:
         """Replace @firestore.transactional: just call func(transaction)."""
-        def wrapper(transaction):
+        def wrapper(transaction: object) -> object:
             return func(transaction)
+
         return wrapper
 
     patcher_firestore = patch(
@@ -144,7 +149,7 @@ def test_get_daily_send_count_returns_fallback_with_degraded_true_on_read_failur
     assert result.degraded is True
 
 
-def test_get_daily_send_count_emits_structured_log_on_success(caplog) -> None:
+def test_get_daily_send_count_emits_structured_log_on_success(caplog: LogCaptureFixture) -> None:
     doc = _mock_doc(exists=True, data={"sendCount": 1})
     patcher, _ = _patch_firestore(doc)
 
@@ -153,12 +158,12 @@ def test_get_daily_send_count_emits_structured_log_on_success(caplog) -> None:
 
     store_logs = [r for r in caplog.records if "reminder.store.read_count" in r.message]
     assert len(store_logs) == 1
-    assert store_logs[0].operation == "read_count"
-    assert store_logs[0].store_mode == "normal"
-    assert store_logs[0].count == 1
+    assert getattr(store_logs[0], "operation", None) == "read_count"
+    assert getattr(store_logs[0], "store_mode", None) == "normal"
+    assert getattr(store_logs[0], "count", None) == 1
 
 
-def test_get_daily_send_count_emits_degraded_log_on_failure(caplog) -> None:
+def test_get_daily_send_count_emits_degraded_log_on_failure(caplog: LogCaptureFixture) -> None:
     doc = _mock_doc(exists=False)
     patcher, mock_ref = _patch_firestore(doc)
     mock_ref.get.side_effect = Exception("Firestore read failed")
@@ -168,9 +173,9 @@ def test_get_daily_send_count_emits_degraded_log_on_failure(caplog) -> None:
 
     degraded_logs = [r for r in caplog.records if "reminder.store.read_count.failed" in r.message]
     assert len(degraded_logs) == 1
-    assert degraded_logs[0].operation == "read_count"
-    assert degraded_logs[0].store_mode == "degraded"
-    assert degraded_logs[0].fallback_count == 0
+    assert getattr(degraded_logs[0], "operation", None) == "read_count"
+    assert getattr(degraded_logs[0], "store_mode", None) == "degraded"
+    assert getattr(degraded_logs[0], "fallback_count", None) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +310,7 @@ def test_firestore_read_failure_in_transaction_returns_false() -> None:
     assert result is False
 
 
-def test_transaction_failure_emits_degraded_log(caplog) -> None:
+def test_transaction_failure_emits_degraded_log(caplog: LogCaptureFixture) -> None:
     """Transaction failure must emit a structured warning with store_mode=degraded."""
     doc = _mock_doc(exists=False)
     p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
@@ -320,8 +325,8 @@ def test_transaction_failure_emits_degraded_log(caplog) -> None:
 
     degraded_logs = [r for r in caplog.records if "reminder.store.write_decision.failed" in r.message]
     assert len(degraded_logs) == 1
-    assert degraded_logs[0].operation == "write_decision"
-    assert degraded_logs[0].store_mode == "degraded"
+    assert getattr(degraded_logs[0], "operation", None) == "write_decision"
+    assert getattr(degraded_logs[0], "store_mode", None) == "degraded"
 
 
 # ---------------------------------------------------------------------------
@@ -349,19 +354,25 @@ def test_concurrent_calls_for_same_decision_key_result_in_count_one() -> None:
     # Mutable state representing the Firestore document.
     doc_state: dict[str, Any] = {"exists": False, "data": {}}
 
-    def make_doc_snapshot():
+    def make_doc_snapshot() -> MagicMock:
         snapshot = MagicMock()
         snapshot.exists = doc_state["exists"]
         snapshot.to_dict.return_value = dict(doc_state["data"])
         return snapshot
 
     mock_ref = MagicMock()
-    mock_ref.get.side_effect = lambda transaction=None: make_doc_snapshot()
+
+    def _get_snapshot(transaction: object | None = None) -> MagicMock:
+        _ = transaction
+        return make_doc_snapshot()
+
+    mock_ref.get.side_effect = _get_snapshot
 
     mock_transaction = MagicMock()
 
-    def fake_set(ref, data, merge=False):
+    def fake_set(ref: object, data: dict[str, Any], merge: bool = False) -> None:
         """Simulate Firestore commit: update the in-memory doc state."""
+        _ = (ref, merge)
         doc_state["exists"] = True
         doc_state["data"] = dict(data)
 
@@ -371,9 +382,10 @@ def test_concurrent_calls_for_same_decision_key_result_in_count_one() -> None:
     mock_client.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
     mock_client.transaction.return_value = mock_transaction
 
-    def fake_transactional(func):
-        def wrapper(transaction):
+    def fake_transactional(func: _TransactionFn) -> _TransactionFn:
+        def wrapper(transaction: object) -> object:
             return func(transaction)
+
         return wrapper
 
     patcher_fs = patch(

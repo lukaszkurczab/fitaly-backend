@@ -1,4 +1,5 @@
 """Integration tests for GET /ai/credits endpoint."""
+from tests.types import AuthHeaders
 
 from datetime import datetime, timezone
 from typing import Literal
@@ -41,7 +42,7 @@ def test_get_ai_credits_requires_authentication() -> None:
     assert response.json() == {"detail": "Authentication required"}
 
 
-def test_get_ai_credits_returns_backend_truth(mocker: MockerFixture, auth_headers) -> None:
+def test_get_ai_credits_returns_backend_truth(mocker: MockerFixture, auth_headers: AuthHeaders) -> None:
     mocker.patch(
         "app.api.routes.ai_credits.ai_credits_service.get_credits_status",
         return_value=_credits_status(
@@ -72,7 +73,7 @@ def test_get_ai_credits_returns_backend_truth(mocker: MockerFixture, auth_header
     }
 
 
-def test_get_ai_credits_uses_uid_from_token(mocker: MockerFixture, auth_headers) -> None:
+def test_get_ai_credits_uses_uid_from_token(mocker: MockerFixture, auth_headers: AuthHeaders) -> None:
     get_credits_status = mocker.patch(
         "app.api.routes.ai_credits.ai_credits_service.get_credits_status",
         return_value=_credits_status(
@@ -93,7 +94,7 @@ def test_get_ai_credits_uses_uid_from_token(mocker: MockerFixture, auth_headers)
 
 def test_get_ai_credits_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai_credits.ai_credits_service.get_credits_status",

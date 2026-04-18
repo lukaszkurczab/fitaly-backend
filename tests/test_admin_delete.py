@@ -7,6 +7,7 @@ real credentials.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Generator
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -36,10 +37,11 @@ def _make_doc_snap(
     return snap
 
 
-def _make_stream(*docs: MagicMock):
+def _make_stream(*docs: MagicMock) -> Callable[[], Generator[MagicMock, None, None]]:
     """Return a function that yields the supplied mock snapshots."""
-    def _stream():
+    def _stream() -> Generator[MagicMock, None, None]:
         yield from docs
+
     return _stream
 
 

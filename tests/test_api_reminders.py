@@ -8,6 +8,7 @@ from app.core.exceptions import (
 )
 from app.main import app
 from app.schemas.reminders import ReminderDecision
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
@@ -30,7 +31,7 @@ def _decision_payload() -> ReminderDecision:
 
 def test_get_reminder_decision_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -60,7 +61,7 @@ def test_get_reminder_decision_returns_backend_payload(
 
 def test_get_reminder_decision_passes_tz_offset_min_to_service(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mock_service = mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -82,7 +83,7 @@ def test_get_reminder_decision_passes_tz_offset_min_to_service(
 
 def test_get_reminder_decision_passes_negative_tz_offset_min(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mock_service = mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -104,7 +105,7 @@ def test_get_reminder_decision_passes_negative_tz_offset_min(
 
 def test_get_reminder_decision_passes_none_when_tz_offset_min_omitted(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mock_service = mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -126,7 +127,7 @@ def test_get_reminder_decision_passes_none_when_tz_offset_min_omitted(
 
 def test_get_reminder_decision_returns_422_for_tz_offset_min_out_of_range(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -143,7 +144,7 @@ def test_get_reminder_decision_returns_422_for_tz_offset_min_out_of_range(
 
 def test_get_reminder_decision_returns_400_for_invalid_day(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -161,7 +162,7 @@ def test_get_reminder_decision_returns_400_for_invalid_day(
 
 def test_get_reminder_decision_returns_503_when_required_foundations_are_unavailable(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -179,7 +180,7 @@ def test_get_reminder_decision_returns_503_when_required_foundations_are_unavail
 
 def test_get_reminder_decision_returns_500_for_backend_failures(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.reminders.get_reminder_decision",
@@ -197,7 +198,7 @@ def test_get_reminder_decision_returns_500_for_backend_failures(
 
 def test_get_reminder_decision_returns_500_for_contract_violation_not_400(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Internal decision contract violations must surface as 500, not 400.
 
@@ -222,7 +223,7 @@ def test_get_reminder_decision_returns_500_for_contract_violation_not_400(
 
 def test_get_reminder_decision_returns_400_only_for_client_input_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """ValueError from day_key parsing is still a legitimate 400."""
     mocker.patch(
@@ -241,7 +242,7 @@ def test_get_reminder_decision_returns_400_only_for_client_input_errors(
 
 def test_get_reminder_decision_returns_suppress_with_frequency_cap(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Endpoint returns a valid suppress decision when frequency cap is reached."""
     mocker.patch(

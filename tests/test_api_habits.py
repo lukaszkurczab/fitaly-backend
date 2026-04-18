@@ -16,6 +16,7 @@ from app.schemas.habits import (
     MealTypeFrequency14,
     ProteinDaysHit14,
 )
+from tests.types import AuthHeaders
 
 
 def create_test_client() -> TestClient:
@@ -26,7 +27,7 @@ def create_test_client() -> TestClient:
 
 def test_get_user_habits_returns_response_shape(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.habits.get_habit_signals",
@@ -157,7 +158,7 @@ def test_get_user_habits_returns_response_shape(
 
 def test_get_user_habits_returns_500_when_backend_fails(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.habits.get_habit_signals",

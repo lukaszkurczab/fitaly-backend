@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,7 +23,7 @@ class FakeTransaction:
         self._read_only = False
         self.set_calls: list[tuple[object, dict[str, object]]] = []
 
-    def _begin(self, *args, **kwargs) -> None:
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
         return None
 
     def _commit(self) -> list[object]:

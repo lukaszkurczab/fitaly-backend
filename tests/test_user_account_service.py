@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 from unittest.mock import ANY
 
 import pytest
@@ -24,7 +25,7 @@ class FakeTransaction:
         self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
         self.delete_calls: list[object] = []
 
-    def _begin(self, *args, **kwargs) -> None:
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
         return None
 
     def _commit(self) -> list[object]:
@@ -457,9 +458,10 @@ def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
         _build_client(mocker)
     )
     previous_username_ref = mocker.Mock()
-    usernames_collection_ref.document.side_effect = lambda key: (
-        previous_username_ref if key == "old-name" else username_ref
-    )
+    def _document_for_key(key: str) -> object:
+        return previous_username_ref if key == "old-name" else username_ref
+
+    usernames_collection_ref.document.side_effect = _document_for_key
     transaction = FakeTransaction()
     client.transaction.return_value = transaction
     username_ref.get.return_value = _build_snapshot(mocker, exists=False)

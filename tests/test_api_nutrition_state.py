@@ -17,13 +17,14 @@ from app.schemas.nutrition_state import (
     NutritionStreakSummary,
     NutritionTargets,
 )
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_nutrition_state_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.nutrition_state.get_nutrition_state",
@@ -76,7 +77,7 @@ def test_get_nutrition_state_returns_backend_payload(
 
 def test_get_nutrition_state_returns_500_when_backend_fails(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.nutrition_state.get_nutrition_state",

@@ -16,7 +16,7 @@ def _meal(
     ingredients: list[dict[str, Any]] | None = None,
     logged_at_local_min: int | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "mealId": meal_id,
         "cloudId": meal_id,
         "dayKey": day_key,

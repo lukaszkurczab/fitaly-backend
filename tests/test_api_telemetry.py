@@ -11,6 +11,7 @@ from pytest_mock import MockerFixture
 
 from app.api.v2.router import router as v2_router
 from app.services import telemetry_service
+from tests.types import AuthHeaders, LogCaptureFixture
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +156,7 @@ def create_test_client() -> TestClient:
 
 
 def build_payload(event_overrides: dict[str, Any] | None = None) -> dict[str, object]:
-    event = {
+    event: dict[str, Any] = {
         "eventId": "evt-1",
         "name": "meal_added",
         "ts": "2026-03-18T12:00:00Z",
@@ -187,7 +188,7 @@ def reset_telemetry_state() -> None:
 
 def test_telemetry_batch_accepts_valid_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     reset_telemetry_state()
     setup_telemetry_enabled(mocker, enabled=True)
@@ -368,7 +369,7 @@ def test_telemetry_batch_rejects_unknown_props_for_event(
 
 def test_telemetry_batch_accepts_premium_state_evaluated_event(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     reset_telemetry_state()
     setup_telemetry_enabled(mocker, enabled=True)
@@ -438,7 +439,7 @@ def test_telemetry_batch_accepts_coach_surface_events(
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
     client = create_test_client()
 
-    payload = {
+    payload: dict[str, Any] = {
         "sessionId": "sess-1",
         "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
         "device": {"locale": "pl-PL", "tzOffsetMin": 60},
@@ -503,7 +504,7 @@ def test_telemetry_batch_accepts_smart_reminder_events(
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
     client = create_test_client()
 
-    payload = {
+    payload: dict[str, Any] = {
         "sessionId": "sess-1",
         "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
         "device": {"locale": "pl-PL", "tzOffsetMin": 60},
@@ -768,7 +769,7 @@ def test_telemetry_batch_returns_503_when_feature_flag_is_disabled(
 
 def test_telemetry_daily_summary_returns_grouped_counts(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     reset_telemetry_state()
     setup_telemetry_enabled(mocker, enabled=True)
@@ -863,8 +864,8 @@ def test_telemetry_batch_returns_429_when_rate_limit_is_exceeded(
 
 def test_successful_ingest_logs_batch_summary(
     mocker: MockerFixture,
-    auth_headers,
-    caplog,
+    auth_headers: AuthHeaders,
+    caplog: LogCaptureFixture,
 ) -> None:
     """telemetry.ingest.ok is logged with counters on every successful batch."""
     reset_telemetry_state()
@@ -898,7 +899,7 @@ def test_successful_ingest_logs_batch_summary(
 
 def test_rejected_event_logs_warning_per_event(
     mocker: MockerFixture,
-    caplog,
+    caplog: LogCaptureFixture,
 ) -> None:
     """Each disallowed event emits a telemetry.ingest.rejected warning."""
     reset_telemetry_state()
@@ -927,7 +928,7 @@ def test_rejected_event_logs_warning_per_event(
 
 def test_rate_limit_hit_logs_warning(
     mocker: MockerFixture,
-    caplog,
+    caplog: LogCaptureFixture,
 ) -> None:
     """Rate limit exceeded emits telemetry.ingest.rate_limited warning."""
     reset_telemetry_state()
@@ -960,7 +961,7 @@ def test_rate_limit_hit_logs_warning(
 
 def test_firestore_failure_logs_error_and_returns_500(
     mocker: MockerFixture,
-    caplog,
+    caplog: LogCaptureFixture,
 ) -> None:
     """Firestore write failure emits error log and returns 500."""
     reset_telemetry_state()
@@ -991,8 +992,8 @@ def test_firestore_failure_logs_error_and_returns_500(
 
 def test_mixed_batch_logs_both_accepted_and_rejected(
     mocker: MockerFixture,
-    auth_headers,
-    caplog,
+    auth_headers: AuthHeaders,
+    caplog: LogCaptureFixture,
 ) -> None:
     """A batch with valid and invalid events logs both rejection warnings
     and a summary with correct counters."""
@@ -1002,7 +1003,7 @@ def test_mixed_batch_logs_both_accepted_and_rejected(
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
     client = create_test_client()
 
-    payload = {
+    payload: dict[str, Any] = {
         "sessionId": "sess-mix",
         "app": {"platform": "android", "appVersion": "2.0.0"},
         "device": {},
@@ -1088,7 +1089,7 @@ def _seed_sr_events(
 
 def test_smart_reminder_summary_correct_outcome_aggregates(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Outcome counts are correctly aggregated across event types."""
     reset_telemetry_state()
@@ -1149,7 +1150,7 @@ def test_smart_reminder_summary_correct_outcome_aggregates(
 
 def test_smart_reminder_summary_groups_suppression_reasons(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Suppression reasons are counted and sorted alphabetically."""
     reset_telemetry_state()
@@ -1200,7 +1201,7 @@ def test_smart_reminder_summary_groups_suppression_reasons(
 
 def test_smart_reminder_summary_groups_noop_reasons(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Noop reasons are counted and sorted alphabetically."""
     reset_telemetry_state()
@@ -1245,7 +1246,7 @@ def test_smart_reminder_summary_groups_noop_reasons(
 
 def test_smart_reminder_summary_ignores_unrelated_events(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Non-smart-reminder events in Firestore are silently skipped."""
     reset_telemetry_state()
@@ -1291,7 +1292,7 @@ def test_smart_reminder_summary_ignores_unrelated_events(
 
 def test_smart_reminder_summary_groups_reminder_kinds(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Reminder kind distribution includes both scheduled and schedule_failed."""
     reset_telemetry_state()
@@ -1341,7 +1342,7 @@ def test_smart_reminder_summary_groups_reminder_kinds(
 
 def test_smart_reminder_summary_daily_buckets(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """Events are correctly bucketed by day."""
     reset_telemetry_state()
@@ -1401,7 +1402,7 @@ def test_smart_reminder_summary_daily_buckets(
 
 def test_smart_reminder_summary_send_ratio_null_when_no_outcomes(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """sendRatio is null when there are zero send/suppress/noop outcomes."""
     reset_telemetry_state()
@@ -1433,7 +1434,7 @@ def test_smart_reminder_summary_send_ratio_null_when_no_outcomes(
 
 def test_smart_reminder_summary_empty_when_no_events(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     """An empty Firestore returns zero totals and empty lists."""
     reset_telemetry_state()

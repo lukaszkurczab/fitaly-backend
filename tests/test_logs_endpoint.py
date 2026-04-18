@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
@@ -165,7 +167,7 @@ def test_logs_error_endpoint_returns_429_when_rate_limit_is_exceeded(
     client = create_test_client()
     mocker.patch.object(logs_route_module, "RATE_LIMIT_MAX_REQUESTS", 2)
 
-    payload = {
+    payload: dict[str, Any] = {
         "source": "mobile",
         "message": "too many logs",
         "context": {"screen": "camera"},

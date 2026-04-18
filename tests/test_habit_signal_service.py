@@ -60,7 +60,7 @@ class _FakeQuery:
         self._collection = collection
         self._filters = filters or []
 
-    def where(self, *, filter) -> "_FakeQuery":
+    def where(self, *, filter: _FilterLike) -> "_FakeQuery":
         return _FakeQuery(self._collection, [*self._filters, filter])
 
     def stream(self):
@@ -89,7 +89,7 @@ class _FakeMealsCollection:
         self.fail_indexed_queries = fail_indexed_queries
         self.lazy_index_failures = lazy_index_failures
 
-    def where(self, *, filter) -> _FakeQuery:
+    def where(self, *, filter: _FilterLike) -> _FakeQuery:
         return _FakeQuery(self, [filter])
 
 
@@ -150,7 +150,7 @@ def test_day_grouping_falls_back_to_timestamp_when_day_key_is_invalid() -> None:
 
 
 def test_logging_consistency_uses_28_day_window() -> None:
-    meals = []
+    meals: list[dict[str, Any]] = []
     for index in range(14):
         day = (COMPUTED_AT.date() - timedelta(days=index * 2)).isoformat()
         meals.append(

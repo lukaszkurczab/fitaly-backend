@@ -1,5 +1,5 @@
 import asyncio
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
@@ -17,7 +17,7 @@ class FakeTransaction:
         self._read_only = False
         self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
 
-    def _begin(self, *args, **kwargs) -> None:
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
         return None
 
     def _commit(self) -> list[object]:

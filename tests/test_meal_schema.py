@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -105,7 +107,7 @@ def test_meal_upsert_request_rejects_invalid_input_method() -> None:
 
 def test_meal_item_accepts_all_sync_states() -> None:
     """Backend schema must accept every syncState that mobile can produce."""
-    base = {
+    base: dict[str, Any] = {
         "userUid": "user-1",
         "mealId": "meal-1",
         "timestamp": "2026-03-18T12:00:00.000Z",
@@ -122,7 +124,7 @@ def test_meal_item_accepts_all_sync_states() -> None:
 
 def test_meal_upsert_request_accepts_all_sync_states() -> None:
     """Request model must accept every syncState that mobile can send."""
-    base = {
+    base: dict[str, Any] = {
         "mealId": "meal-1",
         "timestamp": "2026-03-18T12:00:00.000Z",
         "type": "lunch",
@@ -167,7 +169,7 @@ def test_meal_upsert_request_rejects_unknown_sync_state() -> None:
 # Full boundary contract — request parse with complete payload
 # ---------------------------------------------------------------------------
 
-_FULL_MEAL_PAYLOAD = {
+_FULL_MEAL_PAYLOAD: dict[str, Any] = {
     "mealId": "meal-full-1",
     "timestamp": "2026-03-18T12:00:00.000Z",
     "dayKey": "2026-03-18",

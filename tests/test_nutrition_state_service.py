@@ -90,7 +90,7 @@ class _FakeQuery:
         self._collection = collection
         self._filters = filters or []
 
-    def where(self, *, filter) -> "_FakeQuery":
+    def where(self, *, filter: _FilterLike) -> "_FakeQuery":
         return _FakeQuery(self._collection, [*self._filters, filter])
 
     def stream(self):
@@ -121,7 +121,7 @@ class _FakeMealsCollection:
         self.fail_indexed_queries = fail_indexed_queries
         self.lazy_index_failures = lazy_index_failures
 
-    def where(self, *, filter) -> _FakeQuery:
+    def where(self, *, filter: _FilterLike) -> _FakeQuery:
         return _FakeQuery(self, [filter])
 
 
@@ -169,7 +169,7 @@ def _mock_firestore(
     client.collection.return_value.document.return_value = user_ref
 
     # Mock streak_service.get_streak used by build_streak_summary
-    streak_data = streak if streak is not None else {"current": 0, "lastDate": None}
+    streak_data: dict[str, object] = streak if streak is not None else {"current": 0, "lastDate": None}
     mocker.patch(
         "app.services.nutrition_state_service.get_streak",
         return_value=streak_data,
@@ -184,7 +184,7 @@ def _mock_firestore(
 
 
 def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
-    profile = {
+    profile: dict[str, Any] = {
         "calorieTarget": 2000,
         "macroTargets": {"proteinGrams": 120, "carbsGrams": 220, "fatGrams": 70},
     }

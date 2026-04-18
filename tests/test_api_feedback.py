@@ -4,13 +4,14 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.services.feedback_service import FeedbackValidationError
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_post_feedback_returns_created_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     create_feedback = mocker.patch(
         "app.api.routes.feedback.feedback_service.create_feedback",
@@ -79,7 +80,7 @@ def test_post_feedback_returns_created_payload(
 
 def test_post_feedback_returns_400_for_invalid_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.feedback.feedback_service.create_feedback",
@@ -98,7 +99,7 @@ def test_post_feedback_returns_400_for_invalid_payload(
 
 def test_post_feedback_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.feedback.feedback_service.create_feedback",

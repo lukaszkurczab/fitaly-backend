@@ -7,13 +7,14 @@ from app.services.username_service import (
     UsernameUnavailableError,
     UsernameValidationError,
 )
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_username_availability_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     is_username_available = mocker.patch(
         "app.api.routes.usernames.username_service.is_username_available",
@@ -47,7 +48,7 @@ def test_get_username_availability_returns_500_for_firestore_errors(
 
 def test_post_user_username_claim_returns_normalized_username(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     claim_username = mocker.patch(
         "app.api.routes.usernames.username_service.claim_username",
@@ -70,7 +71,7 @@ def test_post_user_username_claim_returns_normalized_username(
 
 def test_post_user_username_claim_returns_400_for_invalid_username(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.usernames.username_service.claim_username",
@@ -89,7 +90,7 @@ def test_post_user_username_claim_returns_400_for_invalid_username(
 
 def test_post_user_username_claim_returns_409_when_taken(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.usernames.username_service.claim_username",
@@ -108,7 +109,7 @@ def test_post_user_username_claim_returns_409_when_taken(
 
 def test_post_user_username_claim_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.usernames.username_service.claim_username",

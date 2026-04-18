@@ -4,13 +4,14 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import CoachUnavailableError, FirestoreServiceError
 from app.main import app
 from app.schemas.coach import CoachInsight, CoachMeta, CoachResponse
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_coach_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.coach.get_coach_response",
@@ -69,7 +70,7 @@ def test_get_coach_returns_backend_payload(
 
 def test_get_coach_returns_400_for_invalid_day(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.coach.get_coach_response",
@@ -87,7 +88,7 @@ def test_get_coach_returns_400_for_invalid_day(
 
 def test_get_coach_returns_503_when_habits_foundation_is_unavailable(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.coach.get_coach_response",
@@ -102,7 +103,7 @@ def test_get_coach_returns_503_when_habits_foundation_is_unavailable(
 
 def test_get_coach_returns_500_for_backend_failures(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.coach.get_coach_response",

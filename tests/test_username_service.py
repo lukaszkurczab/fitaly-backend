@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
@@ -20,7 +21,7 @@ class FakeTransaction:
         self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
         self.delete_calls: list[object] = []
 
-    def _begin(self, *args, **kwargs) -> None:
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
         return None
 
     def _commit(self) -> list[object]:
@@ -61,9 +62,10 @@ def _build_client(mocker: MockerFixture):
 
     client.collection.side_effect = collection_side_effect
     users_collection_ref.document.return_value = user_ref
-    usernames_collection_ref.document.side_effect = lambda key: (
-        previous_username_ref if key == "neo" else username_ref
-    )
+    def _document_for_key(key: str) -> object:
+        return previous_username_ref if key == "neo" else username_ref
+
+    usernames_collection_ref.document.side_effect = _document_for_key
 
     return (
         client,

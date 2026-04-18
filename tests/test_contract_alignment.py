@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, get_args
+from collections.abc import Callable
+from typing import Any, cast, get_args
 
 import pytest
 from pytest_mock import MockerFixture
@@ -436,7 +437,7 @@ class TestReminderDecisionContract:
         field_name: str,
         value: str,
     ) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "dayKey": "2026-03-18",
             "computedAt": "2026-03-18T12:00:00Z",
             "decision": "send",
@@ -507,7 +508,7 @@ class TestReminderDecisionContract:
         decision_type: str,
         reason_codes: list[str],
     ) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "dayKey": "2026-03-18",
             "computedAt": "2026-03-18T12:00:00Z",
             "decision": decision_type,
@@ -631,11 +632,11 @@ class TestEnumParity:
         # MealSource is Literal["ai", "manual", "saved"] | None — extract the Literal part.
         literal_args = get_args(MealSource)
         # The union is (Literal[...], None); extract from Literal.
-        source_values = []
+        source_values: list[str] = []
         for arg in literal_args:
             inner = get_args(arg)
             if inner:
-                source_values.extend(inner)
+                source_values.extend(value for value in inner if isinstance(value, str))
         assert sorted(enums["MealSource"]) == sorted(source_values)
 
     def test_gateway_reject_reasons_parity(self, enums: StringListDict) -> None:
@@ -710,8 +711,9 @@ class TestSmartRemindersContractSnapshotFreshness:
         import sys
 
         sys.path.insert(0, str(FIXTURES_DIR.parent.parent / "scripts"))
-        from export_reminder_contract import build_contract  # pyright: ignore[reportMissingImports]
+        from export_reminder_contract import build_contract as build_contract_untyped  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
+        build_contract = cast(Callable[[], dict[str, Any]], build_contract_untyped)
         expected = json.dumps(build_contract(), indent=2, ensure_ascii=False) + "\n"
         committed = (FIXTURES_DIR / "smart_reminders_v1.contract.json").read_text(
             encoding="utf-8"

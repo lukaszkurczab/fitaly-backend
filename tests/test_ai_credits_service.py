@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
@@ -19,7 +20,7 @@ class FakeTransaction:
         self._read_only = False
         self.set_calls: list[tuple[object, dict[str, object]]] = []
 
-    def _begin(self, *args, **kwargs) -> None:
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
         return None
 
     def _commit(self) -> list[object]:

@@ -32,7 +32,7 @@ class _FakeQuery:
         self._collection = collection
         self._filters = filters or []
 
-    def where(self, *, filter) -> "_FakeQuery":
+    def where(self, *, filter: _FilterLike) -> "_FakeQuery":
         return _FakeQuery(self._collection, [*self._filters, filter])
 
     def stream(self):
@@ -47,7 +47,7 @@ class _FakeMealsCollection:
         self.snapshots = snapshots
         self.calls: list[list[tuple[str, str, Any]]] = []
 
-    def where(self, *, filter) -> _FakeQuery:
+    def where(self, *, filter: _FilterLike) -> _FakeQuery:
         return _FakeQuery(self, [filter])
 
 

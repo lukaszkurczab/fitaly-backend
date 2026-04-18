@@ -23,6 +23,7 @@ from app.services.reminder_engine.types import (
 )
 from app.services.reminder_inputs import ReminderInputs
 from app.services.reminder_service import get_reminder_decision
+from tests.types import LogCaptureFixture
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
 
@@ -319,7 +320,7 @@ def test_get_reminder_decision_does_not_record_send_for_suppress(
 
 def test_get_reminder_decision_emits_structured_log_on_success(
     mocker: MockerFixture,
-    caplog,
+    caplog: LogCaptureFixture,
 ) -> None:
     """Every computed decision must emit a structured INFO log for observability."""
     import logging
@@ -359,9 +360,9 @@ def test_get_reminder_decision_emits_structured_log_on_success(
     assert any("reminder.decision.computed" in msg for msg in log_messages)
 
     log_record = next(r for r in caplog.records if "reminder.decision.computed" in r.message)
-    assert log_record.user_id == "user-1"
-    assert log_record.day_key == "2026-03-18"
-    assert log_record.decision == decision.decision
-    assert log_record.kind == decision.kind
-    assert log_record.tz_offset_min == 60
-    assert log_record.store_degraded is False
+    assert getattr(log_record, "user_id", None) == "user-1"
+    assert getattr(log_record, "day_key", None) == "2026-03-18"
+    assert getattr(log_record, "decision", None) == decision.decision
+    assert getattr(log_record, "kind", None) == decision.kind
+    assert getattr(log_record, "tz_offset_min", None) == 60
+    assert getattr(log_record, "store_degraded", None) is False

@@ -3,13 +3,14 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_chat_threads_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     list_threads = mocker.patch(
         "app.api.routes.chat_threads.chat_thread_service.list_threads",
@@ -53,7 +54,7 @@ def test_get_chat_threads_returns_backend_payload(
 
 def test_get_chat_messages_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     list_messages = mocker.patch(
         "app.api.routes.chat_threads.chat_thread_service.list_messages",
@@ -101,7 +102,7 @@ def test_get_chat_messages_returns_backend_payload(
 
 def test_post_chat_message_persists_with_backend_service(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     persist_message = mocker.patch(
         "app.api.routes.chat_threads.chat_thread_service.persist_message",
@@ -139,7 +140,7 @@ def test_post_chat_message_persists_with_backend_service(
 
 def test_get_chat_threads_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.chat_threads.chat_thread_service.list_threads",

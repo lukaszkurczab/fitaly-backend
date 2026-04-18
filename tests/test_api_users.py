@@ -7,13 +7,14 @@ from app.services.user_account_service import (
     AvatarMetadataValidationError,
     EmailValidationError,
 )
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_post_email_pending_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     set_email_pending = mocker.patch(
         "app.api.routes.users.user_account_service.set_email_pending",
@@ -36,7 +37,7 @@ def test_post_email_pending_returns_updated_payload(
 
 def test_get_user_profile_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     get_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.get_user_profile_data",
@@ -54,7 +55,7 @@ def test_get_user_profile_returns_backend_payload(
 
 def test_post_user_profile_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
@@ -81,7 +82,7 @@ def test_post_user_profile_returns_updated_payload(
 
 def test_post_user_profile_returns_422_for_unknown_profile_fields(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
@@ -101,7 +102,7 @@ def test_post_user_profile_returns_422_for_unknown_profile_fields(
 
 def test_post_user_profile_returns_422_for_empty_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
@@ -121,7 +122,7 @@ def test_post_user_profile_returns_422_for_empty_payload(
 
 def test_post_user_profile_returns_422_for_invalid_enum_value(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
@@ -141,7 +142,7 @@ def test_post_user_profile_returns_422_for_invalid_enum_value(
 
 def test_post_email_pending_returns_400_for_invalid_email(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.set_email_pending",
@@ -160,7 +161,7 @@ def test_post_email_pending_returns_400_for_invalid_email(
 
 def test_post_email_pending_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.set_email_pending",
@@ -177,7 +178,7 @@ def test_post_email_pending_returns_500_for_firestore_errors(
     assert response.json() == {"detail": "Database error"}
 
 
-def test_post_delete_user_returns_success(mocker: MockerFixture, auth_headers) -> None:
+def test_post_delete_user_returns_success(mocker: MockerFixture, auth_headers: AuthHeaders) -> None:
     delete_account_data = mocker.patch(
         "app.api.routes.users.user_account_service.delete_account_data",
         return_value=None,
@@ -192,7 +193,7 @@ def test_post_delete_user_returns_success(mocker: MockerFixture, auth_headers) -
 
 def test_post_avatar_metadata_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     set_avatar_metadata = mocker.patch(
         "app.api.routes.users.user_account_service.set_avatar_metadata",
@@ -216,7 +217,7 @@ def test_post_avatar_metadata_returns_updated_payload(
 
 def test_post_avatar_metadata_returns_400_for_invalid_url(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.set_avatar_metadata",
@@ -235,7 +236,7 @@ def test_post_avatar_metadata_returns_400_for_invalid_url(
 
 def test_post_avatar_upload_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upload_avatar = mocker.patch(
         "app.api.routes.users.user_account_service.upload_avatar",
@@ -260,7 +261,7 @@ def test_post_avatar_upload_returns_updated_payload(
 
 def test_post_avatar_upload_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.upload_avatar",
@@ -279,7 +280,7 @@ def test_post_avatar_upload_returns_500_for_firestore_errors(
 
 def test_get_user_export_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     get_user_export_data = mocker.patch(
         "app.api.routes.users.user_account_service.get_user_export_data",
@@ -311,7 +312,7 @@ def test_get_user_export_returns_backend_payload(
 
 def test_get_user_export_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.get_user_export_data",
@@ -326,7 +327,7 @@ def test_get_user_export_returns_500_for_firestore_errors(
 
 def test_post_delete_user_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.users.user_account_service.delete_account_data",

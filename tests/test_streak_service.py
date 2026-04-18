@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
@@ -21,9 +22,10 @@ def _build_client(mocker: MockerFixture):
     client.collection.return_value = mocker.Mock(
         document=mocker.Mock(return_value=user_ref)
     )
-    user_ref.collection.side_effect = lambda name: (
-        streak_collection_ref if name == "streak" else badge_collection_ref
-    )
+    def _collection_for_name(name: str) -> Any:
+        return streak_collection_ref if name == "streak" else badge_collection_ref
+
+    user_ref.collection.side_effect = _collection_for_name
     streak_collection_ref.document.return_value = streak_ref
 
     return client, transaction, streak_ref

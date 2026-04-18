@@ -3,13 +3,14 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_badges_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     list_badges = mocker.patch(
         "app.api.routes.badges.badge_service.list_badges",
@@ -50,7 +51,7 @@ def test_get_badges_returns_backend_payload(
 
 def test_post_reconcile_premium_badges_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     reconcile = mocker.patch(
         "app.api.routes.badges.badge_service.reconcile_premium_badges",
@@ -74,7 +75,7 @@ def test_post_reconcile_premium_badges_returns_backend_payload(
 
 def test_post_reconcile_premium_badges_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.badges.badge_service.reconcile_premium_badges",
@@ -93,7 +94,7 @@ def test_post_reconcile_premium_badges_returns_500_for_firestore_errors(
 
 def test_get_badges_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.badges.badge_service.list_badges",

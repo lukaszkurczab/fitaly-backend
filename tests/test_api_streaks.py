@@ -4,11 +4,12 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.services.streak_service import StreakValidationError
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
-def test_get_streak_returns_backend_payload(mocker: MockerFixture, auth_headers) -> None:
+def test_get_streak_returns_backend_payload(mocker: MockerFixture, auth_headers: AuthHeaders) -> None:
     get_streak = mocker.patch(
         "app.api.routes.streaks.streak_service.get_streak",
         return_value={"current": 4, "lastDate": "2026-03-03"},
@@ -27,7 +28,7 @@ def test_get_streak_returns_backend_payload(mocker: MockerFixture, auth_headers)
 
 def test_post_ensure_streak_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     ensure_streak = mocker.patch(
         "app.api.routes.streaks.streak_service.ensure_streak",
@@ -51,7 +52,7 @@ def test_post_ensure_streak_returns_updated_payload(
 
 def test_post_reset_streak_if_missed_returns_updated_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     reset_streak_if_missed = mocker.patch(
         "app.api.routes.streaks.streak_service.reset_streak_if_missed",
@@ -75,7 +76,7 @@ def test_post_reset_streak_if_missed_returns_updated_payload(
 
 def test_post_recalculate_streak_returns_awarded_badges(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     recalculate_streak = mocker.patch(
         "app.api.routes.streaks.streak_service.recalculate_streak",
@@ -113,7 +114,7 @@ def test_post_recalculate_streak_returns_awarded_badges(
 
 def test_post_recalculate_streak_returns_422_for_schema_invalid_day_key(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.streaks.streak_service.recalculate_streak",
@@ -136,7 +137,7 @@ def test_post_recalculate_streak_returns_422_for_schema_invalid_day_key(
 
 def test_get_streak_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.streaks.streak_service.get_streak",

@@ -1,4 +1,5 @@
 """Integration tests for AI routes using the AI credits system."""
+from tests.types import AuthHeaders
 
 from collections import deque
 from datetime import datetime, timezone
@@ -67,7 +68,7 @@ def _credits_status(
 
 def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -139,7 +140,7 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
 
 def test_post_ai_ask_logs_gateway_observability_metadata(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch(
         "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
@@ -198,7 +199,7 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
 
 def test_post_ai_ask_rejects_real_off_topic_chat(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch(
         "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
@@ -245,7 +246,7 @@ def test_post_ai_ask_rejects_real_off_topic_chat(
 
 def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch(
         "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
@@ -314,7 +315,7 @@ def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
 
 def test_post_ai_photo_analyze_returns_413_for_payload_guard(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch(
         "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
@@ -345,7 +346,7 @@ def test_post_ai_photo_analyze_returns_413_for_payload_guard(
 
 def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     exhausted_warning = mocker.patch("app.api.routes.ai.logger.warning")
@@ -432,7 +433,7 @@ def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
 
 def test_post_ai_ask_gateway_reject_has_zero_deduction(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -483,7 +484,7 @@ def test_post_ai_ask_gateway_reject_has_zero_deduction(
 
 def test_post_ai_ask_refunds_credits_after_ai_failure(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -555,7 +556,7 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
 
 def test_post_ai_photo_analyze_deducts_five_credits(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     deduct_credits = mocker.patch(
@@ -607,7 +608,7 @@ def test_post_ai_photo_analyze_deducts_five_credits(
 
 def test_post_ai_text_meal_analyze_deducts_one_credit(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     deduct_credits = mocker.patch(
@@ -658,7 +659,7 @@ def test_post_ai_text_meal_analyze_deducts_one_credit(
 
 def test_post_ai_photo_analyze_respects_gateway_reject(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -700,7 +701,7 @@ def test_post_ai_photo_analyze_respects_gateway_reject(
 
 def test_post_ai_text_meal_analyze_respects_gateway_reject(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -742,7 +743,7 @@ def test_post_ai_text_meal_analyze_respects_gateway_reject(
 
 def test_post_ai_photo_analyze_logs_upstream_failure(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
@@ -792,7 +793,7 @@ def test_post_ai_photo_analyze_logs_upstream_failure(
 
 def test_post_ai_photo_validation_reject_has_zero_deduction(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
 
@@ -808,7 +809,7 @@ def test_post_ai_photo_validation_reject_has_zero_deduction(
 
 def test_post_ai_ask_ignores_client_action_type_and_skips_logging_when_gateway_disabled(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch("app.api.routes.ai.settings.AI_GATEWAY_ENABLED", False)

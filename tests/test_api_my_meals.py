@@ -5,13 +5,14 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_get_my_meal_changes_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     list_changes = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.list_changes",
@@ -37,7 +38,7 @@ def test_get_my_meal_changes_returns_backend_payload(
 
 def test_post_my_meal_upsert_uses_backend_service(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_saved_meal = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.upsert_saved_meal",
@@ -80,7 +81,7 @@ def test_post_my_meal_upsert_uses_backend_service(
 
 def test_post_my_meal_delete_uses_backend_service(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mark_deleted = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.mark_deleted",
@@ -111,7 +112,7 @@ def test_post_my_meal_delete_uses_backend_service(
 
 def test_post_my_meal_photo_upload_uses_backend_service(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upload_photo = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.upload_photo",
@@ -139,7 +140,7 @@ def test_post_my_meal_photo_upload_uses_backend_service(
 
 def test_get_my_meal_changes_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.my_meals.my_meal_service.list_changes",

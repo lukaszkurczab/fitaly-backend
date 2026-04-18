@@ -1,15 +1,18 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from tests.types import AuthHeaders
 
 client = TestClient(app)
 
 
 def test_post_reconcile_notification_plan_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     get_plan = mocker.patch(
         "app.api.routes.notifications.notification_plan_service.get_notification_plan",
@@ -42,7 +45,7 @@ def test_post_reconcile_notification_plan_returns_backend_payload(
 
 def test_post_reconcile_notification_plan_returns_500_for_firestore_errors(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     mocker.patch(
         "app.api.routes.notifications.notification_plan_service.get_notification_plan",
@@ -65,7 +68,7 @@ def test_post_reconcile_notification_plan_returns_500_for_firestore_errors(
 
 def test_get_notifications_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     list_notifications = mocker.patch(
         "app.api.routes.notifications.notification_service.list_notifications",
@@ -114,7 +117,7 @@ def test_get_notifications_returns_backend_payload(
 
 def test_post_notification_upsert_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     upsert_notification = mocker.patch(
         "app.api.routes.notifications.notification_service.upsert_notification",
@@ -133,7 +136,7 @@ def test_post_notification_upsert_returns_backend_payload(
         },
     )
 
-    payload = {
+    payload: dict[str, Any] = {
         "id": "n-1",
         "type": "day_fill",
         "name": "Keep logging",
@@ -163,7 +166,7 @@ def test_post_notification_upsert_returns_backend_payload(
 
 def test_post_delete_notification_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     delete_notification = mocker.patch(
         "app.api.routes.notifications.notification_service.delete_notification",
@@ -185,7 +188,7 @@ def test_post_delete_notification_returns_backend_payload(
 
 def test_get_notification_prefs_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     get_notification_prefs = mocker.patch(
         "app.api.routes.notifications.notification_service.get_notification_prefs",
@@ -213,7 +216,7 @@ def test_get_notification_prefs_returns_backend_payload(
 
 def test_post_notification_prefs_returns_backend_payload(
     mocker: MockerFixture,
-    auth_headers,
+    auth_headers: AuthHeaders,
 ) -> None:
     update_notification_prefs = mocker.patch(
         "app.api.routes.notifications.notification_service.update_notification_prefs",
