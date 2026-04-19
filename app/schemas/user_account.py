@@ -99,6 +99,7 @@ class UserProfilePatchRequest(BaseModel):
     aiFocus: AiFocusValue | None = Field(default=None)
     aiFocusOther: str | None = Field(default=None, max_length=120)
     aiNote: str | None = Field(default=None, max_length=600)
+    aiHealthDataConsentAt: str | None = Field(default=None, max_length=64)
     surveyComplited: bool | None = Field(default=None)
     surveyCompletedAt: str | None = Field(default=None, max_length=64)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)

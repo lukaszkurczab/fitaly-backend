@@ -24,6 +24,11 @@ _RESULT_KEY_MAP = {
     "estimated_cost": "estimatedCost",
     "outcome": "outcome",
     "failure_reason": "failureReason",
+    "scope_decision": "scopeDecision",
+    "retry_count": "retryCount",
+    "used_summary": "usedSummary",
+    "truncated": "truncated",
+    "cost_charged": "costCharged",
 }
 
 
@@ -44,6 +49,11 @@ class GatewayLogExtras(TypedDict, total=False):
     estimatedCost: float
     outcome: str
     failureReason: str
+    scopeDecision: str
+    retryCount: int
+    usedSummary: bool
+    truncated: bool
+    costCharged: float
 
 
 def log_gateway_decision(

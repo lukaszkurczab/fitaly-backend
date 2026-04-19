@@ -66,6 +66,60 @@ def _credits_status(
     )
 
 
+def _chat_context() -> dict[str, object]:
+    return {
+        "profile": {
+            "language": "pl",
+            "aiHealthDataConsentAt": "2026-04-18T10:00:00Z",
+        },
+        "meals": [],
+        "history_messages": [],
+        "memory_summary": None,
+        "warnings": [],
+    }
+
+
+def _gateway_chat_result(
+    *,
+    decision: Literal["FORWARD", "REJECT", "LOCAL_ANSWER"],
+    reason: str,
+    score: float = 1.0,
+    credit_cost: float = 1.0,
+    request_id: str = "run-1",
+    scope_decision: Literal["ALLOW_APP", "ALLOW_USER_DATA", "ALLOW_NUTRITION", "DENY_OTHER"] = "ALLOW_NUTRITION",
+) -> dict[str, object]:
+    return {
+        "decision": decision,
+        "reason": reason,
+        "score": score,
+        "credit_cost": credit_cost,
+        "request_id": request_id,
+        "action_type": "chat",
+        "task_type": "chat",
+        "enforced": True,
+        "model": "gpt-4o-mini",
+        "estimated_tokens": 20,
+        "actual_tokens": None,
+        "latency_ms": None,
+        "estimated_cost": credit_cost,
+        "scope_decision": scope_decision,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _mock_ai_chat_backend_dependencies(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "app.api.routes.ai.ai_context_service.build_chat_context",
+        return_value=_chat_context(),
+    )
+    mocker.patch("app.api.routes.ai.chat_thread_service.persist_exchange", return_value=None)
+    mocker.patch(
+        "app.api.routes.ai.conversation_memory_service.refresh_summary_from_history",
+        return_value=None,
+    )
+    mocker.patch("app.api.routes.ai.ai_run_service.log_ai_run", return_value=None)
+
+
 def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
@@ -73,12 +127,12 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
-        return_value={
-            "decision": "FORWARD",
-            "reason": "PASS_THROUGH",
-            "score": 1.0,
-            "credit_cost": 0.5,
-        },
+        return_value=_gateway_chat_result(
+            decision="FORWARD",
+            reason="PASS_THROUGH",
+            request_id="run-chat-1",
+            scope_decision="ALLOW_NUTRITION",
+        ),
     )
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_context",
@@ -104,34 +158,55 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
         ),
     )
     ask_chat = mocker.patch(
-        "app.api.routes.ai._execute_chat_completion",
-        return_value=("Try grilled chicken with rice.", 24),
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
+        return_value={
+            "content": "Try grilled chicken with rice.",
+            "usage": {
+                "prompt_tokens": 14,
+                "completion_tokens": 10,
+                "total_tokens": 24,
+            },
+            "retry_count": 0,
+        },
     )
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Suggest a dinner"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-1",
+            "message": "Suggest a dinner",
+        },
         headers=auth_headers("abc"),
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "reply": "Try grilled chicken with rice.",
-        "balance": 99,
-        "allocation": 100,
-        "tier": "free",
-        "periodStartAt": "2026-03-23T00:00:00Z",
-        "periodEndAt": "2026-04-23T00:00:00Z",
-        "costs": {"chat": 1, "textMeal": 1, "photo": 5},
-        "version": settings.VERSION,
-        "persistence": "backend_owned",
-        "model": None,
-        "runId": None,
-        "confidence": None,
-        "warnings": [],
+    body = response.json()
+    assert body["reply"] == "Try grilled chicken with rice."
+    assert body["threadId"] == "thread-1"
+    assert body["assistantMessageId"]
+    assert body["usage"] == {"promptTokens": 14, "completionTokens": 10, "totalTokens": 24}
+    assert body["contextStats"] == {
+        "usedSummary": False,
+        "historyTurns": 0,
+        "truncated": False,
+        "scopeDecision": "ALLOW_NUTRITION",
     }
+    assert body["scopeDecision"] == "ALLOW_NUTRITION"
+    assert body["balance"] == 99
+    assert body["allocation"] == 100
+    assert body["tier"] == "free"
+    assert body["periodStartAt"] == "2026-03-23T00:00:00Z"
+    assert body["periodEndAt"] == "2026-04-23T00:00:00Z"
+    assert body["costs"] == {"chat": 1, "textMeal": 1, "photo": 5}
+    assert body["version"] == settings.VERSION
+    assert body["persistence"] == "backend_owned"
+    assert body["model"] == "gpt-4o-mini"
+    assert body["runId"] == "run-chat-1"
+    assert body["confidence"] is None
+    assert body["warnings"] == []
     deduct_credits.assert_called_once_with("abc", cost=1, action="chat")
-    ask_chat.assert_called_once_with("chat prompt")
+    ask_chat.assert_called_once()
     log_gateway_decision.assert_called_once()
     logged_kwargs = log_gateway_decision.call_args.kwargs
     assert logged_kwargs["tier"] == "free"
@@ -154,10 +229,6 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
         return_value="sanitized prompt",
     )
     mocker.patch(
-        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
-        return_value="chat prompt",
-    )
-    mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
         return_value=_credits_status(
             user_id="abc",
@@ -169,13 +240,25 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai._execute_chat_completion",
-        return_value=("Weather is out of scope, but here is a dinner tip.", 31),
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
+        return_value={
+            "content": "Weather is out of scope, but here is a dinner tip.",
+            "usage": {
+                "prompt_tokens": 15,
+                "completion_tokens": 16,
+                "total_tokens": 31,
+            },
+            "retry_count": 0,
+        },
     )
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Ile bialka ma kurczak z ryzem?"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-2",
+            "message": "Ile bialka ma kurczak z ryzem?",
+        },
         headers=auth_headers("abc"),
     )
 
@@ -197,51 +280,67 @@ def test_post_ai_ask_logs_gateway_observability_metadata(
     assert gateway_result["request_id"]
 
 
-def test_post_ai_ask_rejects_real_off_topic_chat(
+def test_post_ai_ask_forwards_off_topic_chat_to_llm(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
 ) -> None:
     log_gateway_decision = mocker.patch(
         "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
     )
-    get_credits_status = mocker.patch(
-        "app.api.routes.ai.ai_credits_service.get_credits_status",
+    deduct_credits = mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
         return_value=_credits_status(
             user_id="abc",
             tier="free",
-            balance=100,
+            balance=99,
             allocation=100,
             period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
             period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
         ),
     )
-    deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
+    ask_chat = mocker.patch(
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
+        return_value={
+            "content": "To pytanie nie jest w zakresie Fitaly i żywienia.",
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 10,
+                "total_tokens": 22,
+            },
+            "retry_count": 0,
+        },
+    )
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Jaka bedzie pogoda jutro?"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-3",
+            "message": "Jaka bedzie pogoda jutro?",
+        },
         headers=auth_headers("abc"),
     )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "detail": {
-            "message": "AI request blocked by gateway",
-            "code": "AI_GATEWAY_BLOCKED",
-            "reason": "OFF_TOPIC",
-            "score": 1.0,
-        }
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scopeDecision"] == "ALLOW_NUTRITION"
+    assert body["warnings"] == []
+    assert body["usage"] == {"promptTokens": 12, "completionTokens": 10, "totalTokens": 22}
+    assert body["contextStats"] == {
+        "usedSummary": False,
+        "historyTurns": 0,
+        "truncated": False,
+        "scopeDecision": "ALLOW_NUTRITION",
     }
-    get_credits_status.assert_called_once_with("abc")
-    deduct_credits.assert_not_called()
-    ask_chat.assert_not_called()
+    assert body["reply"] == "To pytanie nie jest w zakresie Fitaly i żywienia."
+    deduct_credits.assert_called_once_with("abc", cost=1, action="chat")
+    ask_chat.assert_called_once()
     log_gateway_decision.assert_called_once()
     gateway_result = log_gateway_decision.call_args.args[2]
-    assert gateway_result["decision"] == "REJECT"
-    assert gateway_result["reason"] == "OFF_TOPIC"
-    assert gateway_result["outcome"] == "REJECTED"
-    assert gateway_result["enforced"] is True
+    assert gateway_result["decision"] == "FORWARD"
+    assert gateway_result["reason"] == "PASS_THROUGH"
+    assert gateway_result["outcome"] == "FORWARDED"
+    assert gateway_result["enforced"] is False
 
 
 def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
@@ -271,10 +370,6 @@ def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
         return_value="sanitized prompt",
     )
     mocker.patch(
-        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
-        return_value="chat prompt",
-    )
-    mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
         return_value=_credits_status(
             user_id="abc",
@@ -286,8 +381,16 @@ def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai._execute_chat_completion",
-        return_value=("Jogurt ma sporo bialka.", 18),
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
+        return_value={
+            "content": "Jogurt ma sporo bialka.",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18,
+            },
+            "retry_count": 0,
+        },
     )
     mocker.patch("app.api.routes.ai.ai_gateway_service.RATE_LIMIT_MAX_REQUESTS", 1)
     ai_gateway_service = __import__(
@@ -298,12 +401,20 @@ def test_post_ai_ask_returns_429_when_gateway_rate_limit_is_hit(
 
     first = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Ile bialka ma jogurt?"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-4",
+            "message": "Ile bialka ma jogurt?",
+        },
         headers=auth_headers("abc"),
     )
     second = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Ile bialka ma kefir?"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-5",
+            "message": "Ile bialka ma kefir?",
+        },
         headers=auth_headers("abc"),
     )
 
@@ -352,12 +463,12 @@ def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
     exhausted_warning = mocker.patch("app.api.routes.ai.logger.warning")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
-        return_value={
-            "decision": "FORWARD",
-            "reason": "PASS_THROUGH",
-            "score": 1.0,
-            "credit_cost": 1.0,
-        },
+        return_value=_gateway_chat_result(
+            decision="FORWARD",
+            reason="PASS_THROUGH",
+            request_id="run-chat-402",
+            scope_decision="ALLOW_NUTRITION",
+        ),
     )
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_context",
@@ -366,10 +477,6 @@ def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="sanitized prompt",
-    )
-    mocker.patch(
-        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
-        return_value="chat prompt",
     )
     deduct_credits = mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
@@ -386,11 +493,15 @@ def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
             period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
         ),
     )
-    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
+    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat_completion_with_retry")
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Suggest a dinner"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-6",
+            "message": "Suggest a dinner",
+        },
         headers=auth_headers("abc"),
     )
 
@@ -449,19 +560,25 @@ def test_post_ai_ask_gateway_reject_has_zero_deduction(
     )
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
-        return_value={
-            "decision": "REJECT",
-            "reason": "OFF_TOPIC",
-            "score": 0.2,
-            "credit_cost": 0.0,
-        },
+        return_value=_gateway_chat_result(
+            decision="REJECT",
+            reason="OFF_TOPIC",
+            score=0.2,
+            credit_cost=0.0,
+            request_id="run-chat-reject",
+            scope_decision="DENY_OTHER",
+        ),
     )
     deduct_credits = mocker.patch("app.api.routes.ai.ai_credits_service.deduct_credits")
-    ask_chat = mocker.patch("app.api.routes.ai._execute_chat_completion")
+    ask_chat = mocker.patch("app.api.routes.ai.openai_service.ask_chat_completion_with_retry")
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Jaka bedzie pogoda jutro?"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-7",
+            "message": "Jaka bedzie pogoda jutro?",
+        },
         headers=auth_headers("abc"),
     )
 
@@ -489,12 +606,12 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
     log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     mocker.patch(
         "app.api.routes.ai.ai_gateway_service.evaluate_request",
-        return_value={
-            "decision": "FORWARD",
-            "reason": "PASS_THROUGH",
-            "score": 1.0,
-            "credit_cost": 1.0,
-        },
+        return_value=_gateway_chat_result(
+            decision="FORWARD",
+            reason="PASS_THROUGH",
+            request_id="run-chat-failure",
+            scope_decision="ALLOW_NUTRITION",
+        ),
     )
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_context",
@@ -503,10 +620,6 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
     mocker.patch(
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="sanitized prompt",
-    )
-    mocker.patch(
-        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
-        return_value="chat prompt",
     )
     mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
@@ -520,7 +633,7 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
         ),
     )
     mocker.patch(
-        "app.api.routes.ai._execute_chat_completion",
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
         side_effect=OpenAIServiceError("unavailable"),
     )
     refund_credits = mocker.patch(
@@ -537,7 +650,11 @@ def test_post_ai_ask_refunds_credits_after_ai_failure(
 
     response = client.post(
         "/api/v1/ai/ask",
-        json={"message": "Suggest a dinner"},
+        json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-8",
+            "message": "Suggest a dinner",
+        },
         headers=auth_headers("abc"),
     )
 
@@ -832,25 +949,30 @@ def test_post_ai_ask_ignores_client_action_type_and_skips_logging_when_gateway_d
         "app.api.routes.ai.sanitization_service.sanitize_request",
         return_value="sanitized prompt",
     )
-    prompt_builder = mocker.patch(
-        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
-        return_value="chat prompt",
-    )
     execute_chat = mocker.patch(
-        "app.api.routes.ai._execute_chat_completion",
-        return_value=("Diet answer", 22),
+        "app.api.routes.ai.openai_service.ask_chat_completion_with_retry",
+        return_value={
+            "content": "Diet answer",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 12,
+                "total_tokens": 22,
+            },
+            "retry_count": 0,
+        },
     )
 
     response = client.post(
         "/api/v1/ai/ask",
         json={
+            "threadId": "thread-1",
+            "clientMessageId": "client-msg-9",
             "message": "Suggest a dinner",
-            "context": {"actionType": "photo_analysis", "language": "pl"},
+            "language": "pl",
         },
         headers=auth_headers("abc"),
     )
 
     assert response.status_code == 200
-    prompt_builder.assert_called_once()
-    execute_chat.assert_called_once_with("chat prompt")
+    execute_chat.assert_called_once()
     log_gateway_decision.assert_not_called()

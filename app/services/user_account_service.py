@@ -71,6 +71,7 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "aiFocus",
         "aiFocusOther",
         "aiNote",
+        "aiHealthDataConsentAt",
         "surveyComplited",
         "surveyCompletedAt",
         "calorieTarget",
@@ -173,6 +174,7 @@ def _build_onboarding_profile_document(
     profile.setdefault("aiFocus", "none")
     profile.setdefault("aiFocusOther", "")
     profile.setdefault("aiNote", "")
+    profile.setdefault("aiHealthDataConsentAt", None)
     profile.setdefault("surveyComplited", False)
     profile.setdefault("surveyCompletedAt", None)
     profile.setdefault("calorieTarget", 0)

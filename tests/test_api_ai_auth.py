@@ -9,7 +9,14 @@ client = TestClient(app)
 @pytest.mark.parametrize(
     ("path", "payload"),
     [
-        ("/api/v1/ai/ask", {"message": "Suggest a dinner"}),
+        (
+            "/api/v1/ai/ask",
+            {
+                "threadId": "thread-1",
+                "clientMessageId": "client-msg-1",
+                "message": "Suggest a dinner",
+            },
+        ),
         ("/api/v1/ai/text-meal/analyze", {"payload": {"name": "burger"}}),
         ("/api/v1/ai/photo/analyze", {"imageBase64": "base64-image"}),
     ],
