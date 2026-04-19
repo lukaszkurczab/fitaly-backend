@@ -1,7 +1,7 @@
-from typing import Any
+from typing import Any, cast
 
 from app.core.coercion import coerce_int
-from app.domain.ai_runs.models.ai_run import AiRun
+from app.domain.ai_runs.models.ai_run import AiRun, RunStatus
 
 
 def _as_str(value: object, *, default: str = "") -> str:
@@ -25,8 +25,9 @@ def _as_int(value: object, *, default: int = 0) -> int:
 def _as_tools_used(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
+    values = cast(list[object], value)
     tools: list[str] = []
-    for item in value:
+    for item in values:
         tool = _as_str(item).strip()
         if tool:
             tools.append(tool)
@@ -36,7 +37,8 @@ def _as_tools_used(value: object) -> list[str]:
 def _as_tool_metrics(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, dict)]
+    items = cast(list[object], value)
+    return [cast(dict[str, Any], item) for item in items if isinstance(item, dict)]
 
 
 def run_to_document(run: AiRun) -> dict[str, Any]:
@@ -66,17 +68,24 @@ def run_to_document(run: AiRun) -> dict[str, Any]:
 def run_from_document(*, run_id: str, data: dict[str, Any]) -> AiRun:
     created_at = _as_int(data.get("createdAt"), default=0)
     updated_at = _as_int(data.get("updatedAt"), default=created_at)
-    status = _as_str(data.get("status"), default="started")
-    if status not in {"started", "completed", "failed", "rejected"}:
-        status = "started"
+    status_raw = _as_str(data.get("status"), default="started")
+    status: RunStatus = (
+        cast(RunStatus, status_raw)
+        if status_raw in {"started", "completed", "failed", "rejected"}
+        else "started"
+    )
 
-    outcome = _as_str(data.get("outcome")).strip() or None
-    if outcome is not None and outcome not in {"started", "completed", "failed", "rejected"}:
-        outcome = None
+    outcome_raw = _as_str(data.get("outcome")).strip() or None
+    outcome: RunStatus | None = (
+        cast(RunStatus, outcome_raw)
+        if outcome_raw in {"started", "completed", "failed", "rejected"}
+        else None
+    )
 
     metadata = data.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    metadata_map = cast(dict[str, Any], metadata)
 
     return AiRun(
         id=run_id,
@@ -97,5 +106,5 @@ def run_from_document(*, run_id: str, data: dict[str, Any]) -> AiRun:
         total_latency_ms=_as_int(data.get("totalLatencyMs"), default=0),
         created_at=created_at,
         updated_at=updated_at,
-        metadata=metadata,
+        metadata=metadata_map,
     )

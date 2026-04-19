@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.domain.chat_memory.services.message_service import MessageService
 from app.domain.chat_memory.services.summary_service import SummaryService
 from app.domain.tools.base import DomainTool
@@ -15,11 +17,12 @@ class GetRecentChatSummaryTool(DomainTool):
         self.summary_service = summary_service
         self.message_service = message_service
 
-    async def execute(self, *, user_id: str, args: dict) -> dict:
+    async def execute(self, *, user_id: str, args: dict[str, Any]) -> dict[str, Any]:
         thread_id = str(args.get("threadId") or "").strip()
         if not thread_id:
             raise ValueError("threadId is required")
-        fallback_limit = int(args.get("fallbackTurnsLimit", 6))
+        raw_limit = args.get("fallbackTurnsLimit", 6)
+        fallback_limit = int(raw_limit) if isinstance(raw_limit, (int, float, str)) else 6
         fallback_limit = max(1, min(fallback_limit, 24))
 
         summary = await self.summary_service.get_current_summary(

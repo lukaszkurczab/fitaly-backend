@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 async def log_ai_run(run_id: str, payload: dict[str, Any]) -> None:
     client: firestore.Client = get_firestore()
-    doc = {
+    doc: dict[str, Any] = {
         **payload,
         "runId": run_id,
         "loggedAt": datetime.now(timezone.utc),

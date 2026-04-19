@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from app.domain.ai_runs.services.ai_run_service import AiRunService
 from app.domain.chat.context_builder import ContextBuilder
@@ -15,6 +15,7 @@ from app.domain.chat_memory.services.summary_service import SummaryService
 from app.domain.chat_memory.services.thread_service import ThreadService
 from app.domain.tools.base import DomainTool
 from app.domain.tools.registry import ToolRegistry
+from app.domain.users.services.consent_service import ConsentService
 from app.infra.firestore.repositories.ai_run_repository import AiRunRepository
 from app.infra.firestore.repositories.chat_message_repository import ChatMessageRepository
 from app.infra.firestore.repositories.chat_thread_repository import ChatThreadRepository
@@ -302,7 +303,7 @@ def build_orchestrator_harness(
     )
 
     orchestrator = ChatOrchestrator(
-        consent_service=FakeConsentService(allowed=consent_allowed),
+        consent_service=cast(ConsentService, FakeConsentService(allowed=consent_allowed)),
         thread_service=thread_service,
         message_service=message_service,
         summary_service=summary_service,

@@ -540,8 +540,9 @@ async def ask_ai(
         title=_build_thread_title(request.message),
     )
 
-    history_with_latest = [
-        *context["history_messages"],
+    history_messages = cast(list[dict[str, Any]], context["history_messages"])
+    history_with_latest: list[dict[str, Any]] = [
+        *history_messages,
         {"id": request.clientMessageId, "role": "user", "content": request.message},
         {"id": assistant_message_id, "role": "assistant", "content": reply},
     ]

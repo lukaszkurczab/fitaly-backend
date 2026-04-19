@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.domain.tools.base import DomainTool
@@ -10,12 +11,12 @@ class ResolveTimeScopeTool(DomainTool):
     name = "resolve_time_scope"
 
     @staticmethod
-    def _resolve_today(*, timezone: str, today_override: str | None) -> datetime.date:
+    def _resolve_today(*, timezone: str, today_override: str | None) -> date:
         if today_override:
             return datetime.fromisoformat(today_override).date()
         return datetime.now(ZoneInfo(timezone)).date()
 
-    async def execute(self, *, user_id: str, args: dict) -> dict:
+    async def execute(self, *, user_id: str, args: dict[str, Any]) -> dict[str, Any]:
         del user_id
 
         label = str(args.get("label") or "today").strip().lower()

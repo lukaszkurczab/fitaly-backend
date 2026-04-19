@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class TokenCounter:
             return 1
         return max(1, math.ceil(len(normalized) / 4))
 
-    def count_message_tokens(self, message: dict) -> int:
+    def count_message_tokens(self, message: dict[str, Any]) -> int:
         role = str(message.get("role") or "user").strip() or "user"
         content = str(message.get("content") or "")
         role_tokens = self.count_text_tokens(role)
@@ -37,7 +38,7 @@ class TokenCounter:
         # Chat message envelope overhead.
         return role_tokens + content_tokens + 4
 
-    def measure_messages(self, messages: list[dict]) -> TokenStats:
+    def measure_messages(self, messages: list[dict[str, Any]]) -> TokenStats:
         per_message: list[MessageTokenStat] = []
         total = 0
         for message in messages:

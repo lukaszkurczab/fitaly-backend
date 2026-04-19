@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.domain.meals.services.meal_query_service import MealQueryService
@@ -93,7 +94,7 @@ class NutritionSummaryService:
         timezone: str,
         period_type: str,
         is_partial: bool | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         days = self._enumerate_days(start_date=start_date, end_date=end_date)
         meals = await self.meal_query_service.get_meals_in_range(
             user_id=user_id,
@@ -149,7 +150,7 @@ class NutritionSummaryService:
         if is_partial is None:
             is_partial = self._default_partial(period_type, timezone, end_date)
 
-        daily_breakdown = []
+        daily_breakdown: list[dict[str, Any]] = []
         for day in days:
             day_bucket = per_day[day]
             daily_breakdown.append(
@@ -195,7 +196,7 @@ class NutritionSummaryService:
         start_date: str,
         end_date: str,
         timezone: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         days = self._enumerate_days(start_date=start_date, end_date=end_date)
         meals = await self.meal_query_service.get_meals_in_range(
             user_id=user_id,

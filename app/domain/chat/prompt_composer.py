@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from app.schemas.ai_chat.prompt import PromptBuildInputDto
 
@@ -47,10 +47,10 @@ class PromptComposer:
         *,
         language: str,
         response_mode: str,
-        grounding: dict,
+        grounding: dict[str, Any],
         user_message: str,
-    ) -> dict:
-        payload = {
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "language": language if language in {"pl", "en"} else "pl",
             "responseMode": response_mode,
             "grounding": grounding,
@@ -59,7 +59,7 @@ class PromptComposer:
         dto = PromptBuildInputDto.model_validate(payload)
         return dto.model_dump(by_alias=True, exclude_none=True)
 
-    def compose_messages(self, prompt_input: dict) -> list[dict[str, str]]:
+    def compose_messages(self, prompt_input: dict[str, Any]) -> list[dict[str, str]]:
         dto = PromptBuildInputDto.model_validate(prompt_input)
         grounding_payload = dto.grounding.model_dump(by_alias=True, exclude_none=True)
 
@@ -70,7 +70,7 @@ class PromptComposer:
             user_message=dto.user_message,
             explicit_listing_requested=explicit_listing_requested,
         )
-        developer_payload = {
+        developer_payload: dict[str, Any] = {
             "contract": "fitaly_chat_v2_grounded_response",
             "language": dto.language,
             "responseMode": dto.response_mode,
@@ -148,13 +148,16 @@ class PromptComposer:
         explicit_listing_requested: bool,
     ) -> str:
         planner = grounding.get("planner")
-        planner_map = planner if isinstance(planner, dict) else {}
+        planner_map = cast(dict[str, Any], planner) if isinstance(planner, dict) else {}
         task_type = str(planner_map.get("taskType") or "").strip()
         needs_follow_up = bool(planner_map.get("needsFollowUp"))
         capabilities_raw = planner_map.get("capabilities")
-        capabilities = {
-            item for item in capabilities_raw if isinstance(item, str)
-        } if isinstance(capabilities_raw, list) else set()
+        capabilities: set[str]
+        if isinstance(capabilities_raw, list):
+            raw_list = cast(list[object], capabilities_raw)
+            capabilities = {item for item in raw_list if isinstance(item, str)}
+        else:
+            capabilities = set()
 
         if task_type == "out_of_scope_refusal" or response_mode == "refusal_redirect":
             return "out_of_scope_refusal"
@@ -165,9 +168,10 @@ class PromptComposer:
         has_goal = "get_goal_context" in capabilities
         has_app_help = "get_app_help_context" in capabilities
         scope = grounding.get("scope")
+        scope_map = cast(dict[str, Any], scope) if isinstance(scope, dict) else {}
         scope_type = (
-            str(scope.get("type")).strip()
-            if isinstance(scope, dict) and isinstance(scope.get("type"), str)
+            str(scope_map.get("type")).strip()
+            if isinstance(scope_map.get("type"), str)
             else ""
         )
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.domain.tools.base import DomainTool
 from app.schemas.ai_chat.tools import AppHelpContextDto
 
@@ -38,7 +40,7 @@ class GetAppHelpContextTool(DomainTool):
             ],
         }
 
-    async def execute(self, *, user_id: str, args: dict) -> dict:
+    async def execute(self, *, user_id: str, args: dict[str, Any]) -> dict[str, Any]:
         del user_id
         topic = self._normalize_topic(str(args.get("topic") or "default").strip().lower())
         facts = self._knowledge_base.get(topic, self._knowledge_base["default"])

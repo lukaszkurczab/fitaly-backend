@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from app.core.token_counter import TokenCounter, TokenStats
 
@@ -28,7 +28,9 @@ class ContextBuilder:
         self.soft_token_limit = soft_token_limit
         self.hard_token_limit = hard_token_limit
 
-    def resolve_tool_args(self, *, raw_args: dict, tool_outputs: dict) -> dict:
+    def resolve_tool_args(
+        self, *, raw_args: dict[str, Any], tool_outputs: dict[str, Any]
+    ) -> dict[str, Any]:
         resolved: dict[str, Any] = {}
         for key, value in raw_args.items():
             if isinstance(value, str) and value.startswith("$tool."):
@@ -40,7 +42,9 @@ class ContextBuilder:
                 resolved[key] = value
         return resolved
 
-    def _resolve_tool_reference(self, *, reference: str, tool_outputs: dict) -> Any:
+    def _resolve_tool_reference(
+        self, *, reference: str, tool_outputs: dict[str, Any]
+    ) -> Any:
         prefix = "$tool."
         if not reference.startswith(prefix):
             return reference
@@ -53,13 +57,15 @@ class ContextBuilder:
         current: Any = tool_outputs[tool_name]
         for chunk in field_path.split("."):
             if isinstance(current, dict) and chunk in current:
-                current = current[chunk]
+                current_map = cast(dict[str, Any], current)
+                current = current_map[chunk]
                 continue
             if isinstance(current, list) and chunk.isdigit():
+                current_list = cast(list[object], current)
                 index = int(chunk)
-                if index >= len(current):
+                if index >= len(current_list):
                     raise ValueError(f"Tool reference index out of range: {reference}")
-                current = current[index]
+                current = current_list[index]
                 continue
             raise ValueError(f"Tool reference path not found: {reference}")
         return current
@@ -71,9 +77,20 @@ class ContextBuilder:
         tool_outputs: dict[str, Any],
         recent_turns: list[dict[str, str]],
         memory_summary: Any,
-    ) -> dict:
+    ) -> dict[str, Any]:
         bounded_turns = self._bound_recent_turns(recent_turns)
-        grounding = {
+        resolved_facts: list[str] = []
+        summary_text: str | None = None
+        if memory_summary is not None:
+            raw_facts = getattr(memory_summary, "resolved_facts", [])
+            if isinstance(raw_facts, list):
+                facts_list = cast(list[object], raw_facts)
+                resolved_facts = [str(item).strip() for item in facts_list if str(item).strip()]
+            raw_summary = getattr(memory_summary, "summary", None)
+            if isinstance(raw_summary, str) and raw_summary.strip():
+                summary_text = raw_summary
+
+        grounding: dict[str, Any] = {
             "planner": self._planner_to_grounding(planner_result),
             "scope": tool_outputs.get("resolve_time_scope"),
             "profileSummary": tool_outputs.get("get_profile_summary"),
@@ -85,16 +102,8 @@ class ContextBuilder:
             "chatSummary": tool_outputs.get("get_recent_chat_summary"),
             "threadMemory": {
                 "lastTurns": bounded_turns,
-                "resolvedFacts": (
-                    list(getattr(memory_summary, "resolved_facts", []))
-                    if memory_summary is not None
-                    else []
-                ),
-                "summary": (
-                    getattr(memory_summary, "summary", None)
-                    if memory_summary is not None
-                    else None
-                ),
+                "resolvedFacts": resolved_facts,
+                "summary": summary_text,
             },
         }
         self._trim_low_value_context(grounding)
@@ -104,21 +113,31 @@ class ContextBuilder:
         if planner_result is None:
             return {}
         try:
-            capabilities = [
-                capability.name for capability in getattr(planner_result, "capabilities", [])
-            ]
-            return {
+            capabilities_raw = getattr(planner_result, "capabilities", [])
+            capabilities: list[str] = []
+            if isinstance(capabilities_raw, list):
+                for capability in cast(list[object], capabilities_raw):
+                    name = getattr(capability, "name", None)
+                    if isinstance(name, str) and name.strip():
+                        capabilities.append(name.strip())
+
+            query_understanding = getattr(planner_result, "query_understanding", None)
+            topics_raw = getattr(query_understanding, "topics", [])
+            topics: list[str] = []
+            if isinstance(topics_raw, list):
+                for topic in cast(list[object], topics_raw):
+                    if isinstance(topic, str) and topic.strip():
+                        topics.append(topic.strip())
+
+            planner_payload: dict[str, Any] = {
                 "taskType": getattr(planner_result, "task_type", None),
                 "responseMode": getattr(planner_result, "response_mode", None),
                 "needsFollowUp": getattr(planner_result, "needs_follow_up", False),
                 "followUpQuestion": getattr(planner_result, "follow_up_question", None),
-                "topics": list(
-                    getattr(
-                        getattr(planner_result, "query_understanding", None), "topics", []
-                    )
-                ),
+                "topics": topics,
                 "capabilities": capabilities,
             }
+            return planner_payload
         except Exception:  # noqa: BLE001
             return {}
 
@@ -140,26 +159,34 @@ class ContextBuilder:
     def _trim_low_value_context(self, grounding: dict[str, Any]) -> None:
         nutrition = grounding.get("nutritionSummary")
         if isinstance(nutrition, dict):
+            nutrition_map = cast(dict[str, Any], nutrition)
+            raw_coverage = nutrition_map.get("loggingCoverage")
             coverage = (
-                nutrition.get("loggingCoverage", {})
-                if isinstance(nutrition.get("loggingCoverage"), dict)
+                cast(dict[str, Any], raw_coverage)
+                if isinstance(raw_coverage, dict)
                 else {}
             )
             coverage_level = coverage.get("coverageLevel")
             if coverage_level in {"none", "low"}:
-                nutrition.pop("dailyBreakdown", None)
+                nutrition_map.pop("dailyBreakdown", None)
 
         app_help = grounding.get("appHelpContext")
         if isinstance(app_help, dict):
-            facts = app_help.get("answerFacts")
-            if isinstance(facts, list) and len(facts) > 5:
-                app_help["answerFacts"] = facts[:5]
+            app_help_map = cast(dict[str, Any], app_help)
+            facts = app_help_map.get("answerFacts")
+            if isinstance(facts, list):
+                facts_list = cast(list[object], facts)
+                if len(facts_list) > 5:
+                    app_help_map["answerFacts"] = facts_list[:5]
 
         chat_summary = grounding.get("chatSummary")
         if isinstance(chat_summary, dict):
-            last_turns = chat_summary.get("lastTurns")
-            if isinstance(last_turns, list) and len(last_turns) > 4:
-                chat_summary["lastTurns"] = last_turns[-4:]
+            chat_summary_map = cast(dict[str, Any], chat_summary)
+            last_turns = chat_summary_map.get("lastTurns")
+            if isinstance(last_turns, list):
+                turns_list = cast(list[object], last_turns)
+                if len(turns_list) > 4:
+                    chat_summary_map["lastTurns"] = turns_list[-4:]
 
     def enforce_token_budget(
         self,
@@ -210,7 +237,8 @@ class ContextBuilder:
                 ),
             )
 
-        grounding = developer_payload.get("grounding")
+        developer_payload_map = cast(dict[str, Any], developer_payload)
+        grounding = developer_payload_map.get("grounding")
         if not isinstance(grounding, dict):
             return (
                 working_messages,
@@ -221,13 +249,14 @@ class ContextBuilder:
                 ),
             )
 
+        grounding_map = cast(dict[str, Any], grounding)
         while total_tokens > self.soft_token_limit:
-            changed = self._trim_for_budget(grounding, prefer_summary=used_summary)
+            changed = self._trim_for_budget(grounding_map, prefer_summary=used_summary)
             if not changed:
                 break
             truncated = True
             working_messages[developer_idx]["content"] = json.dumps(
-                developer_payload, ensure_ascii=False
+                developer_payload_map, ensure_ascii=False
             )
             total_tokens = self.token_counter.measure_messages(
                 working_messages
@@ -271,31 +300,41 @@ class ContextBuilder:
     def _trim_for_budget(grounding: dict[str, Any], *, prefer_summary: bool) -> bool:
         thread_memory = grounding.get("threadMemory")
         if isinstance(thread_memory, dict):
-            last_turns = thread_memory.get("lastTurns")
-            if isinstance(last_turns, list) and len(last_turns) > (0 if prefer_summary else 1):
-                thread_memory["lastTurns"] = last_turns[1:]
-                return True
+            thread_memory_map = cast(dict[str, Any], thread_memory)
+            last_turns = thread_memory_map.get("lastTurns")
+            if isinstance(last_turns, list):
+                turns_list = cast(list[object], last_turns)
+                if len(turns_list) > (0 if prefer_summary else 1):
+                    thread_memory_map["lastTurns"] = turns_list[1:]
+                    return True
 
         nutrition = grounding.get("nutritionSummary")
         if isinstance(nutrition, dict):
-            daily_breakdown = nutrition.get("dailyBreakdown")
-            if isinstance(daily_breakdown, list) and len(daily_breakdown) > 3:
-                nutrition["dailyBreakdown"] = daily_breakdown[:3]
-                return True
-            if isinstance(daily_breakdown, list) and daily_breakdown:
-                nutrition["dailyBreakdown"] = []
-                return True
+            nutrition_map = cast(dict[str, Any], nutrition)
+            daily_breakdown = nutrition_map.get("dailyBreakdown")
+            if isinstance(daily_breakdown, list):
+                breakdown_list = cast(list[object], daily_breakdown)
+                if len(breakdown_list) > 3:
+                    nutrition_map["dailyBreakdown"] = breakdown_list[:3]
+                    return True
+                if breakdown_list:
+                    nutrition_map["dailyBreakdown"] = []
+                    return True
 
         app_help = grounding.get("appHelpContext")
         if isinstance(app_help, dict):
-            facts = app_help.get("answerFacts")
-            if isinstance(facts, list) and len(facts) > 2:
-                app_help["answerFacts"] = facts[:2]
-                return True
+            app_help_map = cast(dict[str, Any], app_help)
+            facts = app_help_map.get("answerFacts")
+            if isinstance(facts, list):
+                facts_list = cast(list[object], facts)
+                if len(facts_list) > 2:
+                    app_help_map["answerFacts"] = facts_list[:2]
+                    return True
 
         comparison = grounding.get("comparison")
         if isinstance(comparison, dict) and "delta" in comparison:
-            comparison.pop("delta", None)
+            comparison_map = cast(dict[str, Any], comparison)
+            comparison_map.pop("delta", None)
             return True
 
         return False
@@ -308,13 +347,18 @@ class ContextBuilder:
             payload = json.loads(messages[developer_idx].get("content", ""))
         except json.JSONDecodeError:
             return 0
-        grounding = payload.get("grounding")
+        if not isinstance(payload, dict):
+            return 0
+        payload_map = cast(dict[str, Any], payload)
+        grounding = payload_map.get("grounding")
         if not isinstance(grounding, dict):
             return 0
-        thread_memory = grounding.get("threadMemory")
+        grounding_map = cast(dict[str, Any], grounding)
+        thread_memory = grounding_map.get("threadMemory")
         if not isinstance(thread_memory, dict):
             return 0
-        last_turns = thread_memory.get("lastTurns")
+        thread_memory_map = cast(dict[str, Any], thread_memory)
+        last_turns = thread_memory_map.get("lastTurns")
         if not isinstance(last_turns, list):
             return 0
-        return len(last_turns)
+        return len(cast(list[object], last_turns))

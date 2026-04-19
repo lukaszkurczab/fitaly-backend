@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -12,8 +13,8 @@ class _FakeOpenAIClient:
     def __init__(
         self,
         *,
-        chat_payload: dict | None = None,
-        structured_payload: dict | None = None,
+        chat_payload: dict[str, Any] | None = None,
+        structured_payload: dict[str, Any] | None = None,
     ) -> None:
         self.chat_payload = chat_payload or {"content": "plain", "usage": {}}
         self.structured_payload = structured_payload or {
@@ -30,14 +31,14 @@ class _FakeOpenAIClient:
                 "total_tokens": 120,
             },
         }
-        self.chat_calls: list[dict] = []
-        self.structured_calls: list[dict] = []
+        self.chat_calls: list[dict[str, Any]] = []
+        self.structured_calls: list[dict[str, Any]] = []
 
-    async def chat_completion(self, **kwargs: dict) -> dict:
+    async def chat_completion(self, **kwargs: Any) -> dict[str, Any]:
         self.chat_calls.append(kwargs)
         return self.chat_payload
 
-    async def responses_json_with_usage(self, **kwargs: dict) -> dict:
+    async def responses_json_with_usage(self, **kwargs: Any) -> dict[str, Any]:
         self.structured_calls.append(kwargs)
         return self.structured_payload
 
@@ -49,7 +50,7 @@ def _developer_contract(
     coverage_level: str | None,
     language: str = "pl",
 ) -> dict[str, str]:
-    grounding: dict[str, object] = {}
+    grounding: dict[str, Any] = {}
     if coverage_level is not None:
         grounding = {
             "nutritionSummary": {
@@ -59,7 +60,7 @@ def _developer_contract(
             }
         }
 
-    payload = {
+    payload: dict[str, Any] = {
         "language": language,
         "responseShape": response_shape,
         "antiListingPolicy": {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from zoneinfo import ZoneInfo
 
 from firebase_admin.exceptions import FirebaseError
@@ -46,7 +47,7 @@ class MealQueryService:
     def _extract_totals(raw: object) -> tuple[float, float, float, float]:
         if not isinstance(raw, dict):
             return 0.0, 0.0, 0.0, 0.0
-        totals = raw
+        totals = cast(dict[str, object], raw)
         kcal = coerce_float(totals.get("kcal"))
         protein = coerce_float(
             totals.get("protein") if totals.get("protein") is not None else totals.get("proteinG")

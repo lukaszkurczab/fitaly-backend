@@ -1,7 +1,7 @@
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from app.core.coercion import coerce_int, coerce_optional_int
-from app.domain.chat_memory.models.chat_message import ChatMessage
+from app.domain.chat_memory.models.chat_message import ChatMessage, MessageRole, MessageStatus
 from app.domain.chat_memory.models.chat_thread import ChatThread
 from app.domain.chat_memory.models.memory_summary import MemorySummary
 
@@ -17,7 +17,8 @@ def _as_str(value: object, *, default: str = "") -> str:
 def _as_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [item for item in (_as_str(v).strip() for v in value) if item]
+    values = cast(list[object], value)
+    return [item for item in (_as_str(v).strip() for v in values) if item]
 
 
 def thread_to_document(thread: ChatThread) -> dict[str, Any]:
@@ -78,12 +79,24 @@ def message_from_document(
     message_id: str,
     data: dict[str, Any],
 ) -> ChatMessage:
-    role = _as_str(data.get("role"), default="assistant")
-    if role not in {"user", "assistant", "system"}:
-        role = "assistant"
-    status = _as_str(data.get("status"), default="completed")
-    if status not in {"accepted", "completed", "failed"}:
-        status = "completed"
+    role_raw = _as_str(data.get("role"), default="assistant")
+    role: MessageRole = (
+        cast(MessageRole, role_raw)
+        if role_raw in {"user", "assistant", "system"}
+        else "assistant"
+    )
+    status_raw = _as_str(data.get("status"), default="completed")
+    status: MessageStatus = (
+        cast(MessageStatus, status_raw)
+        if status_raw in {"accepted", "completed", "failed"}
+        else "completed"
+    )
+    language_raw = _as_str(data.get("language")).strip() or None
+    language: Literal["pl", "en"] | None = (
+        cast(Literal["pl", "en"], language_raw)
+        if language_raw in {"pl", "en"}
+        else None
+    )
 
     created_at = coerce_int(data.get("createdAt"))
     updated_at = coerce_int(data.get("updatedAt"), fallback=created_at)
@@ -96,7 +109,7 @@ def message_from_document(
         status=status,
         run_id=_as_str(data.get("runId")).strip() or None,
         client_message_id=_as_str(data.get("clientMessageId")).strip() or None,
-        language=_as_str(data.get("language")).strip() or None,
+        language=language,
         deleted=bool(data.get("deleted") or False),
         created_at=created_at,
         updated_at=updated_at,

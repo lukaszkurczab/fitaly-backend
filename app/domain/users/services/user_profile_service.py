@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from app.domain.users.models.user_profile import UserProfile
 from app.services import user_account_service
@@ -10,7 +10,7 @@ def _normalize_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     result: list[str] = []
-    for item in value:
+    for item in cast(list[object], value):
         if isinstance(item, str) and item.strip():
             result.append(item.strip())
     return result
@@ -68,7 +68,7 @@ class UserProfileService:
             survey_completed=bool(raw.get("surveyComplited")),
         )
 
-    async def get_profile_summary(self, *, user_id: str) -> dict:
+    async def get_profile_summary(self, *, user_id: str) -> dict[str, Any]:
         profile = await self.get_profile(user_id=user_id)
         if profile is None:
             return {
@@ -87,7 +87,7 @@ class UserProfileService:
             "language": profile.language,
         }
 
-    async def get_goal_context(self, *, user_id: str) -> dict:
+    async def get_goal_context(self, *, user_id: str) -> dict[str, Any]:
         profile = await self.get_profile(user_id=user_id)
         if profile is None:
             return {

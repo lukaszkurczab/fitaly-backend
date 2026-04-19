@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from app.schemas.ai_chat.planner import CapabilityPlanDto, PlannerResultDto
 
@@ -114,7 +114,7 @@ class ChatPlanner:
                     memory_summary, "covered_until_message_id", None
                 ),
             }
-        context = {
+        context: dict[str, Any] = {
             "language": language if language in {"pl", "en"} else "pl",
             "allowedCapabilities": list(ALLOWED_CAPABILITIES),
             "hints": {
@@ -218,28 +218,31 @@ class ChatPlanner:
     @staticmethod
     def _coerce_raw_payload(raw: Any) -> dict[str, Any]:
         if not isinstance(raw, dict):
-            return raw
-        payload = dict(raw)
+            return {}
+        payload = cast(dict[str, Any], dict(cast(dict[object, object], raw)))
         raw_capabilities = payload.get("capabilities")
         if not isinstance(raw_capabilities, list):
             return payload
 
         filtered_capabilities: list[dict[str, Any]] = []
-        for item in raw_capabilities:
+        for item in cast(list[object], raw_capabilities):
             if not isinstance(item, dict):
                 continue
-            name = item.get("name")
+            item_map = cast(dict[str, Any], item)
+            name = item_map.get("name")
             if name not in ALLOWED_CAPABILITIES:
                 continue
-            priority = item.get("priority")
+            priority = item_map.get("priority")
             if isinstance(priority, bool):
                 continue
             if not isinstance(priority, int):
                 try:
-                    priority = int(priority)
+                    if priority is None:
+                        continue
+                    priority = int(cast(str | float, priority))
                 except (TypeError, ValueError):
                     continue
-            args = item.get("args")
+            args = item_map.get("args")
             filtered_capabilities.append(
                 {
                     "name": name,

@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from typing import Literal, cast
 from uuid import uuid4
 
-from app.domain.chat_memory.models.chat_message import ChatMessage
+from app.domain.chat_memory.models.chat_message import ChatMessage, MessageStatus
 from app.domain.chat_memory.services.thread_service import ThreadService
 from app.infra.firestore.mappers.chat_mapper import (
     message_from_document,
@@ -12,6 +13,16 @@ from app.infra.firestore.repositories.chat_message_repository import ChatMessage
 
 def _utc_now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _normalize_language(language: str) -> Literal["pl", "en"]:
+    return "en" if language == "en" else "pl"
+
+
+def _normalize_status(status: str) -> MessageStatus:
+    if status in {"accepted", "completed", "failed"}:
+        return cast(MessageStatus, status)
+    return "completed"
 
 
 class MessageService:
@@ -73,7 +84,7 @@ class MessageService:
             status="accepted",
             run_id=run_id,
             client_message_id=client_message_id,
-            language=language if language in {"pl", "en"} else "pl",
+            language=_normalize_language(language),
             deleted=False,
             created_at=now,
             updated_at=now,
@@ -104,14 +115,13 @@ class MessageService:
         status: str = "completed",
     ) -> ChatMessage:
         now = _utc_now_ms()
-        normalized_status = status if status in {"accepted", "completed", "failed"} else "completed"
         message = ChatMessage(
             id=f"msg_{uuid4().hex}",
             user_id=user_id,
             thread_id=thread_id,
             role="assistant",
             content=content,
-            status=normalized_status,
+            status=_normalize_status(status),
             run_id=run_id,
             client_message_id=None,
             language=None,

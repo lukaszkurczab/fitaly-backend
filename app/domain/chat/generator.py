@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
@@ -81,16 +81,20 @@ class ChatGenerator:
         return await self._generate_plain_text(messages=messages)
 
     async def _generate_plain_text(self, *, messages: list[dict[str, str]]) -> GenerationResult:
-        response = await self.openai_client.chat_completion(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
+        response = cast(
+            dict[str, Any],
+            await self.openai_client.chat_completion(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+            ),
         )
         text = str(response.get("content") or "").strip()
         if not text:
             raise OpenAIServiceError("OpenAI returned an empty completion.")
 
-        usage_raw = response.get("usage") if isinstance(response, dict) else None
+        usage_raw_obj = response.get("usage")
+        usage_raw = cast(dict[str, Any], usage_raw_obj) if isinstance(usage_raw_obj, dict) else {}
         usage = GenerationUsage(
             prompt_tokens=self._to_int(usage_raw, "prompt_tokens"),
             completion_tokens=self._to_int(usage_raw, "completion_tokens"),
@@ -115,8 +119,9 @@ class ChatGenerator:
                 temperature=min(self.temperature, 0.2),
             )
             if isinstance(structured, dict):
-                payload = structured.get("data")
-                usage_raw = structured.get("usage") or {}
+                structured_map = cast(dict[str, Any], structured)
+                payload = structured_map.get("data")
+                usage_raw = structured_map.get("usage") or {}
         elif hasattr(self.openai_client, "responses_json"):
             payload = await self.openai_client.responses_json(
                 model=self.model,
@@ -207,22 +212,27 @@ class ChatGenerator:
                 continue
             if not isinstance(payload, dict):
                 continue
+            payload_map = cast(dict[str, Any], payload)
 
-            maybe_language = payload.get("language")
+            maybe_language = payload_map.get("language")
             if maybe_language == "en":
                 language = "en"
 
-            maybe_shape = payload.get("responseShape")
+            maybe_shape = payload_map.get("responseShape")
             if isinstance(maybe_shape, str) and maybe_shape.strip():
                 response_shape = maybe_shape.strip()
 
-            anti_listing = payload.get("antiListingPolicy")
+            anti_listing = payload_map.get("antiListingPolicy")
             if isinstance(anti_listing, dict):
-                explicit_listing_requested = bool(anti_listing.get("explicitListingRequested"))
+                anti_listing_map = cast(dict[str, Any], anti_listing)
+                explicit_listing_requested = bool(
+                    anti_listing_map.get("explicitListingRequested")
+                )
 
-            grounding = payload.get("grounding")
+            grounding = payload_map.get("grounding")
             if isinstance(grounding, dict):
-                coverage_level = self._extract_coverage_level_from_grounding(grounding)
+                grounding_map = cast(dict[str, Any], grounding)
+                coverage_level = self._extract_coverage_level_from_grounding(grounding_map)
 
             break
 
@@ -237,15 +247,18 @@ class ChatGenerator:
     def _extract_coverage_level_from_grounding(grounding: dict[str, Any]) -> str | None:
         nutrition = grounding.get("nutritionSummary")
         if isinstance(nutrition, dict):
-            coverage = nutrition.get("loggingCoverage")
+            nutrition_map = cast(dict[str, Any], nutrition)
+            coverage = nutrition_map.get("loggingCoverage")
             if isinstance(coverage, dict):
-                level = coverage.get("coverageLevel")
+                coverage_map = cast(dict[str, Any], coverage)
+                level = coverage_map.get("coverageLevel")
                 if isinstance(level, str) and level.strip():
                     return level.strip().lower()
 
         quality = grounding.get("mealLoggingQuality")
         if isinstance(quality, dict):
-            level = quality.get("coverageLevel")
+            quality_map = cast(dict[str, Any], quality)
+            level = quality_map.get("coverageLevel")
             if isinstance(level, str) and level.strip():
                 return level.strip().lower()
         return None
@@ -329,9 +342,10 @@ class ChatGenerator:
         return "Zapisane dane pozwalaja tylko na czesciowa, ukierunkowana ocene."
 
     @staticmethod
-    def _to_int(usage: Any, key: str) -> int:
+    def _to_int(usage: object, key: str) -> int:
         if isinstance(usage, dict):
-            value = usage.get(key)
+            usage_map = cast(dict[str, Any], usage)
+            value = usage_map.get(key)
             if isinstance(value, bool):
                 return 0
             if isinstance(value, (int, float)):

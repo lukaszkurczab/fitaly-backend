@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 import openai
 from pydantic import BaseModel, TypeAdapter
@@ -14,8 +14,9 @@ from app.core.exceptions import OpenAIServiceError
 def _as_object_map(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
+    raw_map = cast(dict[object, object], value)
     result: dict[str, object] = {}
-    for raw_key, raw_value in value.items():
+    for raw_key, raw_value in raw_map.items():
         if isinstance(raw_key, str):
             result[raw_key] = raw_value
     return result
@@ -24,32 +25,34 @@ def _as_object_map(value: object) -> dict[str, object] | None:
 def _as_object_list(value: object) -> list[object] | None:
     if not isinstance(value, list):
         return None
-    return value
+    return cast(list[object], value)
 
 
-def _schema_name(schema: Any) -> str:
+def _schema_name(schema: object) -> str:
     if isinstance(schema, type):
         return schema.__name__.lower()
     return "structured_output"
 
 
-def _schema_json(schema: Any) -> dict[str, Any]:
+def _schema_json(schema: object) -> dict[str, Any]:
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return schema.model_json_schema()
-    return TypeAdapter(schema).json_schema()
+    adapter: TypeAdapter[Any] = TypeAdapter(cast(Any, schema))
+    return adapter.json_schema()
 
 
-def _validate_against_schema(schema: Any, payload: Any) -> Any:
+def _validate_against_schema(schema: object, payload: object) -> Any:
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         model = schema.model_validate(payload)
         return model.model_dump(by_alias=True)
-    return TypeAdapter(schema).validate_python(payload)
+    adapter: TypeAdapter[Any] = TypeAdapter(cast(Any, schema))
+    return adapter.validate_python(payload)
 
 
-def _extract_reply_content(response: Any) -> str:
-    response_obj = response
+def _extract_reply_content(response: object) -> str:
+    response_obj: object = response
     if isinstance(response_obj, dict):
-        response_map = _as_object_map(response_obj) or {}
+        response_map = _as_object_map(cast(object, response_obj)) or {}
         choices_raw = response_map.get("choices")
     else:
         choices_raw = getattr(response_obj, "choices", None)
@@ -60,7 +63,7 @@ def _extract_reply_content(response: Any) -> str:
 
     first_choice = choices[0]
     if isinstance(first_choice, dict):
-        choice_map = _as_object_map(first_choice) or {}
+        choice_map = _as_object_map(cast(object, first_choice)) or {}
         message_map = _as_object_map(choice_map.get("message")) or {}
         content = message_map.get("content")
     else:
@@ -80,10 +83,10 @@ def _to_optional_int(value: object) -> int | None:
     return None
 
 
-def _extract_usage(response: Any) -> dict[str, int | None]:
-    response_obj = response
+def _extract_usage(response: object) -> dict[str, int | None]:
+    response_obj: object = response
     if isinstance(response_obj, dict):
-        usage_raw = (_as_object_map(response_obj) or {}).get("usage")
+        usage_raw = (_as_object_map(cast(object, response_obj)) or {}).get("usage")
     else:
         usage_raw = getattr(response_obj, "usage", None)
 
@@ -95,7 +98,7 @@ def _extract_usage(response: Any) -> dict[str, int | None]:
         }
 
     if isinstance(usage_raw, dict):
-        usage_map = _as_object_map(usage_raw) or {}
+        usage_map = _as_object_map(cast(object, usage_raw)) or {}
         prompt_tokens = usage_map.get("prompt_tokens")
         completion_tokens = usage_map.get("completion_tokens")
         total_tokens = usage_map.get("total_tokens")
@@ -133,7 +136,7 @@ class OpenAIClient:
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: Any,
+        schema: object,
         temperature: float = 0.0,
     ) -> Any:
         structured = await self.responses_json_with_usage(
@@ -151,13 +154,13 @@ class OpenAIClient:
         *,
         model: str,
         messages: list[dict[str, str]],
-        schema: Any,
+        schema: object,
         temperature: float = 0.0,
     ) -> dict[str, Any]:
         try:
             response = await self._client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=cast(Any, messages),
                 temperature=temperature,
                 response_format={
                     "type": "json_schema",
@@ -204,7 +207,7 @@ class OpenAIClient:
         try:
             response = await self._client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=cast(Any, messages),
                 temperature=temperature,
             )
         except Exception as exc:  # noqa: BLE001

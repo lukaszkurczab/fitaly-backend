@@ -41,7 +41,7 @@ class ReliabilityDto(BaseModel):
 class NutritionPeriodSummaryDto(BaseModel):
     period: ResolvedScopeDto
     logging_coverage: LoggingCoverageDto = Field(alias="loggingCoverage")
-    totals: dict
+    totals: dict[str, float]
     daily_breakdown: List[DailyBreakdownItemDto] = Field(alias="dailyBreakdown")
     signals: List[str]
     reliability: ReliabilityDto

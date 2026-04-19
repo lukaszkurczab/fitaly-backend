@@ -382,6 +382,7 @@ async def list_history(
     timestamp_end: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     meals_ref = _meals_collection(user_id)
+    items: list[dict[str, Any]] = []
 
     try:
         indexed_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(

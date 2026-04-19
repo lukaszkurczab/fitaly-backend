@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 class DomainTool(ABC):
     name: str
 
     @abstractmethod
-    async def execute(self, *, user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, *, user_id: str, args: dict[str, Any]) -> dict[str, Any]:
         ...

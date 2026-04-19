@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import math
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 SOFT_PROMPT_TOKEN_LIMIT = 2_200
 HARD_PROMPT_TOKEN_LIMIT = 2_800
@@ -96,7 +96,8 @@ def _compact_profile(profile: dict[str, Any], language: str) -> str:
     ):
         value = profile.get(key)
         if isinstance(value, list):
-            normalized = [str(item).strip() for item in value if str(item).strip()]
+            value_list = cast(list[object], value)
+            normalized = [str(item).strip() for item in value_list if str(item).strip()]
             if normalized:
                 parts.append(f"{key}={','.join(normalized[:8])}")
             continue
@@ -125,7 +126,7 @@ def _compact_meals(meals: list[dict[str, Any]]) -> str:
 
     def _resolve_meal_totals(meal: dict[str, Any]) -> tuple[float, float, float, float]:
         totals = meal.get("totals")
-        totals_map = totals if isinstance(totals, dict) else {}
+        totals_map: dict[str, Any] = cast(dict[str, Any], totals) if isinstance(totals, dict) else {}
         kcal = _as_number(totals_map.get("kcal")) or _as_number(meal.get("kcal"))
         protein = _as_number(totals_map.get("protein")) or _as_number(meal.get("protein"))
         fat = _as_number(totals_map.get("fat")) or _as_number(meal.get("fat"))

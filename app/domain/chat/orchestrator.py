@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Protocol
 
+from app.domain.ai_runs.models.ai_run import AiRun, RunStatus
+from app.domain.ai_runs.services.ai_run_service import AiRunService
 from app.core.errors import (
     AiProviderNonRetryableError,
     AiProviderRetryableError,
@@ -23,10 +25,9 @@ from app.domain.chat_memory.services.summary_service import SummaryService
 from app.domain.chat_memory.services.thread_service import ThreadService
 from app.domain.tools.registry import ToolRegistry
 from app.domain.users.services.consent_service import ConsentService
-from app.domain.ai_runs.models.ai_run import AiRun
-from app.domain.ai_runs.services.ai_run_service import AiRunService
+from app.schemas.ai_chat.planner import PlannerResultDto
 from app.schemas.ai_chat.request import ChatRunRequestDto
-from app.schemas.ai_chat.response import ChatRunResponseDto
+from app.schemas.ai_chat.response import ChatRunResponseDto, ContextStatsDto, UsageDto
 
 
 @dataclass(frozen=True)
@@ -131,8 +132,8 @@ class ChatOrchestrator:
         assistant_message_id = ""
         scope_resolved: str | None = None
         retry_count = 0
-        run_status: str = "completed"
-        run_outcome: str = "completed"
+        run_status: RunStatus = "completed"
+        run_outcome: RunStatus = "completed"
         failure_reason: str | None = None
         planner_task_type: str | None = None
         planner_response_mode: str | None = None
@@ -323,19 +324,19 @@ class ChatOrchestrator:
             threadId=request.thread_id,
             assistantMessageId=assistant_message_id,
             reply=reply,
-            usage={
-                "promptTokens": usage.prompt_tokens,
-                "completionTokens": usage.completion_tokens,
-                "totalTokens": usage.total_tokens,
-            },
-            contextStats={
-                "plannerUsed": planner_used,
-                "usedSummary": budget.used_summary,
-                "historyTurns": budget.history_turns,
-                "toolsUsed": tools_used,
-                "truncated": budget.truncated,
-                "scopeResolved": scope_resolved,
-            },
+            usage=UsageDto(
+                promptTokens=usage.prompt_tokens,
+                completionTokens=usage.completion_tokens,
+                totalTokens=usage.total_tokens,
+            ),
+            contextStats=ContextStatsDto(
+                plannerUsed=planner_used,
+                usedSummary=budget.used_summary,
+                historyTurns=budget.history_turns,
+                toolsUsed=tools_used,
+                truncated=budget.truncated,
+                scopeResolved=scope_resolved,
+            ),
             credits=None,
         )
 
@@ -402,7 +403,7 @@ class ChatOrchestrator:
         self,
         *,
         user_id: str,
-        planner_result: Any,
+        planner_result: PlannerResultDto,
         request: ChatRunRequestDto,
     ) -> _ToolExecutionResult:
         outputs: dict[str, dict[str, Any]] = {}
@@ -560,19 +561,19 @@ class ChatOrchestrator:
             threadId=thread_id,
             assistantMessageId=assistant_message.id,
             reply=assistant_message.content,
-            usage={
-                "promptTokens": prompt_tokens,
-                "completionTokens": completion_tokens,
-                "totalTokens": total_tokens,
-            },
-            contextStats={
-                "plannerUsed": planner_used,
-                "usedSummary": used_summary,
-                "historyTurns": history_turns,
-                "toolsUsed": tools_used,
-                "truncated": truncated,
-                "scopeResolved": scope_resolved,
-            },
+            usage=UsageDto(
+                promptTokens=prompt_tokens,
+                completionTokens=completion_tokens,
+                totalTokens=total_tokens,
+            ),
+            contextStats=ContextStatsDto(
+                plannerUsed=planner_used,
+                usedSummary=used_summary,
+                historyTurns=history_turns,
+                toolsUsed=tools_used,
+                truncated=truncated,
+                scopeResolved=scope_resolved,
+            ),
             credits=None,
         )
 

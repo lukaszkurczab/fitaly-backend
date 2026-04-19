@@ -1,6 +1,34 @@
 from __future__ import annotations
 
+from typing import Any, TypedDict, cast
+
 from app.domain.meals.services.nutrition_summary_service import NutritionSummaryService
+
+
+class _ScopeInput(TypedDict):
+    startDate: str
+    endDate: str
+    timezone: str
+    type: str
+    isPartial: bool
+
+
+class _LoggingCoverage(TypedDict):
+    coverageLevel: str
+    daysWithEntries: int
+    mealCount: int
+
+
+class _NutritionTotals(TypedDict):
+    kcal: float
+    proteinG: float
+    fatG: float
+    carbsG: float
+
+
+class _PeriodSummary(TypedDict):
+    loggingCoverage: _LoggingCoverage
+    totals: _NutritionTotals
 
 
 class PeriodComparisonService:
@@ -19,30 +47,34 @@ class PeriodComparisonService:
         self,
         *,
         user_id: str,
-        current_scope: dict,
-        previous_scope: dict,
-    ) -> dict:
+        current_scope: dict[str, Any],
+        previous_scope: dict[str, Any],
+    ) -> dict[str, Any]:
+        current_scope_typed = cast(_ScopeInput, current_scope)
+        previous_scope_typed = cast(_ScopeInput, previous_scope)
         current = await self.nutrition_summary_service.build_period_summary(
             user_id=user_id,
-            start_date=current_scope["startDate"],
-            end_date=current_scope["endDate"],
-            timezone=current_scope.get("timezone", "Europe/Warsaw"),
-            period_type=current_scope.get("type", "date_range"),
-            is_partial=bool(current_scope.get("isPartial", False)),
+            start_date=current_scope_typed["startDate"],
+            end_date=current_scope_typed["endDate"],
+            timezone=current_scope_typed.get("timezone", "Europe/Warsaw"),
+            period_type=current_scope_typed.get("type", "date_range"),
+            is_partial=bool(current_scope_typed.get("isPartial", False)),
         )
         previous = await self.nutrition_summary_service.build_period_summary(
             user_id=user_id,
-            start_date=previous_scope["startDate"],
-            end_date=previous_scope["endDate"],
-            timezone=previous_scope.get("timezone", "Europe/Warsaw"),
-            period_type=previous_scope.get("type", "date_range"),
-            is_partial=bool(previous_scope.get("isPartial", False)),
+            start_date=previous_scope_typed["startDate"],
+            end_date=previous_scope_typed["endDate"],
+            timezone=previous_scope_typed.get("timezone", "Europe/Warsaw"),
+            period_type=previous_scope_typed.get("type", "date_range"),
+            is_partial=bool(previous_scope_typed.get("isPartial", False)),
         )
 
-        current_totals = current["totals"]
-        previous_totals = previous["totals"]
-        current_coverage = current["loggingCoverage"]["coverageLevel"]
-        previous_coverage = previous["loggingCoverage"]["coverageLevel"]
+        current_summary = cast(_PeriodSummary, current)
+        previous_summary = cast(_PeriodSummary, previous)
+        current_totals = current_summary["totals"]
+        previous_totals = previous_summary["totals"]
+        current_coverage = current_summary["loggingCoverage"]["coverageLevel"]
+        previous_coverage = previous_summary["loggingCoverage"]["coverageLevel"]
 
         comparable = current_coverage in {"medium", "high"} and previous_coverage in {
             "medium",
@@ -79,8 +111,8 @@ class PeriodComparisonService:
                     float(previous["loggingCoverage"].get("daysWithEntries", 0)),
                 ),
                 "mealCount": self._delta(
-                    float(current["loggingCoverage"].get("mealCount", 0)),
-                    float(previous["loggingCoverage"].get("mealCount", 0)),
+                    float(current_summary["loggingCoverage"].get("mealCount", 0)),
+                    float(previous_summary["loggingCoverage"].get("mealCount", 0)),
                 ),
             },
         }

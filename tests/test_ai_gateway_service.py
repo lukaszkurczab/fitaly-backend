@@ -81,7 +81,7 @@ async def test_evaluate_request_forwards_off_topic_chat_when_gateway_enabled() -
     assert result["model"] == "gpt-4o-mini"
     assert result["estimated_tokens"] > 0
     assert result["estimated_cost"] == float(settings.AI_CREDIT_COST_CHAT)
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
     assert result["enforced"] is False
     assert isinstance(result["request_id"], str)
 
@@ -105,7 +105,7 @@ async def test_evaluate_request_forwards_off_topic_keywords_to_llm(message: str)
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
     assert result["enforced"] is False
 
 
@@ -115,7 +115,7 @@ async def test_off_topic_message_on_non_chat_route_is_forwarded() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_APP"
+    assert result.get("scope_decision") == "ALLOW_APP"
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ async def test_evaluate_request_forwards_diet_related_chat() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
     assert result["task_type"] == "chat"
     assert result["enforced"] is False
 
@@ -146,7 +146,7 @@ async def test_evaluate_request_forwards_general_diet_requests(message: str) -> 
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
 
 
 async def test_evaluate_request_forwards_chat_history_meta_question() -> None:
@@ -154,7 +154,7 @@ async def test_evaluate_request_forwards_chat_history_meta_question() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
 
 
 async def test_evaluate_request_classifies_personal_nutrition_question_as_user_data() -> None:
@@ -166,7 +166,7 @@ async def test_evaluate_request_classifies_personal_nutrition_question_as_user_d
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ async def test_evaluate_request_marks_trivial_chat_as_local_answer_hypothesis() 
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result.get("scope_decision") == "ALLOW_NUTRITION"
     assert result.get("hypothetical_decision") == "LOCAL_ANSWER"
     assert result.get("hypothetical_reason") == HYPOTHESIS_TRIVIAL_GREETING
 
@@ -324,7 +324,7 @@ async def test_typo_personal_question_is_forwarded_for_llm_decision() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert result["scope_decision"] in {"ALLOW_NUTRITION", "ALLOW_USER_DATA"}
+    assert result.get("scope_decision") in {"ALLOW_NUTRITION", "ALLOW_USER_DATA"}
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from app.domain.chat.prompt_composer import PromptComposer
 
 
-def _base_grounding() -> dict:
+def _base_grounding() -> dict[str, Any]:
     return {
         "planner": {
             "taskType": "mixed_capability_answer",
@@ -113,7 +114,7 @@ def test_prompt_composer_contains_low_coverage_wording_guidance() -> None:
 
 def test_prompt_composer_resolves_mixed_app_help_and_nutrition_shape() -> None:
     composer = PromptComposer()
-    grounding = {
+    grounding: dict[str, Any] = {
         "planner": {
             "taskType": "mixed_capability_answer",
             "responseMode": "assessment_plus_guidance",
@@ -140,7 +141,7 @@ def test_prompt_composer_resolves_mixed_app_help_and_nutrition_shape() -> None:
 
 def test_prompt_composer_resolves_app_help_only_shape() -> None:
     composer = PromptComposer()
-    grounding = {
+    grounding: dict[str, Any] = {
         "planner": {
             "taskType": "app_help_only",
             "responseMode": "concise_answer",
