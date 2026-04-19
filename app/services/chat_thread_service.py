@@ -1,4 +1,8 @@
-"""Backend-owned storage for chat threads and messages."""
+"""Legacy v1 chat thread/message storage.
+
+This service is used by v1 routes and legacy AI context assembly.
+Canonical v2 chat persistence lives in `app/domain/chat_memory/*`.
+"""
 
 import logging
 from typing import Any
@@ -169,3 +173,76 @@ async def persist_message(
             extra={"user_id": user_id, "thread_id": thread_id, "message_id": message_id},
         )
         raise FirestoreServiceError("Failed to persist chat message.") from exc
+
+
+async def persist_exchange(
+    user_id: str,
+    thread_id: str,
+    *,
+    user_message_id: str,
+    user_content: str,
+    user_created_at: int,
+    assistant_message_id: str,
+    assistant_content: str,
+    assistant_created_at: int,
+    title: str | None = None,
+) -> None:
+    """Persist one user + assistant turn atomically in a single Firestore batch."""
+    thread_ref = _thread_ref(user_id, thread_id)
+    user_message_ref = _messages_collection(user_id, thread_id).document(user_message_id)
+    assistant_message_ref = _messages_collection(user_id, thread_id).document(
+        assistant_message_id
+    )
+    client: firestore.Client = get_firestore()
+
+    try:
+        thread_snapshot = thread_ref.get()
+        batch = client.batch()
+        batch.set(
+            user_message_ref,
+            {
+                "role": "user",
+                "content": user_content,
+                "createdAt": user_created_at,
+                "lastSyncedAt": user_created_at,
+                "deleted": False,
+            },
+            merge=True,
+        )
+        batch.set(
+            assistant_message_ref,
+            {
+                "role": "assistant",
+                "content": assistant_content,
+                "createdAt": assistant_created_at,
+                "lastSyncedAt": assistant_created_at,
+                "deleted": False,
+            },
+            merge=True,
+        )
+
+        thread_payload: dict[str, Any] = {
+            "updatedAt": assistant_created_at,
+            "lastMessage": assistant_content,
+            "lastMessageAt": assistant_created_at,
+        }
+        if not thread_snapshot.exists:
+            thread_payload["createdAt"] = user_created_at
+            if title:
+                thread_payload["title"] = title
+        elif title and not (thread_snapshot.to_dict() or {}).get("title"):
+            thread_payload["title"] = title
+
+        batch.set(thread_ref, thread_payload, merge=True)
+        batch.commit()
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to persist chat exchange.",
+            extra={
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+            },
+        )
+        raise FirestoreServiceError("Failed to persist chat exchange.") from exc

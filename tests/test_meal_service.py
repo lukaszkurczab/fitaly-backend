@@ -1,7 +1,11 @@
 import asyncio
+from typing import Any
 
+from google.api_core.exceptions import FailedPrecondition
+import pytest
 from pytest_mock import MockerFixture
 
+from app.core.exceptions import FirestoreServiceError
 from app.services import meal_service
 
 
@@ -241,3 +245,168 @@ def test_resolve_photo_uses_meal_document_photo_url(mocker: MockerFixture) -> No
         "imageId": "image-1",
         "photoUrl": "https://cdn/meal.jpg",
     }
+
+
+class _FakeHistorySnapshot:
+    def __init__(self, doc_id: str, data: dict[str, Any]) -> None:
+        self.id = doc_id
+        self._data = data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
+
+
+class _FakeHistoryQuery:
+    def __init__(
+        self,
+        *,
+        snapshots: list[_FakeHistorySnapshot],
+        failure: BaseException | None = None,
+    ) -> None:
+        self._snapshots = snapshots
+        self._failure = failure
+        self._limit: int | None = None
+
+    def where(self, *, filter: object):  # noqa: A002
+        del filter
+        return self
+
+    def order_by(self, field: str, direction: object | None = None):
+        del field, direction
+        return self
+
+    def start_after(self, cursor: list[str]):
+        del cursor
+        return self
+
+    def limit(self, value: int):
+        self._limit = value
+        return self
+
+    def stream(self):
+        if self._failure is not None:
+            raise self._failure
+        items = self._snapshots
+        if self._limit is not None:
+            items = items[: self._limit]
+        return iter(items)
+
+
+class _FakeHistoryMealsCollection:
+    def __init__(
+        self,
+        *,
+        indexed_query: _FakeHistoryQuery,
+        degraded_query: _FakeHistoryQuery,
+    ) -> None:
+        self._indexed_query = indexed_query
+        self._degraded_query = degraded_query
+
+    def where(self, *, filter: object):  # noqa: A002
+        del filter
+        return self._indexed_query
+
+    def order_by(self, field: str, direction: object | None = None):
+        del field, direction
+        return self._degraded_query
+
+
+def _history_doc(
+    *,
+    meal_id: str,
+    timestamp: str,
+    deleted: bool,
+) -> dict[str, Any]:
+    return {
+        "cloudId": meal_id,
+        "mealId": meal_id,
+        "userUid": "user-1",
+        "timestamp": timestamp,
+        "dayKey": timestamp[:10],
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "deleted": deleted,
+        "totals": {"kcal": 300, "protein": 20, "carbs": 30, "fat": 10},
+    }
+
+
+def test_list_history_falls_back_on_missing_index_and_still_excludes_deleted(
+    mocker: MockerFixture,
+) -> None:
+    indexed_query = _FakeHistoryQuery(
+        snapshots=[],
+        failure=FailedPrecondition("The query requires an index."),
+    )
+    degraded_query = _FakeHistoryQuery(
+        snapshots=[
+            _FakeHistorySnapshot(
+                "meal-deleted",
+                _history_doc(
+                    meal_id="meal-deleted",
+                    timestamp="2026-04-18T09:00:00.000Z",
+                    deleted=True,
+                ),
+            ),
+            _FakeHistorySnapshot(
+                "meal-2",
+                _history_doc(
+                    meal_id="meal-2",
+                    timestamp="2026-04-18T08:00:00.000Z",
+                    deleted=False,
+                ),
+            ),
+            _FakeHistorySnapshot(
+                "meal-1",
+                _history_doc(
+                    meal_id="meal-1",
+                    timestamp="2026-04-18T07:00:00.000Z",
+                    deleted=False,
+                ),
+            ),
+        ]
+    )
+    meals_collection = _FakeHistoryMealsCollection(
+        indexed_query=indexed_query,
+        degraded_query=degraded_query,
+    )
+
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    items, next_cursor = asyncio.run(meal_service.list_history("user-1", limit_count=2))
+
+    assert [item["cloudId"] for item in items] == ["meal-2", "meal-1"]
+    assert all(item["deleted"] is False for item in items)
+    assert next_cursor is not None
+
+
+def test_list_history_raises_firestore_error_on_non_index_failed_precondition(
+    mocker: MockerFixture,
+) -> None:
+    indexed_query = _FakeHistoryQuery(
+        snapshots=[],
+        failure=FailedPrecondition("Some other precondition failure."),
+    )
+    degraded_query = _FakeHistoryQuery(snapshots=[])
+    meals_collection = _FakeHistoryMealsCollection(
+        indexed_query=indexed_query,
+        degraded_query=degraded_query,
+    )
+
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(meal_service.list_history("user-1", limit_count=5))

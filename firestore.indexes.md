@@ -4,31 +4,39 @@ This document explains the composite indexes declared in `firestore.indexes.json
 
 ## Composite indexes included
 
-1. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp DESC`
+1. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp DESC`, `__name__ DESC`
 - Used by: `app/services/meal_service.py` (`list_history`)
-- Query shape: `deleted == false` + `order_by("timestamp", DESC)` (+ document cursor pagination)
+- Query shape: `deleted == false` + `order_by("timestamp", DESC)` + `order_by("__name__", DESC)` for cursor pagination
 
-2. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`
+2. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp DESC`
+- Used by: `app/services/meal_service.py` (`list_history`) fallback/compatibility path
+- Query shape: `deleted == false` + `order_by("timestamp", DESC)` (without explicit document-id tie-break)
+
+3. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`
 - Used by: `app/services/habit_signal_service.py` and `app/services/nutrition_state_service.py`
 - Also compatible with the same pattern in meal-domain bounded reads
 - Query shape: `deleted == false` + `dayKey` range (`>=`, `<=`)
 
-3. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`, `__name__ ASC`
+4. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`, `__name__ ASC`
 - Used by: `app/services/nutrition_state_service.py` (Firestore planner can require document-id
   tie-break for some bounded `dayKey` range queries)
 - Query shape: `deleted == false` + `dayKey` range (`>=`, `<=`) with implicit doc-order tie-break
 
-4. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp ASC`
+5. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp ASC`
 - Used by: `app/services/habit_signal_service.py` and `app/services/nutrition_state_service.py`
 - Query shape: `deleted == false` + `timestamp` range (`>=`, `<` / `<=`)
 
-5. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
+6. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
 - Used by: `app/services/telemetry_service.py` (`count_events_for_user`)
 - Query shape: `userHash == X` + `name == Y` + `ts` range (`>=`, `<=`)
 
-6. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `ts ASC`
+7. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `ts ASC`
 - Used by: `app/services/telemetry_service.py` (`get_daily_summary`, `get_smart_reminder_summary`)
 - Query shape: `userHash == X` + `ts` range (`>=`, `<=`)
+
+8. `ai_runs` (queryScope: `COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
+- Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`)
+- Query shape: `userId == X` + `order_by("createdAt", DESC)` + limit
 
 ## De-duplication note
 

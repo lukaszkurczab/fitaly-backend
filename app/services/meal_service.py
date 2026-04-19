@@ -12,13 +12,14 @@ except ImportError:  # pragma: no cover - Python < 3.11 compatibility
 
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
-from google.api_core.exceptions import GoogleAPICallError, RetryError
+from google.api_core.exceptions import FailedPrecondition, GoogleAPICallError, RetryError
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import coerce_float, coerce_optional_str
 from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
+from app.core.firestore_query_fallback import is_missing_index_error
 from app.db.firebase import (
     build_storage_download_url,
     get_firestore,
@@ -331,6 +332,43 @@ def _apply_history_filters(
     return query
 
 
+def _matches_history_filters_locally(
+    meal: dict[str, Any],
+    *,
+    calories: tuple[float, float] | None = None,
+    protein: tuple[float, float] | None = None,
+    carbs: tuple[float, float] | None = None,
+    fat: tuple[float, float] | None = None,
+    timestamp_start: str | None = None,
+    timestamp_end: str | None = None,
+) -> bool:
+    if bool(meal.get("deleted")):
+        return False
+
+    totals_map = _as_object_map(meal.get("totals")) or {}
+    kcal_value = coerce_float(totals_map.get("kcal"))
+    protein_value = coerce_float(totals_map.get("protein"))
+    carbs_value = coerce_float(totals_map.get("carbs"))
+    fat_value = coerce_float(totals_map.get("fat"))
+
+    if calories is not None and not (calories[0] <= kcal_value <= calories[1]):
+        return False
+    if protein is not None and not (protein[0] <= protein_value <= protein[1]):
+        return False
+    if carbs is not None and not (carbs[0] <= carbs_value <= carbs[1]):
+        return False
+    if fat is not None and not (fat[0] <= fat_value <= fat[1]):
+        return False
+
+    timestamp_value = coerce_optional_str(meal.get("timestamp"))
+    if timestamp_start is not None and (timestamp_value is None or timestamp_value < timestamp_start):
+        return False
+    if timestamp_end is not None and (timestamp_value is None or timestamp_value > timestamp_end):
+        return False
+
+    return True
+
+
 async def list_history(
     user_id: str,
     *,
@@ -346,15 +384,15 @@ async def list_history(
     meals_ref = _meals_collection(user_id)
 
     try:
-        query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
+        indexed_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
             "timestamp",
             direction=firestore.Query.DESCENDING,
         ).order_by(
             DOCUMENT_ID_FIELD,
             direction=firestore.Query.DESCENDING,
         )
-        query = _apply_history_filters(
-            query,
+        indexed_query = _apply_history_filters(
+            indexed_query,
             calories=calories,
             protein=protein,
             carbs=carbs,
@@ -362,20 +400,60 @@ async def list_history(
             timestamp_start=timestamp_start,
             timestamp_end=timestamp_end,
         )
+
+        degraded_query = meals_ref.order_by(
+            "timestamp",
+            direction=firestore.Query.DESCENDING,
+        ).order_by(
+            DOCUMENT_ID_FIELD,
+            direction=firestore.Query.DESCENDING,
+        )
+
         parsed_cursor = meal_storage.parse_cursor(before_cursor)
         if parsed_cursor is not None:
             cursor_timestamp, cursor_document_id = parsed_cursor
-            query = (
-                query.start_after([cursor_timestamp, cursor_document_id])
+            indexed_query = (
+                indexed_query.start_after([cursor_timestamp, cursor_document_id])
                 if cursor_document_id
-                else query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
+                else indexed_query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
             )
-        snapshots = list(query.limit(limit_count).stream())
-    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+            degraded_query = (
+                degraded_query.start_after([cursor_timestamp, cursor_document_id])
+                if cursor_document_id
+                else degraded_query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
+            )
+
+        try:
+            snapshots = list(indexed_query.limit(limit_count).stream())
+            items = [_normalize_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
+        except FailedPrecondition as exc:
+            if not is_missing_index_error(exc):
+                raise
+            logger.warning(
+                "Missing Firestore composite index for meals.history; using degraded bounded query.",
+                extra={"user_id": user_id},
+            )
+            degraded_limit = max(limit_count * 6, 120)
+            degraded_snapshots = list(degraded_query.limit(degraded_limit).stream())
+            items = []
+            for snapshot in degraded_snapshots:
+                normalized = _normalize_meal_snapshot(user_id, snapshot)
+                if _matches_history_filters_locally(
+                    normalized,
+                    calories=calories,
+                    protein=protein,
+                    carbs=carbs,
+                    fat=fat,
+                    timestamp_start=timestamp_start,
+                    timestamp_end=timestamp_end,
+                ):
+                    items.append(normalized)
+                if len(items) >= limit_count:
+                    break
+    except (FirebaseError, GoogleAPICallError, RetryError, FailedPrecondition) as exc:
         logger.exception("Failed to list meals history.", extra={"user_id": user_id})
         raise FirestoreServiceError("Failed to list meals history.") from exc
 
-    items = [_normalize_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
     next_cursor = (
         meal_storage.build_cursor(items[-1]["timestamp"], items[-1]["cloudId"])
         if len(items) == limit_count

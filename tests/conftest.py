@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,3 +23,27 @@ def auth_headers() -> Callable[[str], dict[str, str]]:
         return {"Authorization": f"Bearer {uid}"}
 
     return _build
+
+
+_LEGACY_AI_EXTRA_FILES = {
+    "test_api_ai_auth.py",
+    "test_api_chat_threads.py",
+    "test_openai_service.py",
+    "test_text_meal_service.py",
+}
+
+
+def _is_legacy_ai_file(path: Path) -> bool:
+    if path.name.startswith("test_ai_"):
+        return True
+    return path.name in _LEGACY_AI_EXTRA_FILES
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        path = Path(str(item.fspath))
+        path_posix = path.as_posix()
+        if "/app/tests/" in path_posix:
+            continue
+        if _is_legacy_ai_file(path):
+            item.add_marker(pytest.mark.legacy_ai)

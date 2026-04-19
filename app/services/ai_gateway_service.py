@@ -1,8 +1,12 @@
 """AI gateway — classifies, decides, and enforces request routing.
 
 The gateway sits between the API route and the upstream AI provider.  It
-evaluates every request, decides whether to FORWARD, REJECT, or answer
-locally, and logs the decision for observability.
+evaluates every request, decides whether to FORWARD or REJECT for technical
+reasons, and logs the decision for observability.
+
+This module is part of the legacy v1 AI flow (`/api/v1/ai/*`). It is kept for
+backward compatibility and should not be used as a dependency in canonical
+AI Chat v2 orchestration.
 
 Canonical reject/forward reason codes are defined here as module-level
 constants so that backend, mobile, and tests all share a single source
@@ -40,6 +44,7 @@ logger = logging.getLogger(__name__)
 Decision = Literal["FORWARD", "REJECT", "LOCAL_ANSWER"]
 TaskType = Literal["chat", "photo_meal_analysis", "text_meal_analysis", "other"]
 GatewayOutcome = Literal["FORWARDED", "REJECTED", "LOCAL", "UPSTREAM_ERROR"]
+ScopeDecision = Literal["ALLOW_APP", "ALLOW_USER_DATA", "ALLOW_NUTRITION", "DENY_OTHER"]
 
 # ---------------------------------------------------------------------------
 # Canonical reason codes — shared contract with mobile & tests
@@ -50,6 +55,7 @@ REJECT_REASON_TOO_SHORT = "TOO_SHORT"
 GUARD_REASON_RATE_LIMITED = "RATE_LIMITED"
 GUARD_REASON_MESSAGE_TOO_LONG = "MESSAGE_TOO_LONG"
 GUARD_REASON_PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+LOCAL_REASON_OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
 # Forward / pass-through reasons
 FORWARD_REASON_PASS_THROUGH = "PASS_THROUGH"
@@ -115,6 +121,11 @@ class GatewayResult(TypedDict):
     estimated_cost: float
     outcome: NotRequired[GatewayOutcome]
     failure_reason: NotRequired[str]
+    scope_decision: NotRequired[ScopeDecision]
+    retry_count: NotRequired[int]
+    used_summary: NotRequired[bool]
+    truncated: NotRequired[bool]
+    cost_charged: NotRequired[float]
 
 
 def classify_task_type(action_type: str) -> TaskType:
@@ -242,6 +253,7 @@ def build_gateway_result(
     latency_ms: float | None = None,
     outcome: GatewayOutcome | None = None,
     failure_reason: str | None = None,
+    scope_decision: ScopeDecision | None = None,
 ) -> GatewayResult:
     task_type = classify_task_type(action_type)
     estimated_cost = estimate_cost(task_type, decision)
@@ -268,6 +280,8 @@ def build_gateway_result(
         result["outcome"] = outcome
     if failure_reason is not None:
         result["failure_reason"] = failure_reason
+    if scope_decision is not None:
+        result["scope_decision"] = scope_decision
     return result
 
 
@@ -279,20 +293,13 @@ def _classify_hypothetical_decision(message: str) -> tuple[Decision | None, str 
     if normalized in {"hej", "hello", "hi", "hey", "czesc", "cześć"}:
         return "LOCAL_ANSWER", HYPOTHESIS_TRIVIAL_GREETING
 
-    off_topic_keywords = (
-        "pogoda",
-        "weather",
-        "bitcoin",
-        "mecz",
-        "match score",
-        "lotto",
-        "horoscope",
-        "horoskop",
-    )
-    if any(keyword in normalized for keyword in off_topic_keywords):
-        return "REJECT", REJECT_REASON_OFF_TOPIC
-
     return None, None
+
+
+def classify_scope(message: str) -> ScopeDecision:
+    del message
+    # Scope enforcement is delegated to the LLM via system policy.
+    return "ALLOW_NUTRITION"
 
 
 async def evaluate_request(
@@ -319,6 +326,7 @@ async def evaluate_request(
             reason=FORWARD_REASON_GATEWAY_DISABLED,
             request_id=request_id,
             enforced=False,
+            scope_decision="ALLOW_APP" if task_type != "chat" else classify_scope(message),
         )
 
     if not await _consume_rate_limit_slot(user_id):
@@ -352,17 +360,11 @@ async def evaluate_request(
         )
 
     hypothetical_decision, hypothetical_reason = _classify_hypothetical_decision(message)
-    if task_type == "chat" and hypothetical_decision == "REJECT":
-        return build_gateway_result(
-            action_type=action_type,
-            message=message,
-            decision="REJECT",
-            reason=hypothetical_reason or REJECT_REASON_OFF_TOPIC,
-            request_id=request_id,
-            hypothetical_decision=hypothetical_decision,
-            hypothetical_reason=hypothetical_reason,
-            enforced=True,
-        )
+    scope_decision: ScopeDecision | None = None
+    if task_type == "chat":
+        scope_decision = classify_scope(message)
+    else:
+        scope_decision = "ALLOW_APP"
 
     return build_gateway_result(
         action_type=action_type,
@@ -373,4 +375,5 @@ async def evaluate_request(
         hypothetical_decision=hypothetical_decision,
         hypothetical_reason=hypothetical_reason,
         enforced=False,
+        scope_decision=scope_decision,
     )

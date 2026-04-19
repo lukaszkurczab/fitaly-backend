@@ -12,5 +12,5 @@ api_router = APIRouter()
 api_router.include_router(v1_router, prefix=CURRENT_API_PREFIX)
 
 # v2 router is mounted now as an extension point.
-# Add new/changed endpoints in app/api/v2/routes/* and include them in v2/router.py.
+# Add new/changed endpoints in app/api/v2/endpoints/* and include them in v2/router.py.
 api_router.include_router(v2_router, prefix=NEXT_API_PREFIX)

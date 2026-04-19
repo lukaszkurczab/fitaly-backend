@@ -2,11 +2,15 @@
 
 The `ask_chat` function is intentionally small so route and service tests can
 mock it directly instead of touching the external OpenAI SDK.
+
+This module remains for legacy v1 AI routes and text-meal analysis.
+Canonical v2 chat uses `app/core/openai_client.py`.
 """
 
 import asyncio
 import json
 import logging
+import random
 import re
 from typing import Any, TypedDict
 from typing import cast
@@ -45,6 +49,10 @@ class OpenAIUsage(TypedDict):
 class ChatCompletionResult(TypedDict):
     content: str
     usage: OpenAIUsage
+
+
+class RetriedChatCompletionResult(ChatCompletionResult):
+    retry_count: int
 
 
 class PhotoAnalysisResult(TypedDict):
@@ -303,6 +311,50 @@ async def ask_chat_completion(
         "content": _extract_reply_content(response),
         "usage": _extract_usage(response),
     }
+
+
+def _is_retryable_openai_error(error: BaseException) -> bool:
+    if isinstance(error, asyncio.TimeoutError):
+        return True
+    status_code = cast(object, getattr(error, "status_code", None))
+    if isinstance(status_code, int):
+        return status_code == 429 or status_code >= 500
+    status = cast(object, getattr(error, "status", None))
+    if isinstance(status, int):
+        return status == 429 or status >= 500
+    return False
+
+
+async def ask_chat_completion_with_retry(
+    message: str,
+    model: str = "gpt-4o-mini",
+    timeout: int = 30,
+    *,
+    max_attempts: int = 3,
+    base_delay_seconds: float = 0.5,
+) -> RetriedChatCompletionResult:
+    """Send one user message to OpenAI with retry on transient upstream failures."""
+    last_error: OpenAIServiceError | None = None
+    retry_count = 0
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await ask_chat_completion(message, model=model, timeout=timeout)
+            return {**result, "retry_count": retry_count}
+        except OpenAIServiceError as exc:
+            last_error = exc
+            retryable = _is_retryable_openai_error(exc.__cause__ or exc)
+            if not retryable or attempt >= max_attempts:
+                break
+
+            retry_count += 1
+            # Exponential backoff with a small jitter avoids request bursts.
+            delay = base_delay_seconds * (2 ** (attempt - 1)) + random.uniform(0.0, 0.35)
+            await asyncio.sleep(delay)
+
+    if last_error is not None:
+        raise last_error
+    raise OpenAIServiceError("OpenAI request failed.")
 
 
 async def analyze_photo(

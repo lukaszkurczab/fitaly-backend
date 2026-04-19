@@ -1,0 +1,1 @@
+"""domain/meals/models package."""

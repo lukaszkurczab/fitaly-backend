@@ -1,3 +1,9 @@
+"""Legacy v1 chat thread endpoints.
+
+These endpoints expose legacy thread/message persistence under `/api/v1`.
+Canonical AI Chat v2 run lifecycle is under `/api/v2/ai/chat/runs`.
+"""
+
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user

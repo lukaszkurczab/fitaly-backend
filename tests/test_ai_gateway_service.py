@@ -68,22 +68,21 @@ def test_canonical_reject_reasons_match_mobile_contract() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Off-topic enforcement (the one real REJECT rule)
+# Chat pass-through to LLM (no lexical off-topic gating)
 # ---------------------------------------------------------------------------
 
 
-async def test_evaluate_request_rejects_off_topic_chat_when_gateway_enabled() -> None:
+async def test_evaluate_request_forwards_off_topic_chat_when_gateway_enabled() -> None:
     result = await evaluate_request("user-1", "chat", "Jaka bedzie pogoda jutro?")
 
-    assert result["decision"] == "REJECT"
-    assert result["reason"] == REJECT_REASON_OFF_TOPIC
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
     assert result["task_type"] == "chat"
     assert result["model"] == "gpt-4o-mini"
     assert result["estimated_tokens"] > 0
-    assert result["estimated_cost"] == settings.AI_REJECT_COST
-    assert result.get("hypothetical_decision") == "REJECT"
-    assert result.get("hypothetical_reason") == REJECT_REASON_OFF_TOPIC
-    assert result["enforced"] is True
+    assert result["estimated_cost"] == float(settings.AI_CREDIT_COST_CHAT)
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result["enforced"] is False
     assert isinstance(result["request_id"], str)
 
 
@@ -100,13 +99,14 @@ async def test_evaluate_request_rejects_off_topic_chat_when_gateway_enabled() ->
         "mój horoskop na dziś",
     ],
 )
-async def test_evaluate_request_rejects_all_off_topic_keywords(message: str) -> None:
-    """Every off-topic keyword triggers REJECT with canonical OFF_TOPIC reason."""
+async def test_evaluate_request_forwards_off_topic_keywords_to_llm(message: str) -> None:
+    """Off-topic lexical checks are delegated to LLM prompt policy."""
     result = await evaluate_request("user-1", "chat", message)
 
-    assert result["decision"] == "REJECT"
-    assert result["reason"] == REJECT_REASON_OFF_TOPIC
-    assert result["enforced"] is True
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
+    assert result["enforced"] is False
 
 
 async def test_off_topic_message_on_non_chat_route_is_forwarded() -> None:
@@ -115,9 +115,7 @@ async def test_off_topic_message_on_non_chat_route_is_forwarded() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    # Still records the hypothetical for observability
-    assert result.get("hypothetical_decision") == "REJECT"
-    assert result.get("hypothetical_reason") == REJECT_REASON_OFF_TOPIC
+    assert result["scope_decision"] == "ALLOW_APP"
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +128,9 @@ async def test_evaluate_request_forwards_diet_related_chat() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
     assert result["task_type"] == "chat"
     assert result["enforced"] is False
-    assert "hypothetical_decision" not in result
 
 
 @pytest.mark.parametrize(
@@ -148,7 +146,7 @@ async def test_evaluate_request_forwards_general_diet_requests(message: str) -> 
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert "hypothetical_decision" not in result
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
 
 
 async def test_evaluate_request_forwards_chat_history_meta_question() -> None:
@@ -156,7 +154,19 @@ async def test_evaluate_request_forwards_chat_history_meta_question() -> None:
 
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_PASS_THROUGH
-    assert "hypothetical_decision" not in result
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
+
+
+async def test_evaluate_request_classifies_personal_nutrition_question_as_user_data() -> None:
+    result = await evaluate_request(
+        "user-1",
+        "chat",
+        "Jak oceniasz moje dzisiejsze jedzenie?",
+    )
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +183,6 @@ async def test_evaluate_request_forwards_when_gateway_disabled(mocker: MockerFix
     assert result["reason"] == FORWARD_REASON_GATEWAY_DISABLED
     assert result["task_type"] == "chat"
     assert result["estimated_cost"] == 1.0
-    assert "hypothetical_decision" not in result
 
 
 async def test_gateway_disabled_does_not_reject_off_topic(mocker: MockerFixture) -> None:
@@ -275,6 +284,8 @@ async def test_evaluate_request_marks_trivial_chat_as_local_answer_hypothesis() 
     result = await evaluate_request("user-1", "chat", "hej")
 
     assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert result["scope_decision"] == "ALLOW_NUTRITION"
     assert result.get("hypothetical_decision") == "LOCAL_ANSWER"
     assert result.get("hypothetical_reason") == HYPOTHESIS_TRIVIAL_GREETING
 
@@ -298,14 +309,22 @@ def test_classify_task_type_supports_supported_categories() -> None:
 
 async def test_reject_result_contains_fields_needed_by_route() -> None:
     """The route reads decision, reason, score from the gateway result to
-    build the HTTP 400 detail.  Verify these fields are present and typed."""
+    build the response detail. Verify these fields are present and typed."""
     result = await evaluate_request("user-1", "chat", "horoscope today")
 
-    assert result["decision"] == "REJECT"
+    assert result["decision"] == "FORWARD"
     assert isinstance(result["reason"], str)
     assert isinstance(result["score"], float)
     # Route also reads request_id for logging
     assert isinstance(result["request_id"], str)
+
+
+async def test_typo_personal_question_is_forwarded_for_llm_decision() -> None:
+    result = await evaluate_request("user-1", "chat", "jak oceniasz moke dzisiejze posilki")
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
+    assert result["scope_decision"] in {"ALLOW_NUTRITION", "ALLOW_USER_DATA"}
 
 
 # ---------------------------------------------------------------------------
