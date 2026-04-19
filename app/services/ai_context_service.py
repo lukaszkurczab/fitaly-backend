@@ -1,4 +1,7 @@
-"""Backend-owned context assembly for AI chat requests."""
+"""Legacy v1 AI context assembly for `/api/v1/ai/ask`.
+
+Canonical AI Chat v2 context flow is implemented in `app/domain/chat/*`.
+"""
 
 from __future__ import annotations
 

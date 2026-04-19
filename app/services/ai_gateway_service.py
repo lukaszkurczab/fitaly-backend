@@ -4,6 +4,10 @@ The gateway sits between the API route and the upstream AI provider.  It
 evaluates every request, decides whether to FORWARD or REJECT for technical
 reasons, and logs the decision for observability.
 
+This module is part of the legacy v1 AI flow (`/api/v1/ai/*`). It is kept for
+backward compatibility and should not be used as a dependency in canonical
+AI Chat v2 orchestration.
+
 Canonical reject/forward reason codes are defined here as module-level
 constants so that backend, mobile, and tests all share a single source
 of truth.  Mobile's ``GATEWAY_REJECT_REASONS`` set must stay in sync

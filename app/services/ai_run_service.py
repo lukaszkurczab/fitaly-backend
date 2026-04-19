@@ -1,4 +1,8 @@
-"""Run-level observability for AI chat executions."""
+"""Legacy v1 AI run telemetry writer used by `/api/v1/ai/*` routes.
+
+Canonical v2 run persistence is implemented in
+`app/domain/ai_runs/services/ai_run_service.py`.
+"""
 
 from __future__ import annotations
 

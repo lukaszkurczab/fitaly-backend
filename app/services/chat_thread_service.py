@@ -1,4 +1,8 @@
-"""Backend-owned storage for chat threads and messages."""
+"""Legacy v1 chat thread/message storage.
+
+This service is used by v1 routes and legacy AI context assembly.
+Canonical v2 chat persistence lives in `app/domain/chat_memory/*`.
+"""
 
 import logging
 from typing import Any

@@ -42,7 +42,59 @@ README.md
 
 - Keep existing contracts in `v1` stable (`/api/v1/...`).
 - Introduce breaking changes only in `v2` (`/api/v2/...`).
-- Add new `v2` endpoints in `app/api/v2/routes/*` and register them in `app/api/v2/router.py` without modifying `v1` handlers.
+- Add new `v2` endpoints in `app/api/v2/endpoints/*` and register them in `app/api/v2/router.py` without modifying `v1` handlers.
+
+## AI Architecture Boundary (v1 vs v2)
+
+- **Canonical AI Chat v2**
+  - Endpoint: `app/api/v2/endpoints/ai_chat.py` (`POST /api/v2/ai/chat/runs`)
+  - Orchestration: `app/domain/chat/*`
+  - Deterministic tools: `app/domain/tools/*`
+  - Chat memory + runs persistence: `app/domain/chat_memory/*`, `app/domain/ai_runs/*`, `app/infra/firestore/repositories/*`
+  - Schemas: `app/schemas/ai_chat/*`
+- **Legacy AI v1 (kept for compatibility)**
+  - Route: `app/api/routes/ai.py`
+  - Supporting services: selected modules in `app/services/*` (`ai_context_service`, `ai_chat_prompt_service`, `conversation_memory_service`, `ai_token_budget_service`, `ai_run_service`, `ai_gateway_service`, `ai_gateway_logger`)
+- **Reusable utility**
+  - `app/services/openai_service.py` remains used by legacy v1 routes and text-meal analysis.
+- Detailed v2 architecture note: [AI Chat v2 Architecture](./docs/ai-chat-v2-architecture.md)
+
+## AI Chat v2 (Ready For Simulator)
+
+- Canonical endpoint for new chat: `POST /api/v2/ai/chat/runs`
+- Auth: `Authorization: Bearer <firebase-id-token>`
+- Request contract (camelCase):
+  - `threadId`
+  - `clientMessageId`
+  - `message`
+  - `language` (`pl` or `en`)
+- Response contract (camelCase):
+  - `runId`
+  - `assistantMessageId`
+  - `reply`
+  - `usage`
+  - `contextStats`
+- Errors use stable shape:
+  - `detail.code`
+  - `detail.message`
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v2/ai/chat/runs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "threadId": "thread-mobile-1",
+    "clientMessageId": "client-msg-1",
+    "message": "Podsumuj moje dzisiejsze makro.",
+    "language": "pl"
+  }'
+```
+
+Notes:
+- v2 adoption is controlled by API path (`/api/v2/...`), not by a dedicated runtime feature flag.
+- v1 public contracts remain unchanged.
 
 ## Local Run
 
@@ -74,6 +126,18 @@ Run tests:
 pytest -q
 ```
 
+Run only canonical AI Chat v2 tests:
+
+```bash
+pytest -q -m ai_v2 app/tests
+```
+
+Run only legacy AI/chat compatibility tests:
+
+```bash
+pytest -q -m legacy_ai tests
+```
+
 Run type checking:
 
 ```bash
@@ -103,6 +167,7 @@ The backend exposes two API versions:
 - `POST /api/v2/telemetry/events/batch` — telemetry ingest (requires `TELEMETRY_ENABLED=true`)
 - `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state
 - `GET /api/v2/users/me/habits` — habit signals
+- `POST /api/v2/ai/chat/runs` — canonical AI Chat v2 run lifecycle
 
 **v2 follow-up technical surface**:
 

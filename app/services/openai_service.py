@@ -2,6 +2,9 @@
 
 The `ask_chat` function is intentionally small so route and service tests can
 mock it directly instead of touching the external OpenAI SDK.
+
+This module remains for legacy v1 AI routes and text-meal analysis.
+Canonical v2 chat uses `app/core/openai_client.py`.
 """
 
 import asyncio

@@ -1,0 +1,1 @@
+"""domain/users/models package."""

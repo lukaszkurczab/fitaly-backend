@@ -1,4 +1,8 @@
-"""Prompt budgeting utilities for backend-owned AI chat context."""
+"""Legacy v1 prompt budgeting utilities for `/api/v1/ai/ask`.
+
+Canonical v2 token budgeting lives in `app/domain/chat/context_builder.py`
+and `app/core/token_counter.py`.
+"""
 
 from __future__ import annotations
 

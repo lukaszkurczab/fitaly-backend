@@ -34,6 +34,10 @@ This document explains the composite indexes declared in `firestore.indexes.json
 - Used by: `app/services/telemetry_service.py` (`get_daily_summary`, `get_smart_reminder_summary`)
 - Query shape: `userHash == X` + `ts` range (`>=`, `<=`)
 
+8. `ai_runs` (queryScope: `COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
+- Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`)
+- Query shape: `userId == X` + `order_by("createdAt", DESC)` + limit
+
 ## De-duplication note
 
 The `meals` indexes for `(deleted, dayKey)` and `(deleted, timestamp ASC)` are shared across:

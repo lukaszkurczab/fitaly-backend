@@ -1,4 +1,7 @@
-"""Conversation summary memory for long chat threads."""
+"""Legacy v1 conversation memory for `/api/v1/ai/ask`.
+
+Canonical v2 thread memory is implemented in `app/domain/chat_memory/*`.
+"""
 
 from __future__ import annotations
 

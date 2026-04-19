@@ -1,3 +1,10 @@
+"""Legacy AI v1 routes.
+
+This module serves `/api/v1/ai/*` compatibility endpoints and intentionally keeps
+the pre-v2 flow (`app/services/*`). Canonical AI Chat v2 lives under
+`app/api/v2/endpoints/ai_chat.py` and `app/domain/chat/*`.
+"""
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
@@ -40,22 +47,33 @@ from app.schemas.ai_text_meal import (
     AiTextMealIngredient,
 )
 from app.services import (
-    ai_chat_prompt_service,  # Backward-compatible symbol for legacy tests/mocks.
-    ai_context_service,
+    ai_chat_prompt_service as legacy_ai_chat_prompt_service,  # Backward-compatible symbol for legacy tests/mocks.
+    ai_context_service as legacy_ai_context_service,
     ai_credits_service,
-    ai_gateway_logger,
-    ai_gateway_service,
-    ai_run_service,
-    ai_token_budget_service,
+    ai_gateway_logger as legacy_ai_gateway_logger,
+    ai_gateway_service as legacy_ai_gateway_service,
+    ai_run_service as legacy_ai_run_service,
+    ai_token_budget_service as legacy_ai_token_budget_service,
     chat_thread_service,
-    conversation_memory_service,
-    openai_service,
+    conversation_memory_service as legacy_conversation_memory_service,
+    openai_service as legacy_openai_service,
     sanitization_service,
     text_meal_service,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Backward-compatibility exports for existing v1 tests/mocks patching
+# `app.api.routes.ai.<service_symbol>`.
+ai_chat_prompt_service = legacy_ai_chat_prompt_service
+ai_context_service = legacy_ai_context_service
+ai_gateway_logger = legacy_ai_gateway_logger
+ai_gateway_service = legacy_ai_gateway_service
+ai_run_service = legacy_ai_run_service
+ai_token_budget_service = legacy_ai_token_budget_service
+conversation_memory_service = legacy_conversation_memory_service
+openai_service = legacy_openai_service
 
 
 def _resolve_request_id(request: Request) -> str | None:
@@ -74,7 +92,7 @@ def _build_thread_title(message: str) -> str:
 
 
 def _with_gateway_runtime(
-    result: ai_gateway_service.GatewayResult,
+    result: legacy_ai_gateway_service.GatewayResult,
     *,
     latency_ms: float,
     outcome: Literal["FORWARDED", "REJECTED", "UPSTREAM_ERROR", "LOCAL"] | None = None,
@@ -84,8 +102,8 @@ def _with_gateway_runtime(
     used_summary: bool | None = None,
     truncated: bool | None = None,
     cost_charged: float | None = None,
-) -> ai_gateway_service.GatewayResult:
-    enriched: ai_gateway_service.GatewayResult = {
+) -> legacy_ai_gateway_service.GatewayResult:
+    enriched: legacy_ai_gateway_service.GatewayResult = {
         **result,
         "latency_ms": round(latency_ms, 2),
     }
@@ -112,17 +130,17 @@ async def _log_gateway_result(
     action_type: str,
     message: str,
     language: str,
-    result: ai_gateway_service.GatewayResult,
+    result: legacy_ai_gateway_service.GatewayResult,
     response_time_ms: float | None = None,
     execution_time_ms: float | None = None,
     tier: Literal["free", "premium"] | None = None,
     credit_cost: float | None = None,
 ) -> None:
-    if result["reason"] == ai_gateway_service.FORWARD_REASON_GATEWAY_DISABLED:
+    if result["reason"] == legacy_ai_gateway_service.FORWARD_REASON_GATEWAY_DISABLED:
         return
 
     try:
-        ai_gateway_logger.log_gateway_decision(
+        legacy_ai_gateway_logger.log_gateway_decision(
             user_id,
             message,
             result,
@@ -143,7 +161,7 @@ async def _log_gateway_result(
 
 async def _log_ai_run_safe(run_id: str, payload: dict[str, Any]) -> None:
     try:
-        await ai_run_service.log_ai_run(run_id, payload)
+        await legacy_ai_run_service.log_ai_run(run_id, payload)
     except FirestoreServiceError:
         logger.exception(
             "Failed to persist AI run telemetry.",
@@ -157,7 +175,7 @@ async def _reject_gateway_request(
     action_type: str,
     message: str,
     language: str,
-    gateway_result: ai_gateway_service.GatewayResult,
+    gateway_result: legacy_ai_gateway_service.GatewayResult,
     started_at: float,
 ) -> None:
     tier: Literal["free", "premium"] | None = None
@@ -188,13 +206,13 @@ async def _reject_gateway_request(
     status_code = status.HTTP_400_BAD_REQUEST
     detail_code = "AI_GATEWAY_BLOCKED"
     detail_message = "AI request blocked by gateway"
-    if gateway_result["reason"] == ai_gateway_service.GUARD_REASON_RATE_LIMITED:
+    if gateway_result["reason"] == legacy_ai_gateway_service.GUARD_REASON_RATE_LIMITED:
         status_code = status.HTTP_429_TOO_MANY_REQUESTS
         detail_code = "AI_GATEWAY_RATE_LIMITED"
         detail_message = "AI request rate limited by gateway"
     elif gateway_result["reason"] in {
-        ai_gateway_service.GUARD_REASON_MESSAGE_TOO_LONG,
-        ai_gateway_service.GUARD_REASON_PAYLOAD_TOO_LARGE,
+        legacy_ai_gateway_service.GUARD_REASON_MESSAGE_TOO_LONG,
+        legacy_ai_gateway_service.GUARD_REASON_PAYLOAD_TOO_LARGE,
     }:
         status_code = status.HTTP_413_CONTENT_TOO_LARGE
         detail_code = "AI_GATEWAY_PAYLOAD_TOO_LARGE"
@@ -290,7 +308,7 @@ def _build_ai_response_fields(
     *,
     credits_status: AiCreditsStatus,
     warnings: list[str],
-    gateway_result: ai_gateway_service.GatewayResult | None = None,
+    gateway_result: legacy_ai_gateway_service.GatewayResult | None = None,
 ) -> dict[str, Any]:
     return {
         "balance": credits_status.balance,
@@ -314,7 +332,7 @@ async def _execute_ai_request(
     action_type: str,
     gateway_message: str,
     language: str,
-    gateway_result: ai_gateway_service.GatewayResult,
+    gateway_result: legacy_ai_gateway_service.GatewayResult,
     credit_cost: int,
     endpoint: str,
     ai_call: Callable[[], Awaitable[tuple[Any, int | None]]],
@@ -399,7 +417,7 @@ async def ask_ai(
     action_type = "chat"
     request_id = _resolve_request_id(http_request)
     ask_payload = request.model_dump_json(exclude_none=True)
-    gateway_result = await ai_gateway_service.evaluate_request(
+    gateway_result = await legacy_ai_gateway_service.evaluate_request(
         user_id,
         action_type,
         request.message,
@@ -408,11 +426,11 @@ async def ask_ai(
         raw_payload_chars=len(ask_payload),
     )
 
-    context = await ai_context_service.build_chat_context(user_id, request.threadId)
+    context = await legacy_ai_context_service.build_chat_context(user_id, request.threadId)
     profile = context["profile"]
-    language = ai_context_service.resolve_language(request.language, profile)
+    language = legacy_ai_context_service.resolve_language(request.language, profile)
 
-    has_consent = ai_context_service.has_ai_health_data_consent(profile)
+    has_consent = legacy_ai_context_service.has_ai_health_data_consent(profile)
     if not has_consent and "PROFILE_UNAVAILABLE" in context["warnings"]:
         context["warnings"].append("CONSENT_CHECK_SKIPPED")
         has_consent = True
@@ -463,7 +481,7 @@ async def ask_ai(
     sanitized_meals = cast(list[dict[str, Any]], sanitized_context.get("meals") or [])
     sanitized_message = sanitization_service.sanitize_request(request.message, sanitized_context)
 
-    prompt_data = ai_token_budget_service.build_budgeted_prompt(
+    prompt_data = legacy_ai_token_budget_service.build_budgeted_prompt(
         user_message=sanitized_message,
         language=language,
         profile=sanitized_profile,
@@ -473,7 +491,7 @@ async def ask_ai(
     )
 
     try:
-        completion = await openai_service.ask_chat_completion_with_retry(prompt_data["prompt"])
+        completion = await legacy_openai_service.ask_chat_completion_with_retry(prompt_data["prompt"])
     except OpenAIServiceError as exc:
         elapsed_ms = (perf_counter() - started_at) * 1000
         logged_gateway_result = _with_gateway_runtime(
@@ -528,7 +546,7 @@ async def ask_ai(
         {"id": assistant_message_id, "role": "assistant", "content": reply},
     ]
     if len(history_with_latest) >= 10 or prompt_data["generated_summary"]:
-        await conversation_memory_service.refresh_summary_from_history(
+        await legacy_conversation_memory_service.refresh_summary_from_history(
             user_id,
             request.threadId,
             history_with_latest,
@@ -619,7 +637,7 @@ async def analyze_photo_ai(
     started_at = perf_counter()
     user_id = current_user.uid
     gateway_message = _safe_photo_gateway_message(request.imageBase64)
-    gateway_result = await ai_gateway_service.evaluate_request(
+    gateway_result = await legacy_ai_gateway_service.evaluate_request(
         user_id,
         "photo_analysis",
         gateway_message,
@@ -662,7 +680,7 @@ async def analyze_text_meal_ai(
     started_at = perf_counter()
     user_id = current_user.uid
     gateway_message = request.payload.model_dump_json(exclude_none=True)
-    gateway_result = await ai_gateway_service.evaluate_request(
+    gateway_result = await legacy_ai_gateway_service.evaluate_request(
         user_id,
         "text_meal_analysis",
         gateway_message,
@@ -697,7 +715,7 @@ async def analyze_text_meal_ai(
 
 
 async def _execute_chat_completion(message: str) -> tuple[str, int | None]:
-    completion = await openai_service.ask_chat_completion(message)
+    completion = await legacy_openai_service.ask_chat_completion(message)
     return completion["content"], completion["usage"]["total_tokens"]
 
 
@@ -705,8 +723,8 @@ async def _execute_photo_completion(
     image_base64: str,
     *,
     lang: str,
-) -> tuple[list[openai_service.AnalyzedIngredient], int | None]:
-    completion = await openai_service.analyze_photo_completion(
+) -> tuple[list[legacy_openai_service.AnalyzedIngredient], int | None]:
+    completion = await legacy_openai_service.analyze_photo_completion(
         image_base64,
         lang=lang,
     )
@@ -717,7 +735,7 @@ async def _execute_text_meal_completion(
     payload: Any,
     *,
     lang: str,
-) -> tuple[list[openai_service.AnalyzedIngredient], int | None]:
+) -> tuple[list[legacy_openai_service.AnalyzedIngredient], int | None]:
     completion = await text_meal_service.analyze_text_meal_with_usage(
         payload,
         lang=lang,

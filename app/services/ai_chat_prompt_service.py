@@ -1,4 +1,8 @@
-"""Backend-owned chat prompt shaping for /ai/ask."""
+"""Legacy v1 prompt shaping for `/api/v1/ai/ask`.
+
+Canonical AI Chat v2 prompt composition is implemented in
+`app/domain/chat/prompt_composer.py`.
+"""
 
 from typing import Any, cast
 

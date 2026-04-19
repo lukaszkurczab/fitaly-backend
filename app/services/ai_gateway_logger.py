@@ -1,4 +1,7 @@
-"""Firestore logger for AI gateway decisions."""
+"""Firestore logger for legacy v1 AI gateway decisions.
+
+Used by `/api/v1/ai/*` flow only.
+"""
 
 from datetime import datetime, timezone
 from hashlib import sha256
