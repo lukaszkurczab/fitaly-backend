@@ -29,7 +29,7 @@ pytest-mock>=3.10.0
 httpx==0.28.1
 
 # Lint
-ruff==0.15.10
+ruff==0.15.11
 
 # Security
 pip-audit>=2.7
