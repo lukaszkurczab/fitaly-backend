@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     AI_CREDIT_COST_PHOTO: int = Field(default=5, ge=0)
     AI_GATEWAY_ENABLED: bool = True
     TELEMETRY_ENABLED: bool = False
+    SMART_REMINDERS_ENABLED: bool = True
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
 

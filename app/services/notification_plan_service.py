@@ -1,4 +1,8 @@
-"""Backend-owned notification eligibility planning."""
+"""Legacy notification eligibility planning (compatibility-only).
+
+Canonical reminder production path uses Smart Reminders decision endpoint:
+`GET /api/v2/users/me/reminders/decision`.
+"""
 
 from dataclasses import dataclass, replace
 from datetime import datetime

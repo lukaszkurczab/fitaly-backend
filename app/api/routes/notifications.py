@@ -1,3 +1,9 @@
+"""Notification routes.
+
+Canonical reminder production behavior is exposed by `/users/me/reminders/decision`.
+Routes in this module are retained mainly for compatibility with older clients.
+"""
+
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
@@ -30,6 +36,12 @@ router = APIRouter()
 @router.post(
     "/users/me/notifications/reconcile-plan",
     response_model=NotificationPlanResponse,
+    deprecated=True,
+    summary="Legacy notification reconcile plan (deprecated)",
+    description=(
+        "Deprecated legacy endpoint kept only for backward compatibility. "
+        "Canonical reminder decisions are served by /users/me/reminders/decision."
+    ),
 )
 async def reconcile_notification_plan_me(
     request: NotificationPlanRequest,
@@ -60,7 +72,16 @@ async def reconcile_notification_plan_me(
     )
 
 
-@router.get("/users/me/notifications", response_model=NotificationListResponse)
+@router.get(
+    "/users/me/notifications",
+    response_model=NotificationListResponse,
+    deprecated=True,
+    summary="Legacy notification definitions (compatibility-only)",
+    description=(
+        "Compatibility-only endpoint for legacy notification definitions. "
+        "Not part of the canonical Smart Reminders production path."
+    ),
+)
 async def list_notifications_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> NotificationListResponse:
@@ -70,7 +91,16 @@ async def list_notifications_me(
     )
 
 
-@router.post("/users/me/notifications", response_model=NotificationUpsertResponse)
+@router.post(
+    "/users/me/notifications",
+    response_model=NotificationUpsertResponse,
+    deprecated=True,
+    summary="Legacy notification upsert (compatibility-only)",
+    description=(
+        "Compatibility-only endpoint for legacy notification definitions. "
+        "Not part of the canonical Smart Reminders production path."
+    ),
+)
 async def upsert_notification_me(
     request: UserNotificationItem,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
@@ -92,6 +122,12 @@ async def upsert_notification_me(
 @router.post(
     "/users/me/notifications/{notificationId}/delete",
     response_model=NotificationDeleteResponse,
+    deprecated=True,
+    summary="Legacy notification delete (compatibility-only)",
+    description=(
+        "Compatibility-only endpoint for legacy notification definitions. "
+        "Not part of the canonical Smart Reminders production path."
+    ),
 )
 async def delete_notification_me(
     notificationId: str,
@@ -108,6 +144,11 @@ async def delete_notification_me(
 @router.get(
     "/users/me/notifications/preferences",
     response_model=NotificationPrefsResponse,
+    summary="Notification preferences",
+    description=(
+        "Active settings surface for notification-related preferences "
+        "(including smart reminders and system notifications)."
+    ),
 )
 async def get_notification_prefs_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
@@ -121,6 +162,11 @@ async def get_notification_prefs_me(
 @router.post(
     "/users/me/notifications/preferences",
     response_model=NotificationPrefsUpdateResponse,
+    summary="Update notification preferences",
+    description=(
+        "Active settings surface for notification-related preferences "
+        "(including smart reminders and system notifications)."
+    ),
 )
 async def update_notification_prefs_me(
     request: NotificationPrefsUpdateRequest,

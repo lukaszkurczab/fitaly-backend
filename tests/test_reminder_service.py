@@ -38,6 +38,15 @@ def _load_decision_fixture() -> ReminderDecision:
     return ReminderDecision.model_validate(payload)
 
 
+def test_get_reminder_decision_raises_when_feature_is_globally_disabled(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", False)
+
+    with pytest.raises(ReminderUnavailableError):
+        asyncio.run(get_reminder_decision("user-1"))
+
+
 def test_get_reminder_decision_returns_rule_engine_output(
     mocker: MockerFixture,
 ) -> None:

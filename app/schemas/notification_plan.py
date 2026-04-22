@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Compatibility-only schema for deprecated v1 reconcile-plan endpoint.
 
 class NotificationPlanRequest(BaseModel):
     startIso: str = Field(min_length=1)

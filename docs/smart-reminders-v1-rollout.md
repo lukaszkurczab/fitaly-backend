@@ -1,5 +1,9 @@
 # Smart Reminders v1 — Rollout Runbook
 
+> This document is kept as rollout history.  
+> Canonical day-to-day release verification for notifications lives in mobile repo:
+> `../fitaly/docs/notifications-canonical-release-hardening.md`.
+
 ## 1. Prerequisites
 
 ### Backend flags (all required)
@@ -200,7 +204,8 @@ EXPO_PUBLIC_ENABLE_SMART_REMINDERS=false
 Effect:
 - Mobile stops fetching decisions entirely
 - `getReminderDecision` returns `disabled` status without network call
-- Legacy meal/day scheduling resumes (feature is off, not failing)
+- No new smart-reminder schedules are created from backend decisions
+- System notification surfaces (`motivation`, `stats`) remain independent
 
 ### Rollback verification
 

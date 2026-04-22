@@ -173,6 +173,9 @@ The backend exposes two API versions:
 
 - `GET /api/v2/users/me/coach?day=YYYY-MM-DD` — Coach Insights technical surface built on top of nutrition state + habit signals. No separate coach feature flag is planned.
 - `GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD` — Smart Reminders v1 decision surface. It returns backend reminder decision semantics (`send`, `suppress`, `noop`) for a local day. This is a decision API, not reminder delivery orchestration.
+- `GET/POST /api/v1/users/me/notifications/preferences` — active notification settings surface used by mobile canonical flow.
+
+Compatibility-only legacy notification endpoints remain under `/api/v1/users/me/notifications*` (`list/upsert/delete/reconcile-plan`) for older clients. They are deprecated and not part of the canonical Smart Reminders production path.
 
 **Narrow telemetry allowlists**:
 
@@ -214,6 +217,7 @@ Every HTTP response includes `X-Request-ID`. Use it to correlate client failures
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
 - [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
 - [Smart Reminders v1 Rollout](./docs/smart-reminders-v1-rollout.md) — rollout preconditions, verification, rollback path
+- [Notifications Legacy Sunset Note](./docs/notifications-legacy-sunset-note.md) — compatibility-only residue status and removal criteria
 
 ## Required Environment Variables
 
