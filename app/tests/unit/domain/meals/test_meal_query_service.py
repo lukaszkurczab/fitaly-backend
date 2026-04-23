@@ -24,11 +24,13 @@ class _FakeQuery:
         datasets: dict[str, list[_FakeSnapshot]],
         filters: list[Any] | None = None,
         fail_day_key: bool = False,
+        fail_logged_at: bool = False,
         fail_timestamp: bool = False,
     ) -> None:
         self._datasets = datasets
         self._filters = list(filters or [])
         self._fail_day_key = fail_day_key
+        self._fail_logged_at = fail_logged_at
         self._fail_timestamp = fail_timestamp
 
     def where(self, *, filter: Any) -> "_FakeQuery":
@@ -36,6 +38,7 @@ class _FakeQuery:
             datasets=self._datasets,
             filters=[*self._filters, filter],
             fail_day_key=self._fail_day_key,
+            fail_logged_at=self._fail_logged_at,
             fail_timestamp=self._fail_timestamp,
         )
 
@@ -50,6 +53,11 @@ class _FakeQuery:
             if self._fail_day_key:
                 raise FailedPrecondition("missing dayKey index")
             return iter(self._datasets.get("dayKey", []))
+
+        if "loggedAt" in field_paths:
+            if self._fail_logged_at:
+                raise FailedPrecondition("missing loggedAt index")
+            return iter(self._datasets.get("loggedAt", []))
 
         if "timestamp" in field_paths:
             if self._fail_timestamp:
@@ -68,6 +76,15 @@ async def test_get_meals_in_range_includes_timestamp_records_without_day_key(mon
     collection = _FakeCollection(
         datasets={
             "dayKey": [],
+            "loggedAt": [
+                _FakeSnapshot(
+                    id="meal-1",
+                    payload={
+                        "loggedAt": "2026-04-23T10:15:00Z",
+                        "totals": {"kcal": 520, "protein": 33, "fat": 18, "carbs": 44},
+                    },
+                )
+            ],
             "timestamp": [
                 _FakeSnapshot(
                     id="meal-1",
@@ -118,6 +135,7 @@ async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missin
                     },
                 ),
             ],
+            "loggedAt": [],
             "timestamp": [],
             "all": [],
         }
@@ -139,6 +157,7 @@ async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_mis
     collection = _FakeCollection(
         datasets={
             "dayKey": [],
+            "loggedAt": [],
             "timestamp": [],
             "all": [
                 _FakeSnapshot(
@@ -151,6 +170,7 @@ async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_mis
             ],
         },
         fail_day_key=True,
+        fail_logged_at=True,
         fail_timestamp=True,
     )
     monkeypatch.setattr(service, "_meals_collection", lambda *, user_id: collection)

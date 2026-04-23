@@ -97,10 +97,10 @@ def _derive_day_key_parts(raw_meal: dict[str, Any]) -> tuple[str | None, bool]:
         if _to_date(normalized_day_key) is not None:
             return normalized_day_key, False
 
-    timestamp = parse_flexible_datetime(raw_meal.get("timestamp"))
-    if timestamp is None:
+    event_time = parse_flexible_datetime(raw_meal.get("loggedAt") or raw_meal.get("timestamp"))
+    if event_time is None:
         return None, False
-    return timestamp.date().isoformat(), True
+    return event_time.date().isoformat(), True
 
 
 def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
@@ -147,7 +147,9 @@ def _extract_logged_at_local_min(raw_meal: dict[str, Any]) -> tuple[int | None, 
     if isinstance(explicit, float) and 0 <= int(explicit) <= 1439:
         return int(explicit), False
 
-    fallback_minute = _parse_wall_clock_minute(raw_meal.get("timestamp"))
+    fallback_minute = _parse_wall_clock_minute(
+        raw_meal.get("loggedAt") or raw_meal.get("timestamp")
+    )
     if fallback_minute is None:
         return None, False
     return fallback_minute, True
@@ -230,7 +232,7 @@ def _has_low_confidence_ai_meta(raw_meal: dict[str, Any]) -> bool:
 
 
 def _is_structurally_incomplete(raw_meal: dict[str, Any]) -> bool:
-    if not str(raw_meal.get("mealId") or raw_meal.get("cloudId") or "").strip():
+    if not str(raw_meal.get("id") or raw_meal.get("mealId") or raw_meal.get("cloudId") or "").strip():
         return True
     if _derive_day_key(raw_meal) is None:
         return True
@@ -528,7 +530,7 @@ def _load_recent_meals(
     start_ts = _serialize_day_start(start_day)
     end_ts = _serialize_day_start(end_day + timedelta(days=1))
 
-    # Read by canonical dayKey first, then add a bounded timestamp fallback for
+    # Read by canonical dayKey first, then add bounded event-time fallbacks for
     # meals missing/invalid dayKey. If the composite index for the deleted
     # filter is unavailable, retry with the same bounded range and filter
     # deleted meals during aggregation.
@@ -549,7 +551,25 @@ def _load_recent_meals(
         query_name="habit_signals.day_key_range",
         extra={"computed_at": computed_at.isoformat()},
     ):
-        snapshots_by_id[snapshot.id] = dict(snapshot.to_dict() or {})
+        snapshots_by_id[snapshot.id] = {"id": snapshot.id, **dict(snapshot.to_dict() or {})}
+
+    logged_at_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("loggedAt", ">=", start_ts))
+        .where(filter=FieldFilter("loggedAt", "<", end_ts))
+    )
+    logged_at_fallback_query = (
+        meals_collection.where(filter=FieldFilter("loggedAt", ">=", start_ts))
+        .where(filter=FieldFilter("loggedAt", "<", end_ts))
+    )
+    for snapshot in stream_with_missing_index_fallback(
+        indexed_query=logged_at_query,
+        fallback_query=logged_at_fallback_query,
+        logger=logger,
+        query_name="habit_signals.logged_at_range",
+        extra={"computed_at": computed_at.isoformat()},
+    ):
+        snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
 
     timestamp_query = (
         meals_collection.where(filter=FieldFilter("deleted", "==", False))
@@ -567,7 +587,7 @@ def _load_recent_meals(
         query_name="habit_signals.timestamp_range",
         extra={"computed_at": computed_at.isoformat()},
     ):
-        snapshots_by_id.setdefault(snapshot.id, dict(snapshot.to_dict() or {}))
+        snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
 
     return list(snapshots_by_id.values())
 

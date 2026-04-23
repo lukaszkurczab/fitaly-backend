@@ -132,9 +132,9 @@ def _extract_meal_day_key(raw_meal: dict[str, object]) -> str | None:
     if isinstance(day_key, str) and DAY_KEY_RE.match(day_key):
         return day_key
 
-    timestamp = raw_meal.get("timestamp")
-    if isinstance(timestamp, str):
-        prefix = timestamp[:10]
+    event_time = raw_meal.get("loggedAt") or raw_meal.get("timestamp")
+    if isinstance(event_time, str):
+        prefix = event_time[:10]
         if DAY_KEY_RE.match(prefix):
             return prefix
     return None

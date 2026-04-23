@@ -72,10 +72,35 @@ def _build_snapshot(
 
 def _build_credits_client(mocker: MockerFixture):
     mocked_client = mocker.Mock()
+    users_collection_ref = mocker.Mock()
+    user_document_ref = mocker.Mock()
+    billing_collection_ref = mocker.Mock()
+    billing_document_ref = mocker.Mock()
     credits_collection_ref = mocker.Mock()
     credits_document_ref = mocker.Mock()
 
-    mocked_client.collection.return_value = credits_collection_ref
+    def _collection(name: str):
+        if name == ai_credits_service.USERS_COLLECTION:
+            return users_collection_ref
+        raise AssertionError(f"Unexpected collection: {name}")
+
+    def _user_collection(name: str):
+        if name == ai_credits_service.BILLING_SUBCOLLECTION:
+            return billing_collection_ref
+        raise AssertionError(f"Unexpected user subcollection: {name}")
+
+    def _billing_collection(name: str):
+        if name == ai_credits_service.AI_CREDITS_SUBCOLLECTION:
+            return credits_collection_ref
+        if name == ai_credits_service.AI_CREDIT_TRANSACTIONS_SUBCOLLECTION:
+            return mocker.Mock()
+        raise AssertionError(f"Unexpected billing subcollection: {name}")
+
+    mocked_client.collection.side_effect = _collection
+    users_collection_ref.document.return_value = user_document_ref
+    user_document_ref.collection.side_effect = _user_collection
+    billing_collection_ref.document.return_value = billing_document_ref
+    billing_document_ref.collection.side_effect = _billing_collection
     credits_collection_ref.document.return_value = credits_document_ref
 
     return mocked_client, credits_collection_ref, credits_document_ref

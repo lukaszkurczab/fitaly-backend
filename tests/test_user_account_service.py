@@ -129,6 +129,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
+    billing_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
     meals_doc_1 = mocker.Mock()
     meals_doc_2 = mocker.Mock()
@@ -164,6 +165,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return badges_collection_ref
         if name == "streak":
             return streak_collection_ref
+        if name == "billing":
+            return billing_collection_ref
         if name == "chat_threads":
             return chat_threads_collection_ref
         raise AssertionError(f"Unexpected subcollection {name}")
@@ -178,6 +181,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_collection_ref.stream.return_value = [feedback_doc]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
+    billing_collection_ref.stream.return_value = []
     chat_threads_collection_ref.stream.return_value = [chat_thread_doc]
     chat_thread_doc.reference.collection.return_value = chat_thread_messages_collection_ref
     chat_thread_messages_collection_ref.stream.return_value = [chat_thread_message_doc]

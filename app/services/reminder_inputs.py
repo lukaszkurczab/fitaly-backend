@@ -91,15 +91,15 @@ async def _load_recent_meals(
     now_utc: datetime,
 ) -> list[dict[str, Any]]:
     del day_key
-    timestamp_start = _serialize_utc_z(
+    logged_at_start = _serialize_utc_z(
         now_utc - timedelta(minutes=RECENT_ACTIVITY_SUPPRESSION_MIN)
     )
-    timestamp_end = _serialize_utc_z(now_utc)
+    logged_at_end = _serialize_utc_z(now_utc)
     meals, _ = await list_history(
         user_id,
         limit_count=5,
-        timestamp_start=timestamp_start,
-        timestamp_end=timestamp_end,
+        logged_at_start=logged_at_start,
+        logged_at_end=logged_at_end,
     )
     return meals
 
@@ -216,7 +216,7 @@ def _already_logged_recently(
 ) -> bool:
     recent_cutoff = now_utc - timedelta(minutes=RECENT_ACTIVITY_SUPPRESSION_MIN)
     for meal in recent_meals:
-        timestamp = parse_flexible_datetime(meal.get("timestamp"))
+        timestamp = parse_flexible_datetime(meal.get("loggedAt") or meal.get("timestamp"))
         if timestamp is None:
             continue
         if recent_cutoff <= timestamp <= now_utc:
@@ -235,7 +235,7 @@ def _derive_recent_activity_detected(
         if updated_at is None or not (recent_cutoff <= updated_at <= now_utc):
             continue
 
-        timestamp = parse_flexible_datetime(change.get("timestamp"))
+        timestamp = parse_flexible_datetime(change.get("loggedAt") or change.get("timestamp"))
         if timestamp is None:
             return True
 
@@ -395,7 +395,7 @@ def _derive_tz_offset_min(latest_meal: dict[str, Any] | None) -> int | None:
     if not 0 <= logged_at_local_min <= 1439:
         return None
 
-    timestamp = parse_flexible_datetime(latest_meal.get("timestamp"))
+    timestamp = parse_flexible_datetime(latest_meal.get("loggedAt") or latest_meal.get("timestamp"))
     if timestamp is None:
         return None
 

@@ -138,6 +138,7 @@ def _build_document(
         "ts": _serialize_timestamp(event.ts),
         "props": event.props or {},
         "sessionId": request.sessionId,
+        "userId": context.user_id,
         "userHash": user_hash,
         "platform": request.app.platform,
         "appVersion": request.app.appVersion,

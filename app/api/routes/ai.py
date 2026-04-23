@@ -121,7 +121,7 @@ async def _log_gateway_result(
         )
     except Exception:  # noqa: BLE001
         logger.exception(
-            "Failed to persist AI gateway decision.",
+            "Failed to emit AI gateway observability/analytics event.",
             extra={"user_id": user_id, "action_type": action_type},
         )
 

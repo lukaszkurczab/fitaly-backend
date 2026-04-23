@@ -1,68 +1,44 @@
 # Firestore Index Audit (fitaly-backend)
 
-This document explains the composite indexes declared in `firestore.indexes.json` and maps them to the query sites in the backend service layer.
+This document maps `firestore.indexes.json` to active backend query shapes after the Firestore v2 user-owned refactor.
 
-## Composite indexes included
+## Composite indexes in use
 
-1. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp DESC`, `__name__ DESC`
-- Used by: `app/services/meal_service.py` (`list_history`)
-- Query shape: `deleted == false` + `order_by("timestamp", DESC)` + `order_by("__name__", DESC)` for cursor pagination
+1. `meals` (`COLLECTION_GROUP`) — `loggedAt DESC`, `__name__ DESC`
+- Used by: meal-domain cross-user reads with descending event-time pagination.
 
-2. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp DESC`
-- Used by: `app/services/meal_service.py` (`list_history`) fallback/compatibility path
-- Query shape: `deleted == false` + `order_by("timestamp", DESC)` (without explicit document-id tie-break)
+2. `meals` (`COLLECTION_GROUP`) — `totals.carbs ASC`, `loggedAt DESC`, `__name__ DESC`
+3. `meals` (`COLLECTION_GROUP`) — `totals.fat ASC`, `loggedAt DESC`, `__name__ DESC`
+4. `meals` (`COLLECTION_GROUP`) — `totals.kcal ASC`, `loggedAt DESC`, `__name__ DESC`
+5. `meals` (`COLLECTION_GROUP`) — `totals.protein ASC`, `loggedAt DESC`, `__name__ DESC`
+- Used by: history-style nutrient filters with deterministic `loggedAt` + document-id ordering.
 
-3. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`
-- Used by: `app/services/habit_signal_service.py` and `app/services/nutrition_state_service.py`
-- Also compatible with the same pattern in meal-domain bounded reads
-- Query shape: `deleted == false` + `dayKey` range (`>=`, `<=`)
+6. `meals` (`COLLECTION`) — `deleted ASC`, `dayKey ASC`, `__name__ ASC`
+- Used by: bounded user-owned day-window reads in `habit_signal_service` and `nutrition_state_service`.
 
-4. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `dayKey ASC`, `__name__ ASC`
-- Used by: `app/services/nutrition_state_service.py` (Firestore planner can require document-id
-  tie-break for some bounded `dayKey` range queries)
-- Query shape: `deleted == false` + `dayKey` range (`>=`, `<=`) with implicit doc-order tie-break
+7. `meals` (`COLLECTION`) — `deleted ASC`, `loggedAt DESC`, `__name__ DESC`
+- Used by: `meal_service.list_history` canonical cursor pagination.
 
-5. `meals` (queryScope: `COLLECTION`) — `deleted ASC`, `timestamp ASC`
-- Used by: `app/services/habit_signal_service.py` and `app/services/nutrition_state_service.py`
-- Query shape: `deleted == false` + `timestamp` range (`>=`, `<` / `<=`)
+8. `meals` (`COLLECTION`) — `deleted ASC`, `loggedAt ASC`, `__name__ ASC`
+- Used by: bounded user-owned `loggedAt` range reads with `deleted == false` in signal/state services.
 
-6. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
-- Used by: `app/services/telemetry_service.py` (`count_events_for_user`)
-- Query shape: `userHash == X` + `name == Y` + `ts` range (`>=`, `<=`)
+9. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
+- Used by: `telemetry_service.count_events_for_user`.
 
-7. `telemetry_events` (queryScope: `COLLECTION`) — `userHash ASC`, `ts ASC`
-- Used by: `app/services/telemetry_service.py` (`get_daily_summary`, `get_smart_reminder_summary`)
-- Query shape: `userHash == X` + `ts` range (`>=`, `<=`)
+10. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `ts ASC`
+- Used by: `telemetry_service.get_daily_summary` and `telemetry_service.get_smart_reminder_summary`.
 
-8. `ai_runs` (queryScope: `COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
-- Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`)
-- Query shape: `userId == X` + `order_by("createdAt", DESC)` + limit
+11. `ai_runs` (`COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
+- Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`).
 
-## De-duplication note
+## Query shapes that do not need new composites
 
-The `meals` indexes for `(deleted, dayKey)` and `(deleted, timestamp ASC)` are shared across:
-- `meal_service` bounded timestamp/day-key filtering patterns
-- `habit_signal_service` bounded reads
-- `nutrition_state_service` bounded reads
+- `users/{uid}/billing/main/aiCredits/current`: direct document read/write by id (no composite index).
+- `users/{uid}/billing/main/aiCreditTransactions/{txId}` history:
+  `order_by("createdAt", DESC)` only (single-field index sufficient).
+- `users/{uid}/chat_threads` and nested `messages`:
+  single-field ordering/range on one field (`updatedAt` / `createdAt`) only.
 
-Only one index entry per unique field combination is required.
+## Legacy note
 
-## Queries verified as single-field / auto-indexed
-
-- `app/services/meal_storage.py`
-- Query: `order_by("updatedAt", ASC)` with document-id tie-break for cursoring on `users/{uid}/meals` and `users/{uid}/myMeals`
-- Status: single-field index on `updatedAt` is Firestore-managed by default
-
-- `app/services/chat_thread_service.py`
-- Queries:
-- `users/{uid}/chat_threads`: `order_by("updatedAt", DESC)` + `<` cursor
-- `users/{uid}/chat_threads/{tid}/messages`: `order_by("createdAt", DESC)` + `<` cursor
-- Status: single-field indexes (no composite required)
-
-- `app/services/notification_plan_service.py`
-- Query: `users/{uid}/meals` with `timestamp` range only (`>=`, `<=`)
-- Status: single-field range on one field (no composite required)
-
-- `app/services/streak_service.py`
-- Query: `users/{uid}/meals` with `deleted == false` only
-- Status: equality filter on one field (no composite required)
+Any leftover legacy `timestamp`-based meal query paths should be removed during cleanup phase; no new indexes are added for those legacy-only shapes.

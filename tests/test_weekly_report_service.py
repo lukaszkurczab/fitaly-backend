@@ -218,7 +218,7 @@ def test_get_weekly_report_returns_ready_when_week_has_enough_valid_days(
     assert 2 <= len(response.insights) <= 4
     assert 1 <= len(response.priorities) <= 2
     assert response.summary is not None
-    assert len(meals_collection.calls) == 2
+    assert len(meals_collection.calls) == 3
 
 
 def test_get_weekly_report_returns_insufficient_data_for_three_valid_days(

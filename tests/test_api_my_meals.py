@@ -43,9 +43,8 @@ def test_post_my_meal_upsert_uses_backend_service(
     upsert_saved_meal = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.upsert_saved_meal",
         return_value={
-            "userUid": "user-1",
-            "mealId": "saved-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
+            "id": "saved-1",
+            "loggedAt": "2026-03-03T12:00:00.000Z",
             "type": "lunch",
             "name": "Saved meal",
             "ingredients": [],
@@ -58,7 +57,6 @@ def test_post_my_meal_upsert_uses_backend_service(
             "notes": None,
             "tags": [],
             "deleted": False,
-            "cloudId": "saved-1",
             "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
         },
     )
@@ -86,7 +84,7 @@ def test_post_my_meal_delete_uses_backend_service(
     mark_deleted = mocker.patch(
         "app.api.routes.my_meals.my_meal_service.mark_deleted",
         return_value={
-            "cloudId": "saved-1",
+            "id": "saved-1",
             "updatedAt": "2026-03-03T12:00:00.000Z",
         },
     )

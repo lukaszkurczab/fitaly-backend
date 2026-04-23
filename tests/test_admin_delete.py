@@ -103,47 +103,81 @@ class TestConfirm:
 # ── _delete_top_level_docs ────────────────────────────────────────────────────
 
 class TestDeleteTopLevelDocs:
-    def test_deletes_existing_docs(self, mocker: MockerFixture) -> None:
-        snap = _make_doc_snap(exists=True)
-        doc_ref = MagicMock()
-        doc_ref.get.return_value = snap
+    @staticmethod
+    def _build_client_for_top_level_docs(
+        mocker: MockerFixture,
+        *,
+        billing_exists: bool,
+        rate_limit_exists: bool,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        users_collection = MagicMock()
+        user_ref = MagicMock()
+        billing_collection = MagicMock()
+        billing_ref = MagicMock()
+        billing_ref.get.return_value = _make_doc_snap(exists=billing_exists)
+        billing_ref.collection.return_value.stream.return_value = iter([])
+        billing_collection.document.return_value = billing_ref
+        user_ref.collection.return_value = billing_collection
+        users_collection.document.return_value = user_ref
 
-        client = MagicMock()
-        client.collection.return_value.document.return_value = doc_ref
+        rate_limits_collection = MagicMock()
+        rate_limit_ref = MagicMock()
+        rate_limit_ref.get.return_value = _make_doc_snap(exists=rate_limit_exists)
+        rate_limits_collection.document.return_value = rate_limit_ref
+
+        client = mocker.Mock()
+
+        def _collection(name: str) -> MagicMock:
+            if name == admin_delete.USERS_COLLECTION:
+                return users_collection
+            if name == admin_delete.RATE_LIMITS_COLLECTION:
+                return rate_limits_collection
+            raise AssertionError(f"Unexpected collection: {name}")
+
+        client.collection.side_effect = _collection
+        return client, billing_ref, rate_limit_ref
+
+    def test_deletes_existing_docs(self, mocker: MockerFixture) -> None:
+        client, billing_ref, rate_limit_ref = self._build_client_for_top_level_docs(
+            mocker,
+            billing_exists=True,
+            rate_limit_exists=True,
+        )
 
         mocker.patch("scripts.admin_delete.get_firestore", return_value=client)
 
         admin_delete._delete_top_level_docs("uid123", dry_run=False)
 
-        assert doc_ref.delete.call_count == 2  # ai_credits + rate_limits
+        billing_ref.delete.assert_called_once()
+        rate_limit_ref.delete.assert_called_once()
 
     def test_skips_missing_docs(self, mocker: MockerFixture) -> None:
-        snap = _make_doc_snap(exists=False)
-        doc_ref = MagicMock()
-        doc_ref.get.return_value = snap
-
-        client = MagicMock()
-        client.collection.return_value.document.return_value = doc_ref
+        client, billing_ref, rate_limit_ref = self._build_client_for_top_level_docs(
+            mocker,
+            billing_exists=False,
+            rate_limit_exists=False,
+        )
 
         mocker.patch("scripts.admin_delete.get_firestore", return_value=client)
 
         admin_delete._delete_top_level_docs("uid123", dry_run=False)
 
-        doc_ref.delete.assert_not_called()
+        billing_ref.delete.assert_not_called()
+        rate_limit_ref.delete.assert_not_called()
 
     def test_dry_run_does_not_delete(self, mocker: MockerFixture) -> None:
-        snap = _make_doc_snap(exists=True)
-        doc_ref = MagicMock()
-        doc_ref.get.return_value = snap
-
-        client = MagicMock()
-        client.collection.return_value.document.return_value = doc_ref
+        client, billing_ref, rate_limit_ref = self._build_client_for_top_level_docs(
+            mocker,
+            billing_exists=True,
+            rate_limit_exists=True,
+        )
 
         mocker.patch("scripts.admin_delete.get_firestore", return_value=client)
 
         admin_delete._delete_top_level_docs("uid123", dry_run=True)
 
-        doc_ref.delete.assert_not_called()
+        billing_ref.delete.assert_not_called()
+        rate_limit_ref.delete.assert_not_called()
 
 
 # ── _delete_auth_user ─────────────────────────────────────────────────────────

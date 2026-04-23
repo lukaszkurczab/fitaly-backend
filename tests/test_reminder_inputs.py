@@ -260,8 +260,8 @@ def test_build_reminder_inputs_maps_current_preferences_and_explicit_limitations
     assert list_history.call_args_list[0].args == ("user-1",)
     assert list_history.call_args_list[0].kwargs == {
         "limit_count": 5,
-        "timestamp_start": "2026-03-18T10:30:00Z",
-        "timestamp_end": "2026-03-18T12:00:00Z",
+        "logged_at_start": "2026-03-18T10:30:00Z",
+        "logged_at_end": "2026-03-18T12:00:00Z",
     }
     assert list_history.call_args_list[1].args == ("user-1",)
     assert list_history.call_args_list[1].kwargs == {"limit_count": 1}

@@ -18,13 +18,41 @@ from app.core.exceptions import AiCreditsExhaustedError, FirestoreServiceError
 from app.db.firebase import get_firestore
 from app.core.coercion import coerce_int, coerce_optional_str
 from app.core.firestore_constants import (
-    AI_CREDIT_TRANSACTIONS_COLLECTION,
-    AI_CREDITS_COLLECTION,
+    AI_CREDITS_CURRENT_DOCUMENT_ID,
+    AI_CREDITS_SUBCOLLECTION,
+    AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
+    BILLING_DOCUMENT_ID,
+    BILLING_SUBCOLLECTION,
+    USERS_COLLECTION,
 )
-from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
+from app.schemas.ai_credits import AiCreditTransactionItem, AiCreditsStatus, CreditCosts
 
 logger = logging.getLogger(__name__)
 Tier = Literal["free", "premium"]
+
+
+def _billing_document_ref(client: firestore.Client, user_id: str) -> firestore.DocumentReference:
+    return (
+        client.collection(USERS_COLLECTION)
+        .document(user_id)
+        .collection(BILLING_SUBCOLLECTION)
+        .document(BILLING_DOCUMENT_ID)
+    )
+
+
+def _credits_document_ref(client: firestore.Client, user_id: str) -> firestore.DocumentReference:
+    return (
+        _billing_document_ref(client, user_id)
+        .collection(AI_CREDITS_SUBCOLLECTION)
+        .document(AI_CREDITS_CURRENT_DOCUMENT_ID)
+    )
+
+
+def _transactions_collection_ref(
+    client: firestore.Client,
+    user_id: str,
+) -> firestore.CollectionReference:
+    return _billing_document_ref(client, user_id).collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION)
 
 
 def _coerce_optional_datetime(value: object) -> datetime | None:
@@ -100,7 +128,6 @@ def _normalize_document(
     balance = max(0, min(balance, allocation))
 
     return {
-        "userId": user_id,
         "tier": tier,
         "balance": balance,
         "allocation": allocation,
@@ -140,7 +167,6 @@ def _build_cycle_document(
 
     allocation = _tier_allocation(tier)
     return {
-        "userId": user_id,
         "tier": tier,
         "balance": allocation,
         "allocation": allocation,
@@ -266,7 +292,7 @@ async def get_credits_status(user_id: str) -> AiCreditsStatus:
 
 async def refresh_if_period_expired(user_id: str) -> AiCreditsStatus:
     client: firestore.Client = get_firestore()
-    document_ref = client.collection(AI_CREDITS_COLLECTION).document(user_id)
+    document_ref = _credits_document_ref(client, user_id)
     transaction = client.transaction()
     now = _utc_now()
 
@@ -281,7 +307,7 @@ async def refresh_if_period_expired(user_id: str) -> AiCreditsStatus:
         logger.exception("Failed to refresh AI credits.", extra={"user_id": user_id})
         raise FirestoreServiceError("Failed to refresh AI credits.") from exc
 
-    return _build_status(document)
+    return _build_status(document, user_id=user_id)
 
 
 async def deduct_credits(user_id: str, cost: int, action: str) -> AiCreditsStatus:
@@ -289,7 +315,7 @@ async def deduct_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
         raise ValueError("Credit cost must be greater than zero.")
 
     client: firestore.Client = get_firestore()
-    document_ref = client.collection(AI_CREDITS_COLLECTION).document(user_id)
+    document_ref = _credits_document_ref(client, user_id)
     transaction = client.transaction()
     now = _utc_now()
 
@@ -316,7 +342,7 @@ async def deduct_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
         balance_after=balance_after,
         document=document,
     )
-    return _build_status(document)
+    return _build_status(document, user_id=user_id)
 
 
 async def refund_credits(user_id: str, cost: int, action: str) -> AiCreditsStatus:
@@ -324,7 +350,7 @@ async def refund_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
         raise ValueError("Credit cost must be greater than zero.")
 
     client: firestore.Client = get_firestore()
-    document_ref = client.collection(AI_CREDITS_COLLECTION).document(user_id)
+    document_ref = _credits_document_ref(client, user_id)
     transaction = client.transaction()
     now = _utc_now()
 
@@ -349,7 +375,7 @@ async def refund_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
         balance_after=balance_after,
         document=document,
     )
-    return _build_status(document)
+    return _build_status(document, user_id=user_id)
 
 
 async def start_free_cycle(user_id: str, anchor_at: datetime) -> AiCreditsStatus:
@@ -468,7 +494,7 @@ async def _apply_subscription_event(
     entitlement_id: str | None = None,
 ) -> AiCreditsStatus:
     client: firestore.Client = get_firestore()
-    document_ref = client.collection(AI_CREDITS_COLLECTION).document(user_id)
+    document_ref = _credits_document_ref(client, user_id)
     transaction = client.transaction()
     now = _utc_now()
 
@@ -502,7 +528,7 @@ async def _apply_subscription_event(
             balance_after=coerce_int(document.get("balance"), 0),
             document=document,
         )
-    return _build_status(document)
+    return _build_status(document, user_id=user_id)
 
 
 async def apply_premium_activation(
@@ -558,6 +584,55 @@ async def apply_premium_expiration(
         event_id=event_id,
         entitlement_id=None,
     )
+
+
+def _build_transaction_item(
+    transaction_id: str,
+    payload: dict[str, object],
+    *,
+    now: datetime,
+) -> AiCreditTransactionItem:
+    tier = _normalize_tier(payload.get("tier"))
+    return AiCreditTransactionItem(
+        id=transaction_id,
+        type=coerce_optional_str(payload.get("type")) or "unknown",
+        action=coerce_optional_str(payload.get("action")) or "",
+        cost=max(0, coerce_int(payload.get("cost"), 0)),
+        balanceBefore=max(0, coerce_int(payload.get("balanceBefore"), 0)),
+        balanceAfter=max(0, coerce_int(payload.get("balanceAfter"), 0)),
+        tier=tier,
+        periodStartAt=_coerce_optional_datetime(payload.get("periodStartAt")) or now,
+        periodEndAt=_coerce_optional_datetime(payload.get("periodEndAt")) or now,
+        createdAt=_coerce_optional_datetime(payload.get("createdAt")) or now,
+    )
+
+
+async def list_credit_transactions(
+    user_id: str,
+    *,
+    limit_count: int = 50,
+) -> list[AiCreditTransactionItem]:
+    if limit_count <= 0:
+        raise ValueError("limit_count must be greater than zero.")
+    limit_count = min(limit_count, 200)
+    now = _utc_now()
+    client: firestore.Client = get_firestore()
+
+    query = (
+        _transactions_collection_ref(client, user_id)
+        .order_by("createdAt", direction=firestore.Query.DESCENDING)
+        .limit(limit_count)
+    )
+    try:
+        snapshots = list(query.stream())
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception("Failed to list AI credit transactions.", extra={"user_id": user_id})
+        raise FirestoreServiceError("Failed to list AI credit transactions.") from exc
+
+    return [
+        _build_transaction_item(snapshot.id, dict(snapshot.to_dict() or {}), now=now)
+        for snapshot in snapshots
+    ]
 
 
 @firestore.transactional
@@ -618,7 +693,7 @@ async def _start_cycle(
     renewal_anchor_source: str,
 ) -> AiCreditsStatus:
     client: firestore.Client = get_firestore()
-    document_ref = client.collection(AI_CREDITS_COLLECTION).document(user_id)
+    document_ref = _credits_document_ref(client, user_id)
     transaction = client.transaction()
     now = _utc_now()
 
@@ -646,14 +721,14 @@ async def _start_cycle(
         balance_after=coerce_int(document.get("balance"), 0),
         document=document,
     )
-    return _build_status(document)
+    return _build_status(document, user_id=user_id)
 
 
-def _build_status(document: dict[str, object]) -> AiCreditsStatus:
+def _build_status(document: dict[str, object], *, user_id: str) -> AiCreditsStatus:
     now = _utc_now()
     tier = _normalize_tier(document.get("tier"))
     return AiCreditsStatus(
-        userId=coerce_optional_str(document.get("userId")) or "",
+        userId=user_id,
         tier=tier,
         balance=coerce_int(document.get("balance"), 0),
         allocation=coerce_int(document.get("allocation"), _tier_allocation(tier)),
@@ -686,7 +761,6 @@ def _log_credit_transaction(
     tier = _normalize_tier(document.get("tier"))
 
     transaction_doc: dict[str, object] = {
-        "userId": user_id,
         "type": transaction_type,
         "action": action,
         "cost": cost,
@@ -700,7 +774,7 @@ def _log_credit_transaction(
 
     try:
         client: firestore.Client = get_firestore()
-        client.collection(AI_CREDIT_TRANSACTIONS_COLLECTION).add(transaction_doc)
+        _transactions_collection_ref(client, user_id).add(transaction_doc)
     except (FirebaseError, GoogleAPICallError, RetryError):
         logger.exception(
             "Failed to log AI credit transaction.",

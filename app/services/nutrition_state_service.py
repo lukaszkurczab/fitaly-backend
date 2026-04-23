@@ -112,8 +112,9 @@ def _load_bounded_meals(
 
     Uses the same approach as habit_signal_service._load_recent_meals:
     1. Query by canonical dayKey range (primary source of truth)
-    2. Query by timestamp range (fallback for legacy records without dayKey)
-    3. Deduplicate by document ID
+    2. Query by loggedAt range (canonical event time)
+    3. Query by legacy timestamp range (fallback for old records)
+    4. Deduplicate by document ID
 
     The window is centered on ``reference_day_key`` going back ``window_days``,
     with a small buffer on both sides to handle timezone edge cases.
@@ -150,9 +151,28 @@ def _load_bounded_meals(
         query_name="nutrition_state.day_key_range",
         extra={"reference_day_key": reference_day_key},
     ):
-        snapshots_by_id[snapshot.id] = dict(snapshot.to_dict() or {})
+        snapshots_by_id[snapshot.id] = {"id": snapshot.id, **dict(snapshot.to_dict() or {})}
 
-    # Fallback: read by timestamp for legacy records without valid dayKey.
+    # Canonical event-time fallback: loggedAt range.
+    logged_at_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("loggedAt", ">=", start_ts))
+        .where(filter=FieldFilter("loggedAt", "<", end_ts))
+    )
+    logged_at_fallback_query = (
+        meals_collection.where(filter=FieldFilter("loggedAt", ">=", start_ts))
+        .where(filter=FieldFilter("loggedAt", "<", end_ts))
+    )
+    for snapshot in stream_with_missing_index_fallback(
+        indexed_query=logged_at_query,
+        fallback_query=logged_at_fallback_query,
+        logger=logger,
+        query_name="nutrition_state.logged_at_range",
+        extra={"reference_day_key": reference_day_key},
+    ):
+        snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
+
+    # Legacy event-time fallback for old documents.
     timestamp_query = (
         meals_collection.where(filter=FieldFilter("deleted", "==", False))
         .where(filter=FieldFilter("timestamp", ">=", start_ts))
@@ -169,7 +189,7 @@ def _load_bounded_meals(
         query_name="nutrition_state.timestamp_range",
         extra={"reference_day_key": reference_day_key},
     ):
-        snapshots_by_id.setdefault(snapshot.id, dict(snapshot.to_dict() or {}))
+        snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
 
     return list(snapshots_by_id.values())
 

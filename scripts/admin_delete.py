@@ -5,7 +5,7 @@ Permanently deletes all personal data for a given user from Fitaly systems:
   - All Firestore subcollections (meals, myMeals, chat_threads/messages,
     notifications, prefs, feedback, badges, streak, notif_meta)
   - Firebase Storage objects (avatars, meal photos)
-  - Top-level Firestore documents (ai_credits, rate_limits, usernames entry)
+  - Firestore billing subtree under users/{uid}/billing and top-level rate_limits/usernames
   - Firebase Auth user record
 
 Usage
@@ -57,7 +57,10 @@ from firebase_admin.exceptions import FirebaseError  # noqa: E402
 from google.api_core.exceptions import GoogleAPICallError  # noqa: E402
 
 from app.core.firestore_constants import (  # noqa: E402
-    AI_CREDITS_COLLECTION,
+    AI_CREDITS_SUBCOLLECTION,
+    AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
+    BILLING_SUBCOLLECTION,
+    BILLING_DOCUMENT_ID,
     BADGES_SUBCOLLECTION,
     RATE_LIMITS_COLLECTION,
     STREAK_SUBCOLLECTION,
@@ -146,12 +149,25 @@ def _dry_run_report(uid: str) -> None:
         count = _count_collection(user_ref, name)
         print(f"    {name:<22} {count:>6} doc(s)")
 
-    # Top-level docs
-    ai_doc = client.collection(AI_CREDITS_COLLECTION).document(uid).get()
+    # User-owned billing docs
+    billing_ref = user_ref.collection(BILLING_SUBCOLLECTION).document(BILLING_DOCUMENT_ID)
+    billing_doc = billing_ref.get()
+    credits_docs = list(billing_ref.collection(AI_CREDITS_SUBCOLLECTION).stream())
+    tx_docs = list(billing_ref.collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION).stream())
     rl_doc = client.collection(RATE_LIMITS_COLLECTION).document(uid).get()
     print()
+    print("  Billing documents:")
+    print(
+        f"    users/{uid}/billing/{BILLING_DOCUMENT_ID:<8} "
+        f"{'EXISTS' if billing_doc.exists else 'not found'}"
+    )
+    print(f"    users/{uid}/billing/{BILLING_DOCUMENT_ID}/aiCredits      {len(credits_docs):>4} doc(s)")
+    print(
+        f"    users/{uid}/billing/{BILLING_DOCUMENT_ID}/aiCreditTransactions "
+        f"{len(tx_docs):>4} doc(s)"
+    )
+    print()
     print("  Top-level documents:")
-    print(f"    ai_credits/{uid:<25} {'EXISTS' if ai_doc.exists else 'not found'}")
     print(f"    rate_limits/{uid:<24} {'EXISTS' if rl_doc.exists else 'not found'}")
 
     # Storage
@@ -202,19 +218,50 @@ async def _delete_extra_subcollections(uid: str, dry_run: bool) -> None:
 
 
 def _delete_top_level_docs(uid: str, dry_run: bool) -> None:
-    """Delete ai_credits/{uid} and rate_limits/{uid}."""
+    """Delete users/{uid}/billing subtree and rate_limits/{uid}."""
     client = get_firestore()
-    for collection in (AI_CREDITS_COLLECTION, RATE_LIMITS_COLLECTION):
-        ref = client.collection(collection).document(uid)
-        snap = ref.get()
-        if not snap.exists:
-            logger.info("  %s/%s — not found, skipping", collection, uid)
-            continue
-        if dry_run:
-            logger.info("  [dry-run] would delete %s/%s", collection, uid)
-            continue
-        ref.delete()
-        logger.info("  Deleted %s/%s", collection, uid)
+    user_ref = client.collection(USERS_COLLECTION).document(uid)
+    billing_ref = user_ref.collection(BILLING_SUBCOLLECTION).document(BILLING_DOCUMENT_ID)
+    credits_documents = list(billing_ref.collection(AI_CREDITS_SUBCOLLECTION).stream())
+    tx_documents = list(billing_ref.collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION).stream())
+    billing_document = billing_ref.get()
+
+    if dry_run:
+        if credits_documents:
+            logger.info(
+                "  [dry-run] would delete %d doc(s) from users/%s/billing/%s/aiCredits",
+                len(credits_documents),
+                uid,
+                BILLING_DOCUMENT_ID,
+            )
+        if tx_documents:
+            logger.info(
+                "  [dry-run] would delete %d doc(s) from users/%s/billing/%s/aiCreditTransactions",
+                len(tx_documents),
+                uid,
+                BILLING_DOCUMENT_ID,
+            )
+        if billing_document.exists:
+            logger.info("  [dry-run] would delete users/%s/billing/%s", uid, BILLING_DOCUMENT_ID)
+    else:
+        for document in credits_documents:
+            document.reference.delete()
+        for document in tx_documents:
+            document.reference.delete()
+        if billing_document.exists:
+            billing_ref.delete()
+            logger.info("  Deleted users/%s/billing/%s", uid, BILLING_DOCUMENT_ID)
+
+    rate_limit_ref = client.collection(RATE_LIMITS_COLLECTION).document(uid)
+    rate_limit_snapshot = rate_limit_ref.get()
+    if not rate_limit_snapshot.exists:
+        logger.info("  %s/%s — not found, skipping", RATE_LIMITS_COLLECTION, uid)
+        return
+    if dry_run:
+        logger.info("  [dry-run] would delete %s/%s", RATE_LIMITS_COLLECTION, uid)
+        return
+    rate_limit_ref.delete()
+    logger.info("  Deleted %s/%s", RATE_LIMITS_COLLECTION, uid)
 
 
 def _delete_auth_user(uid: str, dry_run: bool) -> None:
@@ -253,8 +300,8 @@ async def run(uid: str, dry_run: bool) -> None:
     logger.info("[2/4] Deleting extra subcollections (badges, streak)...")
     await _delete_extra_subcollections(uid, dry_run=False)
 
-    # Step 3 — Top-level Firestore documents (ai_credits, rate_limits)
-    logger.info("[3/4] Deleting top-level Firestore documents...")
+    # Step 3 — Billing subtree + top-level rate limits document
+    logger.info("[3/4] Deleting billing and rate-limit Firestore documents...")
     _delete_top_level_docs(uid, dry_run=False)
 
     # Step 4 — Firebase Auth record

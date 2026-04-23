@@ -24,34 +24,19 @@ MAX_BATCH_SIZE = 50
 ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
     {
         "session_start",
-        "session_end",
-        "screen_view",
-        "meal_add_method_selected",
-        "meal_added",
-        "meal_updated",
-        "meal_deleted",
-        "ai_chat_send",
-        "ai_chat_result",
-        "notification_scheduled",
-        "notification_fired",
+        "onboarding_completed",
+        "meal_logged",
+        "ai_meal_review_saved",
         "notification_opened",
-        "coach_card_viewed",
-        "coach_card_expanded",
-        "coach_card_cta_clicked",
-        "coach_empty_state_viewed",
+        "paywall_viewed",
+        "purchase_completed",
+        "entitlement_activated",
+        "weekly_report_opened",
         "smart_reminder_suppressed",
         "smart_reminder_scheduled",
         "smart_reminder_noop",
         "smart_reminder_decision_failed",
         "smart_reminder_schedule_failed",
-        "onboarding_navigation",
-        "onboarding_step_completed",
-        "onboarding_completed",
-        "onboarding_step_skipped",
-        "onboarding_skip_confirmed",
-        "onboarding_exit_action",
-        "onboarding_option_selected",
-        "premium_state_evaluated",
     }
 )
 
@@ -80,6 +65,20 @@ SMART_REMINDER_DECISION_FAILURE_REASONS = frozenset(
 SMART_REMINDER_SCHEDULE_FAILURE_REASONS = frozenset(
     {"permission_unavailable", "invalid_time", "schedule_error"}
 )
+MEAL_INPUT_METHODS = frozenset(
+    {"manual", "photo", "barcode", "text", "saved", "quick_add"}
+)
+MEAL_SOURCES = frozenset({"manual", "ai", "saved"})
+AI_MEAL_REVIEW_INPUT_METHODS = frozenset({"photo", "text"})
+PAYWALL_SOURCES = frozenset({"manage_subscription", "meal_text_limit"})
+PURCHASE_SOURCES = frozenset({"manage_subscription"})
+ENTITLEMENT_SOURCES = frozenset({"purchase", "restore"})
+ENTITLEMENT_TIERS = frozenset({"premium"})
+WEEKLY_REPORT_STATUSES = frozenset({"ready", "insufficient_data", "unavailable"})
+ONBOARDING_MODES = frozenset({"first", "refill"})
+NOTIFICATION_ORIGINS = frozenset(
+    {"user_notifications", "system_notifications", "unknown"}
+)
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -88,25 +87,18 @@ DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
 
 ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "session_start": frozenset({"origin"}),
-    "session_end": frozenset({"origin", "durationSec", "endReason"}),
-    "screen_view": frozenset({"screen"}),
-    "meal_add_method_selected": frozenset({"mealInputMethod"}),
-    "meal_added": frozenset({"mealInputMethod", "ingredientCount"}),
-    "meal_updated": frozenset({"mealInputMethod", "ingredientCount"}),
-    "meal_deleted": frozenset({"mealInputMethod"}),
-    "ai_chat_send": frozenset({"surface", "chars"}),
-    "ai_chat_result": frozenset({"surface", "success", "resultStatus"}),
-    "notification_scheduled": frozenset({"notificationType", "origin"}),
-    "notification_fired": frozenset({"notificationType", "origin", "foreground"}),
-    "notification_opened": frozenset(
-        {"notificationType", "origin", "openedFromBackground", "actionIdentifier"}
+    "onboarding_completed": frozenset({"mode"}),
+    "meal_logged": frozenset({"mealInputMethod", "ingredientCount", "source"}),
+    "ai_meal_review_saved": frozenset(
+        {"inputMethod", "corrected", "ingredientCount", "requestId"}
     ),
-    "coach_card_viewed": frozenset({"insightType", "actionType", "isPositive"}),
-    "coach_card_expanded": frozenset({"insightType"}),
-    "coach_card_cta_clicked": frozenset(
-        {"insightType", "actionType", "targetScreen"}
+    "notification_opened": frozenset({"notificationType", "origin"}),
+    "paywall_viewed": frozenset({"source"}),
+    "purchase_completed": frozenset({"source"}),
+    "entitlement_activated": frozenset({"source", "tier"}),
+    "weekly_report_opened": frozenset(
+        {"reportStatus", "insightCount", "priorityCount"}
     ),
-    "coach_empty_state_viewed": frozenset({"emptyReason"}),
     "smart_reminder_suppressed": frozenset(
         {"decision", "suppressionReason", "confidenceBucket"}
     ),
@@ -119,16 +111,6 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "smart_reminder_decision_failed": frozenset({"failureReason"}),
     "smart_reminder_schedule_failed": frozenset(
         {"reminderKind", "decision", "confidenceBucket", "failureReason"}
-    ),
-    "onboarding_navigation": frozenset({"step", "mode", "direction"}),
-    "onboarding_step_completed": frozenset({"step", "mode"}),
-    "onboarding_completed": frozenset({"mode"}),
-    "onboarding_step_skipped": frozenset({"step", "mode"}),
-    "onboarding_skip_confirmed": frozenset({"step", "mode"}),
-    "onboarding_exit_action": frozenset({"mode", "action"}),
-    "onboarding_option_selected": frozenset({"step", "mode", "field", "value"}),
-    "premium_state_evaluated": frozenset(
-        {"source", "premium", "cacheState", "mismatch", "creditsTier"}
     ),
 }
 
@@ -160,42 +142,31 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
         "failureReason": SMART_REMINDER_SCHEDULE_FAILURE_REASONS,
     },
-    "onboarding_navigation": {
-        "mode": frozenset({"first", "refill"}),
-        "direction": frozenset({"next", "back"}),
-    },
-    "onboarding_step_completed": {
-        "mode": frozenset({"first", "refill"}),
-    },
     "onboarding_completed": {
-        "mode": frozenset({"first", "refill"}),
+        "mode": ONBOARDING_MODES,
     },
-    "onboarding_step_skipped": {
-        "mode": frozenset({"first", "refill"}),
+    "meal_logged": {
+        "mealInputMethod": MEAL_INPUT_METHODS,
+        "source": MEAL_SOURCES,
     },
-    "onboarding_skip_confirmed": {
-        "mode": frozenset({"first", "refill"}),
+    "ai_meal_review_saved": {
+        "inputMethod": AI_MEAL_REVIEW_INPUT_METHODS,
     },
-    "onboarding_exit_action": {
-        "mode": frozenset({"first", "refill"}),
-        "action": frozenset({"save", "discard"}),
+    "notification_opened": {
+        "origin": NOTIFICATION_ORIGINS,
     },
-    "onboarding_option_selected": {
-        "mode": frozenset({"first", "refill"}),
+    "paywall_viewed": {
+        "source": PAYWALL_SOURCES,
     },
-    "premium_state_evaluated": {
-        "source": frozenset(
-            {
-                "logged_out",
-                "billing_disabled",
-                "revenuecat_unconfigured",
-                "customer_info",
-                "cache_fallback",
-                "sync_validation",
-            }
-        ),
-        "cacheState": frozenset({"not_applicable", "hit_true", "hit_false", "miss"}),
-        "creditsTier": frozenset({"free", "premium", "unknown"}),
+    "purchase_completed": {
+        "source": PURCHASE_SOURCES,
+    },
+    "entitlement_activated": {
+        "source": ENTITLEMENT_SOURCES,
+        "tier": ENTITLEMENT_TIERS,
+    },
+    "weekly_report_opened": {
+        "reportStatus": WEEKLY_REPORT_STATUSES,
     },
 }
 

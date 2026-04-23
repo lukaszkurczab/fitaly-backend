@@ -533,11 +533,13 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
 
     assert response.behavior.loggingDays7 == 1
     assert response.behavior.kcalAdherence14 == 0.9
-    assert len(meals_collection.calls) == 2
+    assert len(meals_collection.calls) == 3
     assert meals_collection.calls[0][0] == ("deleted", "==", False)
     assert meals_collection.calls[0][1][0] == "dayKey"
     assert meals_collection.calls[1][0] == ("deleted", "==", False)
-    assert meals_collection.calls[1][1][0] == "timestamp"
+    assert meals_collection.calls[1][1][0] == "loggedAt"
+    assert meals_collection.calls[2][0] == ("deleted", "==", False)
+    assert meals_collection.calls[2][1][0] == "timestamp"
 
 
 def test_get_habit_signals_falls_back_when_index_is_missing(
@@ -570,13 +572,16 @@ def test_get_habit_signals_falls_back_when_index_is_missing(
     )
 
     assert response.behavior.loggingDays7 == 1
-    assert len(meals_collection.calls) == 4
+    assert len(meals_collection.calls) == 6
     assert meals_collection.calls[0][0] == ("deleted", "==", False)
     assert meals_collection.calls[1][0][0] == "dayKey"
     assert all(field != "deleted" for field, _, _ in meals_collection.calls[1])
     assert meals_collection.calls[2][0] == ("deleted", "==", False)
-    assert meals_collection.calls[3][0][0] == "timestamp"
+    assert meals_collection.calls[3][0][0] == "loggedAt"
     assert all(field != "deleted" for field, _, _ in meals_collection.calls[3])
+    assert meals_collection.calls[4][0] == ("deleted", "==", False)
+    assert meals_collection.calls[5][0][0] == "timestamp"
+    assert all(field != "deleted" for field, _, _ in meals_collection.calls[5])
 
 
 def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
@@ -613,7 +618,7 @@ def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
     )
 
     assert response.behavior.loggingDays7 == 1
-    assert len(meals_collection.calls) == 4
+    assert len(meals_collection.calls) == 6
 
 
 def test_get_habit_signals_wraps_firestore_errors(mocker: MockerFixture) -> None:

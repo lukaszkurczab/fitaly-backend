@@ -222,14 +222,27 @@ async def get_notification_plan(
 
         meals_query = (
             user_ref.collection(MEALS_SUBCOLLECTION)
+            .where("loggedAt", ">=", start_iso)
+            .where("loggedAt", "<=", end_iso)
+        )
+        meals_by_id: dict[str, dict[str, object]] = {}
+        for snapshot in meals_query.stream():
+            payload = dict(snapshot.to_dict() or {})
+            if bool(payload.get("deleted")):
+                continue
+            meals_by_id[snapshot.id] = payload
+
+        legacy_query = (
+            user_ref.collection(MEALS_SUBCOLLECTION)
             .where("timestamp", ">=", start_iso)
             .where("timestamp", "<=", end_iso)
         )
-        meals = [
-            dict(snapshot.to_dict() or {})
-            for snapshot in meals_query.stream()
-            if not bool((snapshot.to_dict() or {}).get("deleted"))
-        ]
+        for snapshot in legacy_query.stream():
+            payload = dict(snapshot.to_dict() or {})
+            if bool(payload.get("deleted")):
+                continue
+            meals_by_id.setdefault(snapshot.id, payload)
+        meals = list(meals_by_id.values())
     except (ValueError, FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to build notification plan.",

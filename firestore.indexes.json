@@ -5,11 +5,7 @@
       "queryScope": "COLLECTION_GROUP",
       "fields": [
         {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "cloudId",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
@@ -28,11 +24,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "cloudId",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
@@ -51,11 +43,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "cloudId",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
@@ -74,11 +62,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "cloudId",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
@@ -97,11 +81,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        },
-        {
-          "fieldPath": "cloudId",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
@@ -139,12 +119,65 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "timestamp",
+          "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
         {
           "fieldPath": "__name__",
           "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "meals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "deleted",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "loggedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "telemetry_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userHash",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "name",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ts",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "telemetry_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userHash",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ts",
+          "order": "ASCENDING"
         }
       ],
       "density": "SPARSE_ALL"

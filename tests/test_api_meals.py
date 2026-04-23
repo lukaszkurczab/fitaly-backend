@@ -17,9 +17,8 @@ def test_get_meals_history_returns_backend_payload(
         return_value=(
             [
                 {
-                    "userUid": "user-1",
-                    "mealId": "meal-1",
-                    "timestamp": "2026-03-03T12:00:00.000Z",
+                    "id": "meal-1",
+                    "loggedAt": "2026-03-03T12:00:00.000Z",
                     "type": "lunch",
                     "name": "Chicken",
                     "ingredients": [],
@@ -32,7 +31,6 @@ def test_get_meals_history_returns_backend_payload(
                     "notes": None,
                     "tags": [],
                     "deleted": False,
-                    "cloudId": "meal-1",
                     "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
                 }
             ],
@@ -55,8 +53,8 @@ def test_get_meals_history_returns_backend_payload(
         protein=None,
         carbs=None,
         fat=None,
-        timestamp_start=None,
-        timestamp_end=None,
+        logged_at_start=None,
+        logged_at_end=None,
     )
 
 
@@ -151,9 +149,8 @@ def test_post_meal_upsert_persists_via_backend_service(
     upsert_meal = mocker.patch(
         "app.api.routes.meals.meal_service.upsert_meal",
         return_value={
-            "userUid": "user-1",
-            "mealId": "meal-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
+            "id": "meal-1",
+            "loggedAt": "2026-03-03T12:00:00.000Z",
             "type": "lunch",
             "name": "Chicken",
             "ingredients": [],
@@ -166,7 +163,6 @@ def test_post_meal_upsert_persists_via_backend_service(
             "notes": None,
             "tags": [],
             "deleted": False,
-            "cloudId": "meal-1",
             "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
         },
     )
@@ -194,9 +190,8 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
     upsert_meal = mocker.patch(
         "app.api.routes.meals.meal_service.upsert_meal",
         return_value={
-            "userUid": "user-1",
-            "mealId": "meal-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
+            "id": "meal-1",
+            "loggedAt": "2026-03-03T12:00:00.000Z",
             "type": "lunch",
             "name": "Chicken",
             "ingredients": [],
@@ -216,7 +211,6 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "notes": None,
             "tags": [],
             "deleted": False,
-            "cloudId": "meal-1",
             "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
         },
     )
@@ -250,7 +244,10 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
     upsert_meal.assert_called_once_with(
         "user-1",
         {
+            "id": None,
             "mealId": "meal-1",
+            "cloudId": None,
+            "loggedAt": None,
             "timestamp": "2026-03-03T12:00:00.000Z",
             "dayKey": None,
             "loggedAtLocalMin": None,
@@ -269,12 +266,12 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
                 "confidence": 0.83,
                 "warnings": ["partial_totals"],
             },
+            "imageRef": None,
             "imageId": None,
             "photoUrl": None,
             "notes": None,
             "tags": [],
             "deleted": False,
-            "cloudId": None,
             "totals": None,
             "userUid": None,
         },
@@ -288,7 +285,7 @@ def test_post_meal_delete_uses_backend_service(
     mark_deleted = mocker.patch(
         "app.api.routes.meals.meal_service.mark_deleted",
         return_value={
-            "cloudId": "meal-1",
+            "id": "meal-1",
             "updatedAt": "2026-03-03T12:00:00.000Z",
         },
     )

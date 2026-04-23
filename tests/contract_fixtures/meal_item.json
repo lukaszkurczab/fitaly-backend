@@ -1,7 +1,6 @@
 {
-  "userUid": "user-contract-1",
-  "mealId": "meal-contract-1",
-  "timestamp": "2026-03-18T12:00:00.000Z",
+  "id": "meal-contract-1",
+  "loggedAt": "2026-03-18T12:00:00.000Z",
   "dayKey": "2026-03-18",
   "loggedAtLocalMin": 780,
   "tzOffsetMin": 60,
@@ -30,12 +29,14 @@
     "confidence": 0.88,
     "warnings": ["partial_totals"]
   },
-  "imageId": "img-001",
-  "photoUrl": "https://storage.example.com/photo.jpg",
+  "imageRef": {
+    "imageId": "img-001",
+    "storagePath": "meals/user-contract-1/img-001.jpg",
+    "downloadUrl": "https://storage.example.com/photo.jpg"
+  },
   "notes": "Post-workout meal",
   "tags": ["high-protein", "lunch"],
   "deleted": false,
-  "cloudId": "meal-contract-1",
   "totals": {
     "kcal": 330.0,
     "protein": 62.0,

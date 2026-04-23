@@ -65,7 +65,7 @@ class MealQueryService:
         payload: dict[str, object],
         timezone: str,
     ) -> MealRecord:
-        timestamp = str(payload.get("timestamp") or "").strip()
+        timestamp = str(payload.get("loggedAt") or payload.get("timestamp") or "").strip()
         day_key = self._parse_date_key(payload.get("dayKey"), timestamp=timestamp, timezone=timezone)
         kcal, protein, fat, carbs = self._extract_totals(payload.get("totals"))
         return MealRecord(
@@ -124,7 +124,8 @@ class MealQueryService:
         )
         snapshots_by_id: dict[str, firestore.DocumentSnapshot] = {}
         day_key_query_failed = False
-        timestamp_query_failed = False
+        logged_at_query_failed = False
+        legacy_timestamp_query_failed = False
 
         try:
             try:
@@ -138,16 +139,26 @@ class MealQueryService:
                 day_key_query_failed = True
 
             try:
-                timestamp_query = (
+                logged_at_query = (
+                    collection.where(filter=FieldFilter("loggedAt", ">=", start_timestamp_utc))
+                    .where(filter=FieldFilter("loggedAt", "<", end_timestamp_utc))
+                )
+                for snapshot in logged_at_query.stream():
+                    snapshots_by_id[snapshot.id] = snapshot
+            except FailedPrecondition:
+                logged_at_query_failed = True
+
+            try:
+                legacy_timestamp_query = (
                     collection.where(filter=FieldFilter("timestamp", ">=", start_timestamp_utc))
                     .where(filter=FieldFilter("timestamp", "<", end_timestamp_utc))
                 )
-                for snapshot in timestamp_query.stream():
+                for snapshot in legacy_timestamp_query.stream():
                     snapshots_by_id[snapshot.id] = snapshot
             except FailedPrecondition:
-                timestamp_query_failed = True
+                legacy_timestamp_query_failed = True
 
-            if day_key_query_failed and timestamp_query_failed:
+            if day_key_query_failed and logged_at_query_failed and legacy_timestamp_query_failed:
                 # Graceful fallback when range indexes are temporarily missing.
                 for snapshot in collection.stream():
                     snapshots_by_id[snapshot.id] = snapshot

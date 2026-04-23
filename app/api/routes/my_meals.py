@@ -69,7 +69,7 @@ async def delete_my_meal_me(
         raise_bad_request(exc)
 
     return MealDeleteResponse(
-        mealId=meal["cloudId"],
+        mealId=meal["id"],
         updatedAt=meal["updatedAt"],
         deleted=True,
     )

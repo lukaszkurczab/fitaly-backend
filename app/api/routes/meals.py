@@ -39,6 +39,8 @@ async def get_meals_history_me(
     carbsMax: float | None = Query(default=None, ge=0),
     fatMin: float | None = Query(default=None, ge=0),
     fatMax: float | None = Query(default=None, ge=0),
+    loggedAtStart: str | None = Query(default=None),
+    loggedAtEnd: str | None = Query(default=None),
     timestampStart: str | None = Query(default=None),
     timestampEnd: str | None = Query(default=None),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
@@ -52,8 +54,8 @@ async def get_meals_history_me(
             protein=_to_range(proteinMin, proteinMax),
             carbs=_to_range(carbsMin, carbsMax),
             fat=_to_range(fatMin, fatMax),
-            timestamp_start=timestampStart,
-            timestamp_end=timestampEnd,
+            logged_at_start=loggedAtStart or timestampStart,
+            logged_at_end=loggedAtEnd or timestampEnd,
         )
     except ValueError as exc:
         raise_bad_request(exc)
@@ -142,7 +144,7 @@ async def delete_meal_me(
         raise_bad_request(exc)
 
     return MealDeleteResponse(
-        mealId=meal["cloudId"],
+        mealId=meal["id"],
         updatedAt=meal["updatedAt"],
         deleted=True,
     )

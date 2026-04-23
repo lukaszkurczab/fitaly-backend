@@ -236,31 +236,76 @@ def _normalize_ai_meta(value: Any) -> dict[str, Any] | None:
     }
 
 
-def normalize_meal_payload(
+def _resolve_meal_id(payload: dict[str, Any], *, fallback_cloud_id: str | None = None) -> str:
+    meal_id = (
+        coerce_optional_str(payload.get("id"))
+        or coerce_optional_str(payload.get("mealId"))
+        or coerce_optional_str(payload.get("cloudId"))
+        or fallback_cloud_id
+    )
+    if not meal_id:
+        raise ValueError("Missing meal identifier")
+    return meal_id
+
+
+def _resolve_logged_at(
+    payload: dict[str, Any],
+    *,
+    fallback_updated_at: str,
+) -> str:
+    return coerce_iso8601(
+        payload.get("loggedAt"),
+        fallback=coerce_optional_str(payload.get("timestamp")) or fallback_updated_at,
+    )
+
+
+def _normalize_image_ref(
+    user_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    image_ref_map = _as_object_map(payload.get("imageRef"))
+    image_id = coerce_optional_str(
+        image_ref_map.get("imageId") if image_ref_map is not None else None
+    ) or coerce_optional_str(payload.get("imageId"))
+    if not image_id:
+        return None
+
+    storage_path = coerce_optional_str(
+        image_ref_map.get("storagePath") if image_ref_map is not None else None
+    ) or f"meals/{user_id}/{image_id}.jpg"
+    download_url = coerce_optional_str(
+        image_ref_map.get("downloadUrl") if image_ref_map is not None else None
+    ) or coerce_optional_str(payload.get("photoUrl"))
+
+    out: dict[str, Any] = {
+        "imageId": image_id,
+        "storagePath": storage_path,
+    }
+    if download_url:
+        out["downloadUrl"] = download_url
+    return out
+
+
+def normalize_meal_document_payload(
     user_id: str,
     payload: dict[str, Any],
     *,
     fallback_cloud_id: str | None = None,
     fallback_updated_at: str | None = None,
     fallback_day_key: str | None = None,
-) -> dict[str, Any]:
+) -> tuple[str, dict[str, Any]]:
     now_iso = _now_iso()
-    cloud_id = coerce_optional_str(payload.get("cloudId")) or fallback_cloud_id
-    meal_id = coerce_optional_str(payload.get("mealId")) or cloud_id
-    if not cloud_id or not meal_id:
-        raise ValueError("Missing meal identifier")
+    meal_id = _resolve_meal_id(payload, fallback_cloud_id=fallback_cloud_id)
 
     ingredients = _normalize_ingredients(payload.get("ingredients"))
     updated_at = coerce_iso8601(payload.get("updatedAt"), fallback=fallback_updated_at or now_iso)
-    timestamp = coerce_iso8601(payload.get("timestamp"), fallback=updated_at)
-    created_at = coerce_iso8601(payload.get("createdAt"), fallback=timestamp)
+    logged_at = _resolve_logged_at(payload, fallback_updated_at=updated_at)
+    created_at = coerce_iso8601(payload.get("createdAt"), fallback=logged_at)
     day_key = coerce_optional_str(payload.get("dayKey")) or fallback_day_key
     deleted = _as_bool(payload.get("deleted"))
 
-    return {
-        "userUid": user_id,
-        "mealId": meal_id,
-        "timestamp": timestamp,
+    return meal_id, {
+        "loggedAt": logged_at,
         "dayKey": day_key,
         "loggedAtLocalMin": _normalize_logged_at_local_min(payload.get("loggedAtLocalMin")),
         "tzOffsetMin": _normalize_tz_offset_min(payload.get("tzOffsetMin")),
@@ -269,20 +314,76 @@ def normalize_meal_payload(
         "ingredients": ingredients,
         "createdAt": created_at,
         "updatedAt": updated_at,
-        "syncState": "synced",
         "source": _normalize_source(payload.get("source")),
         "inputMethod": _normalize_input_method(
             payload.get("inputMethod", payload.get("input_method"))
         ),
         "aiMeta": _normalize_ai_meta(payload.get("aiMeta", payload.get("ai_meta"))),
-        "imageId": coerce_optional_str(payload.get("imageId")),
-        "photoUrl": coerce_optional_str(payload.get("photoUrl")),
+        "imageRef": _normalize_image_ref(user_id, payload),
         "notes": coerce_optional_str(payload.get("notes")),
         "tags": _normalize_tags(payload.get("tags")),
         "deleted": deleted,
-        "cloudId": cloud_id,
         "totals": _normalize_totals(payload.get("totals"), ingredients),
     }
+
+
+def _meal_item_from_document(
+    meal_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    image_ref_map = _as_object_map(payload.get("imageRef"))
+    image_id = coerce_optional_str(image_ref_map.get("imageId") if image_ref_map is not None else None)
+    photo_url = coerce_optional_str(
+        image_ref_map.get("downloadUrl") if image_ref_map is not None else None
+    )
+    logged_at = coerce_optional_str(payload.get("loggedAt"))
+
+    return {
+        "id": meal_id,
+        "loggedAt": logged_at,
+        "dayKey": payload.get("dayKey"),
+        "loggedAtLocalMin": payload.get("loggedAtLocalMin"),
+        "tzOffsetMin": payload.get("tzOffsetMin"),
+        "type": payload.get("type"),
+        "name": payload.get("name"),
+        "ingredients": payload.get("ingredients"),
+        "createdAt": payload.get("createdAt"),
+        "updatedAt": payload.get("updatedAt"),
+        "syncState": "synced",
+        "source": payload.get("source"),
+        "inputMethod": payload.get("inputMethod"),
+        "aiMeta": payload.get("aiMeta"),
+        "imageRef": image_ref_map,
+        "notes": payload.get("notes"),
+        "tags": payload.get("tags"),
+        "deleted": bool(payload.get("deleted")),
+        "totals": payload.get("totals"),
+        # Legacy compatibility fields (read-only mirror during migration).
+        "mealId": meal_id,
+        "cloudId": meal_id,
+        "timestamp": logged_at,
+        "imageId": image_id,
+        "photoUrl": photo_url,
+        "userUid": None,
+    }
+
+
+def normalize_meal_payload(
+    user_id: str,
+    payload: dict[str, Any],
+    *,
+    fallback_cloud_id: str | None = None,
+    fallback_updated_at: str | None = None,
+    fallback_day_key: str | None = None,
+) -> dict[str, Any]:
+    meal_id, document = normalize_meal_document_payload(
+        user_id,
+        payload,
+        fallback_cloud_id=fallback_cloud_id,
+        fallback_updated_at=fallback_updated_at,
+        fallback_day_key=fallback_day_key,
+    )
+    return _meal_item_from_document(meal_id, document)
 
 
 def _normalize_meal_snapshot(
@@ -302,12 +403,13 @@ def _normalize_meal_snapshot(
 def _apply_history_filters(
     query: firestore.Query,
     *,
+    event_time_field: str,
     calories: tuple[float, float] | None = None,
     protein: tuple[float, float] | None = None,
     carbs: tuple[float, float] | None = None,
     fat: tuple[float, float] | None = None,
-    timestamp_start: str | None = None,
-    timestamp_end: str | None = None,
+    logged_at_start: str | None = None,
+    logged_at_end: str | None = None,
 ) -> firestore.Query:
     if calories is not None:
         query = query.where(filter=FieldFilter("totals.kcal", ">=", calories[0])).where(
@@ -325,11 +427,15 @@ def _apply_history_filters(
         query = query.where(filter=FieldFilter("totals.fat", ">=", fat[0])).where(
             filter=FieldFilter("totals.fat", "<=", fat[1])
         )
-    if timestamp_start is not None:
-        query = query.where(filter=FieldFilter("timestamp", ">=", timestamp_start))
-    if timestamp_end is not None:
-        query = query.where(filter=FieldFilter("timestamp", "<=", timestamp_end))
+    if logged_at_start is not None:
+        query = query.where(filter=FieldFilter(event_time_field, ">=", logged_at_start))
+    if logged_at_end is not None:
+        query = query.where(filter=FieldFilter(event_time_field, "<=", logged_at_end))
     return query
+
+
+def _extract_event_time(meal: dict[str, Any]) -> str | None:
+    return coerce_optional_str(meal.get("loggedAt")) or coerce_optional_str(meal.get("timestamp"))
 
 
 def _matches_history_filters_locally(
@@ -339,8 +445,8 @@ def _matches_history_filters_locally(
     protein: tuple[float, float] | None = None,
     carbs: tuple[float, float] | None = None,
     fat: tuple[float, float] | None = None,
-    timestamp_start: str | None = None,
-    timestamp_end: str | None = None,
+    logged_at_start: str | None = None,
+    logged_at_end: str | None = None,
 ) -> bool:
     if bool(meal.get("deleted")):
         return False
@@ -360,10 +466,10 @@ def _matches_history_filters_locally(
     if fat is not None and not (fat[0] <= fat_value <= fat[1]):
         return False
 
-    timestamp_value = coerce_optional_str(meal.get("timestamp"))
-    if timestamp_start is not None and (timestamp_value is None or timestamp_value < timestamp_start):
+    event_time = _extract_event_time(meal)
+    if logged_at_start is not None and (event_time is None or event_time < logged_at_start):
         return False
-    if timestamp_end is not None and (timestamp_value is None or timestamp_value > timestamp_end):
+    if logged_at_end is not None and (event_time is None or event_time > logged_at_end):
         return False
 
     return True
@@ -378,15 +484,15 @@ async def list_history(
     protein: tuple[float, float] | None = None,
     carbs: tuple[float, float] | None = None,
     fat: tuple[float, float] | None = None,
-    timestamp_start: str | None = None,
-    timestamp_end: str | None = None,
+    logged_at_start: str | None = None,
+    logged_at_end: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     meals_ref = _meals_collection(user_id)
-    items: list[dict[str, Any]] = []
+    items_by_id: dict[str, dict[str, Any]] = {}
 
     try:
         indexed_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
-            "timestamp",
+            "loggedAt",
             direction=firestore.Query.DESCENDING,
         ).order_by(
             DOCUMENT_ID_FIELD,
@@ -394,39 +500,112 @@ async def list_history(
         )
         indexed_query = _apply_history_filters(
             indexed_query,
+            event_time_field="loggedAt",
             calories=calories,
             protein=protein,
             carbs=carbs,
             fat=fat,
-            timestamp_start=timestamp_start,
-            timestamp_end=timestamp_end,
+            logged_at_start=logged_at_start,
+            logged_at_end=logged_at_end,
         )
 
         degraded_query = meals_ref.order_by(
+            "loggedAt",
+            direction=firestore.Query.DESCENDING,
+        ).order_by(
+            DOCUMENT_ID_FIELD,
+            direction=firestore.Query.DESCENDING,
+        )
+        degraded_query = _apply_history_filters(
+            degraded_query,
+            event_time_field="loggedAt",
+            calories=calories,
+            protein=protein,
+            carbs=carbs,
+            fat=fat,
+            logged_at_start=logged_at_start,
+            logged_at_end=logged_at_end,
+        )
+
+        legacy_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
             "timestamp",
             direction=firestore.Query.DESCENDING,
         ).order_by(
             DOCUMENT_ID_FIELD,
             direction=firestore.Query.DESCENDING,
         )
+        legacy_query = _apply_history_filters(
+            legacy_query,
+            event_time_field="timestamp",
+            calories=calories,
+            protein=protein,
+            carbs=carbs,
+            fat=fat,
+            logged_at_start=logged_at_start,
+            logged_at_end=logged_at_end,
+        )
+
+        legacy_degraded_query = meals_ref.order_by(
+            "timestamp",
+            direction=firestore.Query.DESCENDING,
+        ).order_by(
+            DOCUMENT_ID_FIELD,
+            direction=firestore.Query.DESCENDING,
+        )
+        legacy_degraded_query = _apply_history_filters(
+            legacy_degraded_query,
+            event_time_field="timestamp",
+            calories=calories,
+            protein=protein,
+            carbs=carbs,
+            fat=fat,
+            logged_at_start=logged_at_start,
+            logged_at_end=logged_at_end,
+        )
 
         parsed_cursor = meal_storage.parse_cursor(before_cursor)
         if parsed_cursor is not None:
-            cursor_timestamp, cursor_document_id = parsed_cursor
+            cursor_logged_at, cursor_document_id = parsed_cursor
             indexed_query = (
-                indexed_query.start_after([cursor_timestamp, cursor_document_id])
+                indexed_query.start_after([cursor_logged_at, cursor_document_id])
                 if cursor_document_id
-                else indexed_query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
+                else indexed_query.where(filter=FieldFilter("loggedAt", "<", cursor_logged_at))
             )
             degraded_query = (
-                degraded_query.start_after([cursor_timestamp, cursor_document_id])
+                degraded_query.start_after([cursor_logged_at, cursor_document_id])
                 if cursor_document_id
-                else degraded_query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
+                else degraded_query.where(filter=FieldFilter("loggedAt", "<", cursor_logged_at))
             )
+            legacy_query = (
+                legacy_query.start_after([cursor_logged_at, cursor_document_id])
+                if cursor_document_id
+                else legacy_query.where(filter=FieldFilter("timestamp", "<", cursor_logged_at))
+            )
+            legacy_degraded_query = (
+                legacy_degraded_query.start_after([cursor_logged_at, cursor_document_id])
+                if cursor_document_id
+                else legacy_degraded_query.where(filter=FieldFilter("timestamp", "<", cursor_logged_at))
+            )
+
+        def include_item(item: dict[str, Any]) -> None:
+            doc_id = coerce_optional_str(item.get("id"))
+            if not doc_id or doc_id in items_by_id:
+                return
+            if _matches_history_filters_locally(
+                item,
+                calories=calories,
+                protein=protein,
+                carbs=carbs,
+                fat=fat,
+                logged_at_start=logged_at_start,
+                logged_at_end=logged_at_end,
+            ):
+                items_by_id[doc_id] = item
 
         try:
             snapshots = list(indexed_query.limit(limit_count).stream())
-            items = [_normalize_meal_snapshot(user_id, snapshot) for snapshot in snapshots]
+            for snapshot in snapshots:
+                include_item(_normalize_meal_snapshot(user_id, snapshot))
         except FailedPrecondition as exc:
             if not is_missing_index_error(exc):
                 raise
@@ -436,27 +615,41 @@ async def list_history(
             )
             degraded_limit = max(limit_count * 6, 120)
             degraded_snapshots = list(degraded_query.limit(degraded_limit).stream())
-            items = []
             for snapshot in degraded_snapshots:
-                normalized = _normalize_meal_snapshot(user_id, snapshot)
-                if _matches_history_filters_locally(
-                    normalized,
-                    calories=calories,
-                    protein=protein,
-                    carbs=carbs,
-                    fat=fat,
-                    timestamp_start=timestamp_start,
-                    timestamp_end=timestamp_end,
-                ):
-                    items.append(normalized)
-                if len(items) >= limit_count:
+                include_item(_normalize_meal_snapshot(user_id, snapshot))
+                if len(items_by_id) >= limit_count:
+                    break
+
+        if len(items_by_id) < limit_count:
+            legacy_limit = max(limit_count * 6, 120)
+            try:
+                legacy_snapshots = list(legacy_query.limit(legacy_limit).stream())
+            except FailedPrecondition as exc:
+                if not is_missing_index_error(exc):
+                    raise
+                legacy_snapshots = list(legacy_degraded_query.limit(legacy_limit).stream())
+            for snapshot in legacy_snapshots:
+                include_item(_normalize_meal_snapshot(user_id, snapshot))
+                if len(items_by_id) >= limit_count:
                     break
     except (FirebaseError, GoogleAPICallError, RetryError, FailedPrecondition) as exc:
         logger.exception("Failed to list meals history.", extra={"user_id": user_id})
         raise FirestoreServiceError("Failed to list meals history.") from exc
 
+    items = sorted(
+        items_by_id.values(),
+        key=lambda meal: (
+            coerce_optional_str(meal.get("loggedAt")) or "",
+            coerce_optional_str(meal.get("id")) or "",
+        ),
+        reverse=True,
+    )[:limit_count]
+
     next_cursor = (
-        meal_storage.build_cursor(items[-1]["timestamp"], items[-1]["cloudId"])
+        meal_storage.build_cursor(
+            coerce_optional_str(items[-1].get("loggedAt")) or "",
+            coerce_optional_str(items[-1].get("id")) or "",
+        )
         if len(items) == limit_count
         else None
     )
@@ -481,31 +674,31 @@ async def list_changes(
 
 
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    normalized_payload = normalize_meal_payload(user_id, payload)
-    meal_ref = _meal_ref(user_id, normalized_payload["cloudId"])
+    meal_id, normalized_document = normalize_meal_document_payload(user_id, payload)
+    meal_ref = _meal_ref(user_id, meal_id)
 
     try:
         snapshot = meal_ref.get()
         if snapshot.exists:
             existing = _normalize_meal_snapshot(user_id, snapshot)
-            if existing["updatedAt"] > normalized_payload["updatedAt"]:
+            if existing["updatedAt"] > normalized_document["updatedAt"]:
                 return existing
-            if not normalized_payload.get("dayKey"):
-                normalized_payload["dayKey"] = coerce_optional_str(existing.get("dayKey"))
-        meal_ref.set(normalized_payload, merge=True)
+            if not normalized_document.get("dayKey"):
+                normalized_document["dayKey"] = coerce_optional_str(existing.get("dayKey"))
+        meal_ref.set(normalized_document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to upsert meal.",
-            extra={"user_id": user_id, "meal_id": normalized_payload.get("cloudId")},
+            extra={"user_id": user_id, "meal_id": meal_id},
         )
         raise FirestoreServiceError("Failed to upsert meal.") from exc
 
     await streak_service.sync_streak_from_meals(
         user_id,
-        reference_day_key=coerce_optional_str(normalized_payload.get("dayKey")),
+        reference_day_key=coerce_optional_str(normalized_document.get("dayKey")),
     )
 
-    return normalized_payload
+    return _meal_item_from_document(meal_id, normalized_document)
 
 
 async def mark_deleted(
@@ -520,28 +713,31 @@ async def mark_deleted(
     try:
         snapshot = meal_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-        payload = normalize_meal_payload(
+        payload = {
+            **existing,
+            "id": meal_id,
+            "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,
+            "dayKey": existing.get("dayKey"),
+            "type": existing.get("type") or "other",
+            "createdAt": existing.get("createdAt")
+            or existing.get("loggedAt")
+            or existing.get("timestamp")
+            or normalized_updated_at,
+            "updatedAt": normalized_updated_at,
+            "deleted": True,
+        }
+        normalized_id, normalized_document = normalize_meal_document_payload(
             user_id,
-            {
-                **existing,
-                "mealId": existing.get("mealId") or meal_id,
-                "cloudId": existing.get("cloudId") or meal_id,
-                "timestamp": existing.get("timestamp") or normalized_updated_at,
-                "dayKey": existing.get("dayKey"),
-                "type": existing.get("type") or "other",
-                "createdAt": existing.get("createdAt") or normalized_updated_at,
-                "updatedAt": normalized_updated_at,
-                "deleted": True,
-            },
+            payload,
             fallback_cloud_id=meal_id,
             fallback_updated_at=normalized_updated_at,
             fallback_day_key=coerce_optional_str(existing.get("dayKey")),
         )
         if snapshot.exists:
             existing_normalized = _normalize_meal_snapshot(user_id, snapshot)
-            if existing_normalized["updatedAt"] > payload["updatedAt"]:
+            if existing_normalized["updatedAt"] > normalized_document["updatedAt"]:
                 return existing_normalized
-        meal_ref.set(payload, merge=True)
+        meal_ref.set(normalized_document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to delete meal.",
@@ -551,10 +747,10 @@ async def mark_deleted(
 
     await streak_service.sync_streak_from_meals(
         user_id,
-        reference_day_key=coerce_optional_str(payload.get("dayKey")),
+        reference_day_key=coerce_optional_str(normalized_document.get("dayKey")),
     )
 
-    return payload
+    return _meal_item_from_document(normalized_id, normalized_document)
 
 
 async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:
@@ -589,6 +785,7 @@ async def resolve_photo(
 
     resolved_photo_url: str | None = None
     resolved_image_id = normalized_image_id
+    resolved_storage_path: str | None = None
 
     if normalized_meal_id:
         meal_ref = _meal_ref(user_id, normalized_meal_id)
@@ -603,8 +800,16 @@ async def resolve_photo(
 
         if snapshot.exists:
             normalized_meal = _normalize_meal_snapshot(user_id, snapshot)
-            resolved_photo_url = coerce_optional_str(normalized_meal.get("photoUrl"))
-            resolved_image_id = coerce_optional_str(normalized_meal.get("imageId")) or resolved_image_id
+            image_ref_map = _as_object_map(normalized_meal.get("imageRef"))
+            resolved_photo_url = coerce_optional_str(
+                image_ref_map.get("downloadUrl") if image_ref_map is not None else None
+            ) or coerce_optional_str(normalized_meal.get("photoUrl"))
+            resolved_storage_path = coerce_optional_str(
+                image_ref_map.get("storagePath") if image_ref_map is not None else None
+            )
+            resolved_image_id = coerce_optional_str(
+                image_ref_map.get("imageId") if image_ref_map is not None else None
+            ) or coerce_optional_str(normalized_meal.get("imageId")) or resolved_image_id
 
     if resolved_photo_url and resolved_image_id:
         return {
@@ -617,7 +822,7 @@ async def resolve_photo(
         raise ValueError("Meal photo not found")
 
     bucket = get_storage_bucket()
-    candidate_paths = [
+    candidate_paths = [path for path in [resolved_storage_path] if path] + [
         f"meals/{user_id}/{resolved_image_id}.jpg",
         f"images/{resolved_image_id}.jpg",
     ]

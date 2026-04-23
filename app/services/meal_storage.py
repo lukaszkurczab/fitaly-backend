@@ -130,9 +130,15 @@ async def list_changes_paginated(
         raise FirestoreServiceError(error_message) from exc
 
     items = [normalize_snapshot_fn(user_id, snapshot) for snapshot in snapshots]
+    last_item = items[-1] if items else None
+    last_id = (
+        str(last_item.get("id") or last_item.get("cloudId") or "").strip()
+        if isinstance(last_item, dict)
+        else ""
+    )
     next_cursor = (
-        build_cursor(items[-1]["updatedAt"], items[-1]["cloudId"])
-        if len(items) == limit_count
+        build_cursor(str(last_item.get("updatedAt") or ""), last_id)
+        if len(items) == limit_count and isinstance(last_item, dict) and last_id
         else None
     )
     return items, next_cursor

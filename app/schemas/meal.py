@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
@@ -34,14 +34,24 @@ class MealAiMeta(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class MealImageRef(BaseModel):
+    imageId: str = Field(min_length=1)
+    storagePath: str = Field(min_length=1)
+    downloadUrl: str | None = None
+
+
+class MealImageRefInput(BaseModel):
+    imageId: str = Field(min_length=1)
+    storagePath: str | None = None
+    downloadUrl: str | None = None
+
+
 def _meal_ingredients_default() -> list[MealIngredient]:
     return []
 
 
-class MealItem(BaseModel):
-    userUid: str
-    mealId: str
-    timestamp: str
+class MealDocument(BaseModel):
+    loggedAt: str
     dayKey: str | None = None
     loggedAtLocalMin: int | None = Field(default=None, ge=0, le=1439)
     tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
@@ -50,17 +60,41 @@ class MealItem(BaseModel):
     ingredients: list[MealIngredient] = Field(default_factory=_meal_ingredients_default)
     createdAt: str
     updatedAt: str
-    syncState: MealSyncState = "synced"
     source: MealSource = None
     inputMethod: MealInputMethod | None = None
     aiMeta: MealAiMeta | None = None
-    imageId: str | None = None
-    photoUrl: str | None = None
+    imageRef: MealImageRef | None = None
     notes: str | None = None
     tags: list[str] = Field(default_factory=list)
     deleted: bool = False
-    cloudId: str
     totals: MealTotals = Field(default_factory=MealTotals)
+
+
+class MealItem(MealDocument):
+    id: str = Field(min_length=1)
+    syncState: MealSyncState = "synced"
+    mealId: str | None = None
+    cloudId: str | None = None
+    userUid: str | None = None
+    timestamp: str | None = None
+    imageId: str | None = None
+    photoUrl: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_legacy_aliases(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        payload.setdefault("id", payload.get("mealId") or payload.get("cloudId"))
+        payload.setdefault("loggedAt", payload.get("timestamp"))
+        if payload.get("imageRef") is None and payload.get("imageId"):
+            payload["imageRef"] = {
+                "imageId": payload.get("imageId"),
+                "storagePath": f"meals/unknown/{payload.get('imageId')}.jpg",
+                "downloadUrl": payload.get("photoUrl"),
+            }
+        return payload
 
 
 class MealsHistoryPageResponse(BaseModel):
@@ -74,8 +108,11 @@ class MealChangesPageResponse(BaseModel):
 
 
 class MealUpsertRequest(BaseModel):
-    mealId: str = Field(min_length=1)
-    timestamp: str = Field(min_length=1)
+    id: str | None = Field(default=None, min_length=1)
+    mealId: str | None = Field(default=None, min_length=1)
+    cloudId: str | None = Field(default=None, min_length=1)
+    loggedAt: str | None = None
+    timestamp: str | None = None
     dayKey: str | None = None
     loggedAtLocalMin: int | None = Field(default=None, ge=0, le=1439)
     tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
@@ -88,12 +125,12 @@ class MealUpsertRequest(BaseModel):
     source: MealSource = None
     inputMethod: MealInputMethod | None = None
     aiMeta: MealAiMeta | None = None
+    imageRef: MealImageRefInput | None = None
     imageId: str | None = None
     photoUrl: str | None = None
     notes: str | None = None
     tags: list[str] = Field(default_factory=list)
     deleted: bool = False
-    cloudId: str | None = None
     totals: MealTotals | None = None
     userUid: str | None = None
 

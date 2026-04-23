@@ -9,7 +9,7 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
-from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
+from app.schemas.ai_credits import AiCreditTransactionItem, AiCreditsStatus, CreditCosts
 
 client = TestClient(app)
 
@@ -105,3 +105,80 @@ def test_get_ai_credits_returns_500_for_firestore_errors(
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Database error"}
+
+
+def test_get_ai_credit_transactions_requires_authentication() -> None:
+    response = client.get("/api/v1/ai/credits/transactions")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_get_ai_credit_transactions_returns_ledger_items(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.ai_credits.ai_credits_service.list_credit_transactions",
+        return_value=[
+            AiCreditTransactionItem(
+                id="tx-2",
+                type="deduct",
+                action="photo_analysis",
+                cost=5,
+                balanceBefore=50,
+                balanceAfter=45,
+                tier="premium",
+                periodStartAt=datetime(2026, 3, 1, tzinfo=timezone.utc),
+                periodEndAt=datetime(2026, 4, 1, tzinfo=timezone.utc),
+                createdAt=datetime(2026, 3, 25, tzinfo=timezone.utc),
+            ),
+            AiCreditTransactionItem(
+                id="tx-1",
+                type="refund",
+                action="photo_analysis_failure_refund",
+                cost=5,
+                balanceBefore=45,
+                balanceAfter=50,
+                tier="premium",
+                periodStartAt=datetime(2026, 3, 1, tzinfo=timezone.utc),
+                periodEndAt=datetime(2026, 4, 1, tzinfo=timezone.utc),
+                createdAt=datetime(2026, 3, 24, tzinfo=timezone.utc),
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/api/v1/ai/credits/transactions?limit=2",
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "id": "tx-2",
+                "type": "deduct",
+                "action": "photo_analysis",
+                "cost": 5,
+                "balanceBefore": 50,
+                "balanceAfter": 45,
+                "tier": "premium",
+                "periodStartAt": "2026-03-01T00:00:00Z",
+                "periodEndAt": "2026-04-01T00:00:00Z",
+                "createdAt": "2026-03-25T00:00:00Z",
+            },
+            {
+                "id": "tx-1",
+                "type": "refund",
+                "action": "photo_analysis_failure_refund",
+                "cost": 5,
+                "balanceBefore": 45,
+                "balanceAfter": 50,
+                "tier": "premium",
+                "periodStartAt": "2026-03-01T00:00:00Z",
+                "periodEndAt": "2026-04-01T00:00:00Z",
+                "createdAt": "2026-03-24T00:00:00Z",
+            },
+        ]
+    }

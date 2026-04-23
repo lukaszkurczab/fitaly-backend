@@ -100,31 +100,34 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
         )
     )
 
-    assert result == {
-        "userUid": "user-1",
-        "mealId": "meal-1",
-        "timestamp": "2026-03-03T12:30:00.000Z",
-        "dayKey": None,
-        "loggedAtLocalMin": None,
-        "tzOffsetMin": None,
-        "type": "other",
-        "name": None,
-        "ingredients": [],
-        "createdAt": "2026-03-03T12:30:00.000Z",
-        "updatedAt": "2026-03-03T12:30:00.000Z",
-        "syncState": "synced",
-        "source": None,
-        "inputMethod": None,
-        "aiMeta": None,
-        "imageId": None,
-        "photoUrl": None,
-        "notes": None,
-        "tags": [],
-        "deleted": True,
-        "cloudId": "meal-1",
-        "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
-    }
-    meal_ref.set.assert_called_once_with(result, merge=True)
+    assert result["id"] == "meal-1"
+    assert result["mealId"] == "meal-1"
+    assert result["cloudId"] == "meal-1"
+    assert result["loggedAt"] == "2026-03-03T12:30:00.000Z"
+    assert result["timestamp"] == "2026-03-03T12:30:00.000Z"
+    assert result["deleted"] is True
+    meal_ref.set.assert_called_once_with(
+        {
+            "loggedAt": "2026-03-03T12:30:00.000Z",
+            "dayKey": None,
+            "loggedAtLocalMin": None,
+            "tzOffsetMin": None,
+            "type": "other",
+            "name": None,
+            "ingredients": [],
+            "createdAt": "2026-03-03T12:30:00.000Z",
+            "updatedAt": "2026-03-03T12:30:00.000Z",
+            "source": None,
+            "inputMethod": None,
+            "aiMeta": None,
+            "imageRef": None,
+            "notes": None,
+            "tags": [],
+            "deleted": True,
+            "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
+        },
+        merge=True,
+    )
     sync_streak.assert_called_once_with("user-1", reference_day_key=None)
 
 
@@ -174,7 +177,33 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
         "confidence": 0.84,
         "warnings": ["partial_totals"],
     }
-    meal_ref.set.assert_called_once_with(result, merge=True)
+    meal_ref.set.assert_called_once_with(
+        {
+            "loggedAt": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "loggedAtLocalMin": None,
+            "tzOffsetMin": None,
+            "type": "lunch",
+            "name": None,
+            "ingredients": [],
+            "createdAt": "2026-03-03T12:00:00.000Z",
+            "updatedAt": "2026-03-03T12:30:00.000Z",
+            "source": None,
+            "inputMethod": "photo",
+            "aiMeta": {
+                "model": "gpt-4o-mini",
+                "runId": "run-1",
+                "confidence": 0.84,
+                "warnings": ["partial_totals"],
+            },
+            "imageRef": None,
+            "notes": None,
+            "tags": [],
+            "deleted": False,
+            "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
+        },
+        merge=True,
+    )
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
@@ -318,9 +347,7 @@ def _history_doc(
     deleted: bool,
 ) -> dict[str, Any]:
     return {
-        "cloudId": meal_id,
-        "mealId": meal_id,
-        "userUid": "user-1",
+        "loggedAt": timestamp,
         "timestamp": timestamp,
         "dayKey": timestamp[:10],
         "type": "lunch",

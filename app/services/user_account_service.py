@@ -23,7 +23,10 @@ from app.services import streak_service
 from app.services.username_service import normalize_username
 
 from app.core.firestore_constants import (
+    AI_CREDITS_SUBCOLLECTION,
+    AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
+    BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
@@ -508,6 +511,26 @@ def _delete_feedback_attachments(feedback_documents: list[firestore.DocumentSnap
             )
 
 
+def _delete_billing_data(
+    client: firestore.Client,
+    user_ref: firestore.DocumentReference,
+) -> None:
+    billing_documents = list(user_ref.collection(BILLING_SUBCOLLECTION).stream())
+    for billing_document in billing_documents:
+        credits_documents = list(
+            billing_document.reference.collection(AI_CREDITS_SUBCOLLECTION).stream()
+        )
+        if credits_documents:
+            _delete_documents_in_batches(client, credits_documents)
+        transactions_documents = list(
+            billing_document.reference.collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION).stream()
+        )
+        if transactions_documents:
+            _delete_documents_in_batches(client, transactions_documents)
+    if billing_documents:
+        _delete_documents_in_batches(client, billing_documents)
+
+
 def _delete_storage_prefix(bucket: Any, prefix: str) -> None:
     for blob in bucket.list_blobs(prefix=prefix):
         blob.delete()
@@ -538,6 +561,7 @@ async def delete_account_data(user_id: str) -> None:
         feedback_documents = list(user_ref.collection(FEEDBACK_SUBCOLLECTION).stream())
         _delete_feedback_attachments(feedback_documents)
         _delete_user_storage_assets(user_id)
+        _delete_billing_data(client, user_ref)
 
         for subcollection_name in DELETE_SUBCOLLECTIONS:
             documents = (

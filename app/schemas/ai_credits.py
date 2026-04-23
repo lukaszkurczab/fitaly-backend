@@ -28,6 +28,23 @@ class AiCreditsResponse(AiCreditsStatus):
     pass
 
 
+class AiCreditTransactionItem(BaseModel):
+    id: str
+    type: str
+    action: str
+    cost: int = Field(ge=0)
+    balanceBefore: int = Field(ge=0)
+    balanceAfter: int = Field(ge=0)
+    tier: Literal["free", "premium"]
+    periodStartAt: datetime
+    periodEndAt: datetime
+    createdAt: datetime
+
+
+class AiCreditTransactionsResponse(BaseModel):
+    items: list[AiCreditTransactionItem]
+
+
 class RevenueCatWebhookPayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 

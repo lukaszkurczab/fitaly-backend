@@ -342,3 +342,49 @@ def test_post_ai_photo_validation_reject_has_zero_deduction(
 
     assert response.status_code == 422
     deduct_credits.assert_not_called()
+
+
+def test_post_ai_text_meal_analyze_succeeds_when_log_sink_fails(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.ai.ai_gateway_logger.log_gateway_decision",
+        side_effect=RuntimeError("sink unavailable"),
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="premium",
+            balance=799,
+            allocation=800,
+            period_start_at=datetime(2026, 4, 14, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 5, 14, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai._execute_text_meal_completion",
+        return_value=(
+            [
+                {
+                    "name": "Owsianka",
+                    "amount": 120,
+                    "protein": 6,
+                    "fat": 4,
+                    "carbs": 20,
+                    "kcal": 148,
+                }
+            ],
+            88,
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/ai/text-meal/analyze",
+        json={"payload": {"name": "owsianka"}},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["balance"] == 799

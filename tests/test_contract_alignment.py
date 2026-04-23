@@ -102,7 +102,7 @@ class TestMealItemContract:
 
     def test_meal_item_parses(self, fixture: JSONDict) -> None:
         item = MealItem.model_validate(fixture)
-        assert item.mealId == "meal-contract-1"
+        assert item.id == "meal-contract-1"
         assert item.type == "lunch"
         assert item.syncState == "synced"
         assert item.inputMethod == "photo"
@@ -112,14 +112,17 @@ class TestMealItemContract:
         assert item.ingredients[0].protein == 62.0
         assert item.aiMeta is not None
         assert item.aiMeta.model == "gpt-4o"
+        assert item.loggedAt == "2026-03-18T12:00:00.000Z"
         assert item.dayKey == "2026-03-18"
         assert item.loggedAtLocalMin == 780
         assert item.tzOffsetMin == 60
+        assert item.imageRef is not None
+        assert item.imageRef.imageId == "img-001"
         assert item.deleted is False
 
     def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
         req = MealUpsertRequest.model_validate(fixture)
-        assert req.mealId == "meal-contract-1"
+        assert req.id == "meal-contract-1"
         assert req.type == "lunch"
         assert req.totals is not None
         assert req.totals.protein == 62.0
@@ -129,7 +132,7 @@ class TestMealItemContract:
         item = MealItem.model_validate(fixture)
         serialized = item.model_dump(mode="json")
         reparsed = MealItem.model_validate(serialized)
-        assert reparsed.mealId == item.mealId
+        assert reparsed.id == item.id
         assert reparsed.totals.kcal == item.totals.kcal
         assert reparsed.ingredients[0].protein == item.ingredients[0].protein
 
