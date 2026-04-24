@@ -1,3 +1,6 @@
+from unittest.mock import MagicMock
+
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
@@ -10,6 +13,30 @@ from app.services.user_account_service import (
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+def test_get_user_profile_returns_401_without_token() -> None:
+    response = client.get("/api/v1/users/me/profile")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_get_user_profile_returns_401_for_invalid_token(
+    mock_auth_token_decoder: MagicMock,
+) -> None:
+    mock_auth_token_decoder.side_effect = HTTPException(
+        status_code=401,
+        detail="Invalid authentication credentials",
+    )
+
+    response = client.get(
+        "/api/v1/users/me/profile",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication credentials"}
 
 
 def test_post_email_pending_returns_updated_payload(
@@ -51,6 +78,27 @@ def test_get_user_profile_returns_backend_payload(
         "profile": {"uid": "user-1", "username": "neo", "language": "pl"},
     }
     get_user_profile_data.assert_called_once_with("user-1")
+
+
+def test_get_user_profile_uses_token_uid_not_client_supplied_uid(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    get_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.get_user_profile_data",
+        return_value={"uid": "token-user", "username": "neo"},
+    )
+
+    response = client.get(
+        "/api/v1/users/me/profile?uid=attacker-user",
+        headers=auth_headers("token-user"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "profile": {"uid": "token-user", "username": "neo"},
+    }
+    get_user_profile_data.assert_called_once_with("token-user")
 
 
 def test_post_user_profile_returns_updated_payload(
