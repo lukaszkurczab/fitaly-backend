@@ -7,6 +7,13 @@
 - It is derived from nutrition state and habit signals.
 - It is deterministic and rule-based.
 - It does not use LLM calls in the critical path.
+- It is not the source of truth for immediate mobile `Statistics` UI.
+
+## Mobile Statistics Boundary
+
+`nutrition_state_service` and related backend summaries are valid foundations for coach-style and report-style synthesis.
+
+They must not replace the mobile `Statistics` local read model. `Statistics` is expected to recompute from local meals immediately after local save/edit/delete, without waiting for sync and without backend refetch as the primary refresh path.
 
 ## Response Semantics
 
@@ -53,4 +60,3 @@ Backend allowlist for Coach Insights v1 telemetry:
 - `coach_empty_state_viewed`: `emptyReason`
 
 Do not send `title`, `body`, reason text, or user-authored content.
-

@@ -8,6 +8,7 @@
 - It is deterministic, rule-based, and explainable.
 - It does not call an LLM.
 - It does not schedule reminders, replace coach, or build a dashboard.
+- It is not the source of truth for immediate mobile `Statistics` UI.
 
 ## Scope Boundaries
 
@@ -25,6 +26,13 @@ Weekly Reports v1 does not:
 - reuse chat context
 - change reminder delivery behavior
 - build a broad analytics subsystem
+- replace the mobile local read model used by `Statistics`
+
+## Mobile Statistics Boundary
+
+Weekly reports may reuse backend nutrition summaries and bounded meal aggregation, but that backend path is for reports, coach, and AI-facing synthesis.
+
+It must not become the default source for mobile `Statistics`. The `Statistics` screen is expected to update from the local meals read model immediately after local save/edit/delete, without a backend refetch.
 
 ## Endpoint And Window Semantics
 
