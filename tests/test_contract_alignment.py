@@ -127,6 +127,13 @@ class TestMealItemContract:
         assert req.totals is not None
         assert req.totals.protein == 62.0
 
+    def test_meal_day_key_rejects_non_canonical_format(self, fixture: JSONDict) -> None:
+        payload = dict(fixture)
+        payload["dayKey"] = "2026/03/18"
+
+        with pytest.raises(ValidationError):
+            MealUpsertRequest.model_validate(payload)
+
     def test_fixture_round_trips_through_serialization(self, fixture: JSONDict) -> None:
         """Parse → serialize → parse must be stable."""
         item = MealItem.model_validate(fixture)

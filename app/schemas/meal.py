@@ -1,12 +1,15 @@
+from datetime import datetime
+import re
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict", "failed"]
 MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved", "quick_add"]
+_DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class MealIngredient(BaseModel):
@@ -65,6 +68,15 @@ def _as_object_map(value: object) -> dict[str, object] | None:
     return result
 
 
+def validate_day_key_format(value: str) -> str:
+    if not _DAY_KEY_RE.match(value):
+        raise ValueError("dayKey must use YYYY-MM-DD format")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValueError("dayKey must use YYYY-MM-DD format") from exc
+
+
 class MealDocument(BaseModel):
     loggedAt: str
     dayKey: str | None = None
@@ -83,6 +95,13 @@ class MealDocument(BaseModel):
     tags: list[str] = Field(default_factory=_str_list_default)
     deleted: bool = False
     totals: MealTotals = Field(default_factory=MealTotals)
+
+    @field_validator("dayKey")
+    @classmethod
+    def _validate_day_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_day_key_format(value)
 
 
 class MealItem(MealDocument):
@@ -154,6 +173,13 @@ class MealUpsertRequest(BaseModel):
     deleted: bool = False
     totals: MealTotals | None = None
     userUid: str | None = None
+
+    @field_validator("dayKey")
+    @classmethod
+    def _validate_day_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_day_key_format(value)
 
 
 class MealUpsertResponse(BaseModel):

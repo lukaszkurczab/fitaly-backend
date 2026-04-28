@@ -11,6 +11,7 @@ from app.schemas.meal import (
     MealsHistoryPageResponse,
     MealUpsertRequest,
     MealUpsertResponse,
+    validate_day_key_format,
 )
 from app.services import meal_service
 
@@ -27,6 +28,17 @@ def _to_range(min_value: float | None, max_value: float | None) -> tuple[float, 
     return min_value, max_value
 
 
+def _validate_day_key_range(
+    start: str | None,
+    end: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_start = validate_day_key_format(start) if start is not None else None
+    normalized_end = validate_day_key_format(end) if end is not None else None
+    if normalized_start is not None and normalized_end is not None and normalized_start > normalized_end:
+        raise ValueError("Invalid dayKey range")
+    return normalized_start, normalized_end
+
+
 @router.get("/users/me/meals/history", response_model=MealsHistoryPageResponse)
 async def get_meals_history_me(
     limit: int = Query(default=20, ge=1, le=100),
@@ -39,6 +51,10 @@ async def get_meals_history_me(
     carbsMax: float | None = Query(default=None, ge=0),
     fatMin: float | None = Query(default=None, ge=0),
     fatMax: float | None = Query(default=None, ge=0),
+    dayKeyStart: str | None = Query(default=None),
+    dayKeyEnd: str | None = Query(default=None),
+    # Legacy query params kept for backwards-compatible request parsing only.
+    # Canonical history range filtering is dayKey-based.
     loggedAtStart: str | None = Query(default=None),
     loggedAtEnd: str | None = Query(default=None),
     timestampStart: str | None = Query(default=None),
@@ -46,6 +62,7 @@ async def get_meals_history_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealsHistoryPageResponse:
     try:
+        day_key_start, day_key_end = _validate_day_key_range(dayKeyStart, dayKeyEnd)
         items, next_cursor = await meal_service.list_history(
             current_user.uid,
             limit_count=limit,
@@ -54,9 +71,10 @@ async def get_meals_history_me(
             protein=_to_range(proteinMin, proteinMax),
             carbs=_to_range(carbsMin, carbsMax),
             fat=_to_range(fatMin, fatMax),
-            logged_at_start=loggedAtStart or timestampStart,
-            logged_at_end=loggedAtEnd or timestampEnd,
+            day_key_start=day_key_start,
+            day_key_end=day_key_end,
         )
+        del loggedAtStart, loggedAtEnd, timestampStart, timestampEnd
     except ValueError as exc:
         raise_bad_request(exc)
 

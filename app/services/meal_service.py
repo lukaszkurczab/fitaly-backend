@@ -26,6 +26,7 @@ from app.db.firebase import (
     get_storage_bucket,
     get_storage_bucket_name,
 )
+from app.schemas.meal import validate_day_key_format
 from app.services import meal_storage, streak_service
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,32 @@ def coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
 
     datetime.fromisoformat(candidate.replace("Z", "+00:00"))
     return candidate
+
+
+def _derive_day_key_from_logged_at(logged_at: str) -> str:
+    parsed = datetime.fromisoformat(logged_at.replace("Z", "+00:00"))
+    return parsed.date().isoformat()
+
+
+def _coerce_day_key(
+    value: Any,
+    *,
+    fallback_day_key: str | None = None,
+    fallback_logged_at: str | None = None,
+) -> str:
+    candidate = coerce_optional_str(value)
+    if candidate:
+        return validate_day_key_format(candidate)
+    if fallback_day_key:
+        return validate_day_key_format(fallback_day_key)
+    if fallback_logged_at:
+        return _derive_day_key_from_logged_at(fallback_logged_at)
+    raise ValueError("Missing dayKey")
+
+
+def _coerce_optional_day_key(value: Any) -> str | None:
+    candidate = coerce_optional_str(value)
+    return validate_day_key_format(candidate) if candidate else None
 
 
 def _as_bool(value: Any) -> bool:
@@ -301,7 +328,11 @@ def normalize_meal_document_payload(
     updated_at = coerce_iso8601(payload.get("updatedAt"), fallback=fallback_updated_at or now_iso)
     logged_at = _resolve_logged_at(payload, fallback_updated_at=updated_at)
     created_at = coerce_iso8601(payload.get("createdAt"), fallback=logged_at)
-    day_key = coerce_optional_str(payload.get("dayKey")) or fallback_day_key
+    day_key = _coerce_day_key(
+        payload.get("dayKey"),
+        fallback_day_key=fallback_day_key,
+        fallback_logged_at=logged_at,
+    )
     deleted = _as_bool(payload.get("deleted"))
 
     return meal_id, {
@@ -391,46 +422,81 @@ def _normalize_meal_snapshot(
     snapshot: firestore.DocumentSnapshot,
 ) -> dict[str, Any]:
     data = dict(snapshot.to_dict() or {})
-    return normalize_meal_payload(
+    normalized = normalize_meal_payload(
         user_id,
         data,
         fallback_cloud_id=snapshot.id,
         fallback_updated_at=coerce_optional_str(data.get("updatedAt")) or _now_iso(),
         fallback_day_key=coerce_optional_str(data.get("dayKey")),
     )
+    normalized["_hasCanonicalDayKey"] = bool(coerce_optional_str(data.get("dayKey")))
+    return normalized
 
 
-def _apply_history_filters(
+HistoryCursor = tuple[str, str, str | None]
+
+
+def _history_sort_key(meal: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        coerce_optional_str(meal.get("dayKey")) or "",
+        coerce_optional_str(meal.get("loggedAt")) or "",
+        coerce_optional_str(meal.get("id")) or "",
+    )
+
+
+def _build_history_cursor(meal: dict[str, Any]) -> str | None:
+    day_key, logged_at, document_id = _history_sort_key(meal)
+    if not day_key or not logged_at or not document_id:
+        return None
+    return f"{day_key}|{logged_at}|{document_id}"
+
+
+def _parse_history_cursor(value: str | None) -> HistoryCursor | None:
+    parsed = meal_storage.parse_cursor(value)
+    if parsed is None:
+        return None
+
+    field_value, document_id = parsed
+    if "|" in field_value:
+        day_key, logged_at = field_value.split("|", 1)
+        return validate_day_key_format(day_key), coerce_iso8601(logged_at), document_id
+
+    logged_at = coerce_iso8601(field_value)
+    return _derive_day_key_from_logged_at(logged_at), logged_at, document_id
+
+
+def _is_after_history_cursor(meal: dict[str, Any], cursor: HistoryCursor | None) -> bool:
+    if cursor is None:
+        return True
+    cursor_day_key, cursor_logged_at, cursor_document_id = cursor
+    meal_key = _history_sort_key(meal)
+    cursor_key = (cursor_day_key, cursor_logged_at, cursor_document_id or "")
+    return meal_key < cursor_key
+
+
+def _apply_day_key_filters(
     query: firestore.Query,
     *,
-    event_time_field: str,
-    calories: tuple[float, float] | None = None,
-    protein: tuple[float, float] | None = None,
-    carbs: tuple[float, float] | None = None,
-    fat: tuple[float, float] | None = None,
+    day_key_start: str | None = None,
+    day_key_end: str | None = None,
+) -> firestore.Query:
+    if day_key_start is not None:
+        query = query.where(filter=FieldFilter("dayKey", ">=", day_key_start))
+    if day_key_end is not None:
+        query = query.where(filter=FieldFilter("dayKey", "<=", day_key_end))
+    return query
+
+
+def _apply_legacy_logged_at_filters(
+    query: firestore.Query,
+    *,
     logged_at_start: str | None = None,
     logged_at_end: str | None = None,
 ) -> firestore.Query:
-    if calories is not None:
-        query = query.where(filter=FieldFilter("totals.kcal", ">=", calories[0])).where(
-            filter=FieldFilter("totals.kcal", "<=", calories[1])
-        )
-    if protein is not None:
-        query = query.where(filter=FieldFilter("totals.protein", ">=", protein[0])).where(
-            filter=FieldFilter("totals.protein", "<=", protein[1])
-        )
-    if carbs is not None:
-        query = query.where(filter=FieldFilter("totals.carbs", ">=", carbs[0])).where(
-            filter=FieldFilter("totals.carbs", "<=", carbs[1])
-        )
-    if fat is not None:
-        query = query.where(filter=FieldFilter("totals.fat", ">=", fat[0])).where(
-            filter=FieldFilter("totals.fat", "<=", fat[1])
-        )
     if logged_at_start is not None:
-        query = query.where(filter=FieldFilter(event_time_field, ">=", logged_at_start))
+        query = query.where(filter=FieldFilter("loggedAt", ">=", logged_at_start))
     if logged_at_end is not None:
-        query = query.where(filter=FieldFilter(event_time_field, "<=", logged_at_end))
+        query = query.where(filter=FieldFilter("loggedAt", "<=", logged_at_end))
     return query
 
 
@@ -445,10 +511,29 @@ def _matches_history_filters_locally(
     protein: tuple[float, float] | None = None,
     carbs: tuple[float, float] | None = None,
     fat: tuple[float, float] | None = None,
+    day_key_start: str | None = None,
+    day_key_end: str | None = None,
     logged_at_start: str | None = None,
     logged_at_end: str | None = None,
+    before_cursor: HistoryCursor | None = None,
+    require_canonical_day_key: bool = True,
 ) -> bool:
     if bool(meal.get("deleted")):
+        return False
+    if require_canonical_day_key and meal.get("_hasCanonicalDayKey") is False:
+        return False
+
+    try:
+        day_key = _coerce_optional_day_key(meal.get("dayKey"))
+    except ValueError:
+        return False
+    if day_key is None:
+        return False
+    if day_key_start is not None and day_key < day_key_start:
+        return False
+    if day_key_end is not None and day_key > day_key_end:
+        return False
+    if not _is_after_history_cursor(meal, before_cursor):
         return False
 
     totals_map = _as_object_map(meal.get("totals")) or {}
@@ -484,108 +569,75 @@ async def list_history(
     protein: tuple[float, float] | None = None,
     carbs: tuple[float, float] | None = None,
     fat: tuple[float, float] | None = None,
+    day_key_start: str | None = None,
+    day_key_end: str | None = None,
+    # Legacy event-time filters are retained for internal recent-activity callers.
+    # Canonical history day ranges must use day_key_start/day_key_end.
     logged_at_start: str | None = None,
     logged_at_end: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
+    if day_key_start is not None:
+        day_key_start = validate_day_key_format(day_key_start)
+    if day_key_end is not None:
+        day_key_end = validate_day_key_format(day_key_end)
+    if day_key_start is not None and day_key_end is not None and day_key_start > day_key_end:
+        raise ValueError("Invalid dayKey range")
+
     meals_ref = _meals_collection(user_id)
     items_by_id: dict[str, dict[str, Any]] = {}
+    parsed_cursor = _parse_history_cursor(before_cursor)
+    use_legacy_logged_at_range = (
+        (logged_at_start is not None or logged_at_end is not None)
+        and day_key_start is None
+        and day_key_end is None
+    )
 
     try:
-        indexed_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
-            "loggedAt",
-            direction=firestore.Query.DESCENDING,
-        ).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.DESCENDING,
-        )
-        indexed_query = _apply_history_filters(
-            indexed_query,
-            event_time_field="loggedAt",
-            calories=calories,
-            protein=protein,
-            carbs=carbs,
-            fat=fat,
-            logged_at_start=logged_at_start,
-            logged_at_end=logged_at_end,
-        )
-
-        degraded_query = meals_ref.order_by(
-            "loggedAt",
-            direction=firestore.Query.DESCENDING,
-        ).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.DESCENDING,
-        )
-        degraded_query = _apply_history_filters(
-            degraded_query,
-            event_time_field="loggedAt",
-            calories=calories,
-            protein=protein,
-            carbs=carbs,
-            fat=fat,
-            logged_at_start=logged_at_start,
-            logged_at_end=logged_at_end,
-        )
-
-        legacy_query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
-            "timestamp",
-            direction=firestore.Query.DESCENDING,
-        ).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.DESCENDING,
-        )
-        legacy_query = _apply_history_filters(
-            legacy_query,
-            event_time_field="timestamp",
-            calories=calories,
-            protein=protein,
-            carbs=carbs,
-            fat=fat,
-            logged_at_start=logged_at_start,
-            logged_at_end=logged_at_end,
-        )
-
-        legacy_degraded_query = meals_ref.order_by(
-            "timestamp",
-            direction=firestore.Query.DESCENDING,
-        ).order_by(
-            DOCUMENT_ID_FIELD,
-            direction=firestore.Query.DESCENDING,
-        )
-        legacy_degraded_query = _apply_history_filters(
-            legacy_degraded_query,
-            event_time_field="timestamp",
-            calories=calories,
-            protein=protein,
-            carbs=carbs,
-            fat=fat,
-            logged_at_start=logged_at_start,
-            logged_at_end=logged_at_end,
-        )
-
-        parsed_cursor = meal_storage.parse_cursor(before_cursor)
-        if parsed_cursor is not None:
-            cursor_logged_at, cursor_document_id = parsed_cursor
+        if use_legacy_logged_at_range:
             indexed_query = (
-                indexed_query.start_after([cursor_logged_at, cursor_document_id])
-                if cursor_document_id
-                else indexed_query.where(filter=FieldFilter("loggedAt", "<", cursor_logged_at))
+                meals_ref.where(filter=FieldFilter("deleted", "==", False))
+                .order_by("loggedAt", direction=firestore.Query.DESCENDING)
+                .order_by(DOCUMENT_ID_FIELD, direction=firestore.Query.DESCENDING)
             )
-            degraded_query = (
-                degraded_query.start_after([cursor_logged_at, cursor_document_id])
-                if cursor_document_id
-                else degraded_query.where(filter=FieldFilter("loggedAt", "<", cursor_logged_at))
+            indexed_query = _apply_legacy_logged_at_filters(
+                indexed_query,
+                logged_at_start=logged_at_start,
+                logged_at_end=logged_at_end,
             )
-            legacy_query = (
-                legacy_query.start_after([cursor_logged_at, cursor_document_id])
-                if cursor_document_id
-                else legacy_query.where(filter=FieldFilter("timestamp", "<", cursor_logged_at))
+            degraded_query = meals_ref.order_by(
+                "loggedAt",
+                direction=firestore.Query.DESCENDING,
             )
-            legacy_degraded_query = (
-                legacy_degraded_query.start_after([cursor_logged_at, cursor_document_id])
-                if cursor_document_id
-                else legacy_degraded_query.where(filter=FieldFilter("timestamp", "<", cursor_logged_at))
+            degraded_query = _apply_legacy_logged_at_filters(
+                degraded_query,
+                logged_at_start=logged_at_start,
+                logged_at_end=logged_at_end,
             )
+        else:
+            indexed_query = (
+                meals_ref.where(filter=FieldFilter("deleted", "==", False))
+                .order_by("dayKey", direction=firestore.Query.DESCENDING)
+                .order_by("loggedAt", direction=firestore.Query.DESCENDING)
+                .order_by(DOCUMENT_ID_FIELD, direction=firestore.Query.DESCENDING)
+            )
+            indexed_query = _apply_day_key_filters(
+                indexed_query,
+                day_key_start=day_key_start,
+                day_key_end=day_key_end,
+            )
+            degraded_query = meals_ref.order_by(
+                "dayKey",
+                direction=firestore.Query.DESCENDING,
+            )
+            degraded_query = _apply_day_key_filters(
+                degraded_query,
+                day_key_start=day_key_start,
+                day_key_end=day_key_end,
+            )
+            if parsed_cursor is not None and parsed_cursor[2]:
+                indexed_query = indexed_query.start_after(
+                    [parsed_cursor[0], parsed_cursor[1], parsed_cursor[2]]
+                )
 
         def include_item(item: dict[str, Any]) -> None:
             doc_id = coerce_optional_str(item.get("id"))
@@ -597,8 +649,12 @@ async def list_history(
                 protein=protein,
                 carbs=carbs,
                 fat=fat,
+                day_key_start=day_key_start,
+                day_key_end=day_key_end,
                 logged_at_start=logged_at_start,
                 logged_at_end=logged_at_end,
+                before_cursor=parsed_cursor,
+                require_canonical_day_key=not use_legacy_logged_at_range,
             ):
                 items_by_id[doc_id] = item
 
@@ -613,22 +669,9 @@ async def list_history(
                 "Missing Firestore composite index for meals.history; using degraded bounded query.",
                 extra={"user_id": user_id},
             )
-            degraded_limit = max(limit_count * 6, 120)
+            degraded_limit = max(limit_count * 20, 500)
             degraded_snapshots = list(degraded_query.limit(degraded_limit).stream())
             for snapshot in degraded_snapshots:
-                include_item(_normalize_meal_snapshot(user_id, snapshot))
-                if len(items_by_id) >= limit_count:
-                    break
-
-        if len(items_by_id) < limit_count:
-            legacy_limit = max(limit_count * 6, 120)
-            try:
-                legacy_snapshots = list(legacy_query.limit(legacy_limit).stream())
-            except FailedPrecondition as exc:
-                if not is_missing_index_error(exc):
-                    raise
-                legacy_snapshots = list(legacy_degraded_query.limit(legacy_limit).stream())
-            for snapshot in legacy_snapshots:
                 include_item(_normalize_meal_snapshot(user_id, snapshot))
                 if len(items_by_id) >= limit_count:
                     break
@@ -638,21 +681,11 @@ async def list_history(
 
     items = sorted(
         items_by_id.values(),
-        key=lambda meal: (
-            coerce_optional_str(meal.get("loggedAt")) or "",
-            coerce_optional_str(meal.get("id")) or "",
-        ),
+        key=_history_sort_key,
         reverse=True,
     )[:limit_count]
 
-    next_cursor = (
-        meal_storage.build_cursor(
-            coerce_optional_str(items[-1].get("loggedAt")) or "",
-            coerce_optional_str(items[-1].get("id")) or "",
-        )
-        if len(items) == limit_count
-        else None
-    )
+    next_cursor = _build_history_cursor(items[-1]) if len(items) == limit_count else None
     return items, next_cursor
 
 

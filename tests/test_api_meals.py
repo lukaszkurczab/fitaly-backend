@@ -39,7 +39,9 @@ def test_get_meals_history_returns_backend_payload(
     )
 
     response = client.get(
-        "/api/v1/users/me/meals/history?limit=10&caloriesMin=100&caloriesMax=500",
+        "/api/v1/users/me/meals/history"
+        "?limit=10&caloriesMin=100&caloriesMax=500"
+        "&dayKeyStart=2026-03-01&dayKeyEnd=2026-03-31",
         headers=auth_headers("user-1"),
     )
 
@@ -53,9 +55,25 @@ def test_get_meals_history_returns_backend_payload(
         protein=None,
         carbs=None,
         fat=None,
-        logged_at_start=None,
-        logged_at_end=None,
+        day_key_start="2026-03-01",
+        day_key_end="2026-03-31",
     )
+
+
+def test_get_meals_history_rejects_invalid_day_key(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    list_history = mocker.patch("app.api.routes.meals.meal_service.list_history")
+
+    response = client.get(
+        "/api/v1/users/me/meals/history?dayKeyStart=2026/03/01",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "dayKey must use YYYY-MM-DD format"}
+    list_history.assert_not_called()
 
 
 def test_get_meal_changes_returns_backend_payload(

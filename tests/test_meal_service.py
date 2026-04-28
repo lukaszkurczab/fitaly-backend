@@ -105,11 +105,12 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
     assert result["cloudId"] == "meal-1"
     assert result["loggedAt"] == "2026-03-03T12:30:00.000Z"
     assert result["timestamp"] == "2026-03-03T12:30:00.000Z"
+    assert result["dayKey"] == "2026-03-03"
     assert result["deleted"] is True
     meal_ref.set.assert_called_once_with(
         {
             "loggedAt": "2026-03-03T12:30:00.000Z",
-            "dayKey": None,
+            "dayKey": "2026-03-03",
             "loggedAtLocalMin": None,
             "tzOffsetMin": None,
             "type": "other",
@@ -128,7 +129,7 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
         },
         merge=True,
     )
-    sync_streak.assert_called_once_with("user-1", reference_day_key=None)
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
 def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) -> None:
@@ -345,11 +346,12 @@ def _history_doc(
     meal_id: str,
     timestamp: str,
     deleted: bool,
+    day_key: str | None = None,
 ) -> dict[str, Any]:
     return {
         "loggedAt": timestamp,
         "timestamp": timestamp,
-        "dayKey": timestamp[:10],
+        "dayKey": day_key or timestamp[:10],
         "type": "lunch",
         "ingredients": [],
         "createdAt": timestamp,
@@ -411,7 +413,114 @@ def test_list_history_falls_back_on_missing_index_and_still_excludes_deleted(
 
     assert [item["cloudId"] for item in items] == ["meal-2", "meal-1"]
     assert all(item["deleted"] is False for item in items)
-    assert next_cursor is not None
+    assert next_cursor == "2026-04-18|2026-04-18T07:00:00.000Z|meal-1"
+
+
+def test_list_history_filters_by_day_key_without_logged_at_day_fallback(
+    mocker: MockerFixture,
+) -> None:
+    indexed_query = _FakeHistoryQuery(
+        snapshots=[
+            _FakeHistorySnapshot(
+                "meal-in-range",
+                _history_doc(
+                    meal_id="meal-in-range",
+                    timestamp="2026-04-17T22:30:00.000Z",
+                    day_key="2026-04-18",
+                    deleted=False,
+                ),
+            ),
+            _FakeHistorySnapshot(
+                "meal-outside-range",
+                _history_doc(
+                    meal_id="meal-outside-range",
+                    timestamp="2026-04-18T12:00:00.000Z",
+                    day_key="2026-04-17",
+                    deleted=False,
+                ),
+            ),
+            _FakeHistorySnapshot(
+                "meal-missing-day-key",
+                {
+                    "loggedAt": "2026-04-18T14:00:00.000Z",
+                    "timestamp": "2026-04-18T14:00:00.000Z",
+                    "type": "lunch",
+                    "ingredients": [],
+                    "createdAt": "2026-04-18T14:00:00.000Z",
+                    "updatedAt": "2026-04-18T14:00:00.000Z",
+                    "deleted": False,
+                    "totals": {"kcal": 300, "protein": 20, "carbs": 30, "fat": 10},
+                },
+            ),
+            _FakeHistorySnapshot(
+                "meal-deleted",
+                _history_doc(
+                    meal_id="meal-deleted",
+                    timestamp="2026-04-18T13:00:00.000Z",
+                    day_key="2026-04-18",
+                    deleted=True,
+                ),
+            ),
+        ],
+    )
+    degraded_query = _FakeHistoryQuery(snapshots=[])
+    meals_collection = _FakeHistoryMealsCollection(
+        indexed_query=indexed_query,
+        degraded_query=degraded_query,
+    )
+
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    items, next_cursor = asyncio.run(
+        meal_service.list_history(
+            "user-1",
+            limit_count=10,
+            day_key_start="2026-04-18",
+            day_key_end="2026-04-18",
+        )
+    )
+
+    assert [item["cloudId"] for item in items] == ["meal-in-range"]
+    assert items[0]["loggedAt"] == "2026-04-17T22:30:00.000Z"
+    assert next_cursor is None
+
+
+def test_upsert_meal_derives_valid_day_key_from_logged_at(mocker: MockerFixture) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    result = asyncio.run(
+        meal_service.upsert_meal(
+            "user-1",
+            {
+                "mealId": "meal-1",
+                "loggedAt": "2026-04-18T01:30:00.000Z",
+                "type": "snack",
+                "ingredients": [],
+            },
+        )
+    )
+
+    assert result["dayKey"] == "2026-04-18"
+    meal_ref.set.assert_called_once()
+    assert meal_ref.set.call_args.args[0]["dayKey"] == "2026-04-18"
 
 
 def test_list_history_raises_firestore_error_on_non_index_failed_precondition(

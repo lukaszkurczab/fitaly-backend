@@ -119,6 +119,29 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "dayKey",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "loggedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "meals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "deleted",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "loggedAt",
           "order": "DESCENDING"
         },
