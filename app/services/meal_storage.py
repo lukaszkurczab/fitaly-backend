@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import re
 from typing import Any, Callable
@@ -73,22 +74,50 @@ def build_cursor(field_value: str, document_id: str) -> str:
     return f"{field_value}|{document_id}"
 
 
-def parse_cursor(value: str | None) -> tuple[str, str | None] | None:
+def _normalize_iso8601_utc(value: str) -> str:
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError("Invalid cursor")
+    parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00",
+        "Z",
+    )
+
+
+def parse_cursor(
+    value: str | None,
+    *,
+    require_document_id: bool = False,
+    normalize_field_value: Callable[[str], str] | None = None,
+) -> tuple[str, str | None] | None:
     if value is None:
         return None
 
     normalized = value.strip()
     if not normalized:
+        if require_document_id:
+            raise ValueError("Invalid cursor")
         return None
 
     if "|" not in normalized:
+        if require_document_id:
+            raise ValueError("Invalid cursor")
         return normalized, None
 
     field_value, document_id = normalized.rsplit("|", 1)
     field_value = field_value.strip()
     document_id = document_id.strip()
-    if not field_value:
+    if not field_value or (require_document_id and not document_id):
         raise ValueError("Invalid cursor")
+
+    if normalize_field_value is not None:
+        try:
+            field_value = normalize_field_value(field_value)
+        except ValueError as exc:
+            raise ValueError("Invalid cursor") from exc
 
     return field_value, document_id or None
 
@@ -109,6 +138,7 @@ async def list_changes_paginated(
     *,
     limit_count: int = 100,
     after_cursor: str | None = None,
+    require_document_id_cursor: bool = False,
     error_message: str = "Failed to list changes.",
 ) -> tuple[list[dict[str, Any]], str | None]:
     try:
@@ -116,7 +146,11 @@ async def list_changes_paginated(
             _DOCUMENT_ID_FIELD,
             direction=firestore.Query.ASCENDING,
         )
-        parsed_cursor = parse_cursor(after_cursor)
+        parsed_cursor = parse_cursor(
+            after_cursor,
+            require_document_id=require_document_id_cursor,
+            normalize_field_value=_normalize_iso8601_utc if require_document_id_cursor else None,
+        )
         if parsed_cursor is not None:
             updated_at, document_id = parsed_cursor
             query = (

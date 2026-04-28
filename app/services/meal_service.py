@@ -56,7 +56,18 @@ def _as_object_map(value: object) -> dict[str, object] | None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _parse_iso8601_utc(value: Any) -> datetime:
+    candidate = str(value or "").strip()
+    if not candidate:
+        raise ValueError("Missing ISO timestamp")
+
+    parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
@@ -64,8 +75,10 @@ def coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
     if not candidate:
         raise ValueError("Missing ISO timestamp")
 
-    datetime.fromisoformat(candidate.replace("Z", "+00:00"))
-    return candidate
+    return _parse_iso8601_utc(candidate).isoformat(timespec="milliseconds").replace(
+        "+00:00",
+        "Z",
+    )
 
 
 def _derive_day_key_from_logged_at(logged_at: str) -> str:
@@ -703,6 +716,7 @@ async def list_changes(
         _normalize_meal_snapshot,
         limit_count=limit_count,
         after_cursor=after_cursor,
+        require_document_id_cursor=True,
         error_message="Failed to list meal changes.",
     )
 

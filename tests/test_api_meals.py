@@ -86,7 +86,7 @@ def test_get_meal_changes_returns_backend_payload(
     )
 
     response = client.get(
-        "/api/v1/users/me/meals/changes?afterCursor=2026-03-01T00:00:00.000Z",
+        "/api/v1/users/me/meals/changes?afterCursor=2026-03-01T00:00:00.000Z%7Cmeal-0",
         headers=auth_headers("user-1"),
     )
 
@@ -98,8 +98,26 @@ def test_get_meal_changes_returns_backend_payload(
     list_changes.assert_called_once_with(
         "user-1",
         limit_count=100,
-        after_cursor="2026-03-01T00:00:00.000Z",
+        after_cursor="2026-03-01T00:00:00.000Z|meal-0",
     )
+
+
+def test_get_meal_changes_returns_400_for_invalid_cursor(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.meals.meal_service.list_changes",
+        side_effect=ValueError("Invalid cursor"),
+    )
+
+    response = client.get(
+        "/api/v1/users/me/meals/changes?afterCursor=not-a-cursor",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid cursor"}
 
 
 def test_get_meal_photo_url_returns_backend_payload(
