@@ -190,6 +190,7 @@ def test_post_meal_upsert_persists_via_backend_service(
         json={
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
             "type": "lunch",
             "ingredients": [],
         },
@@ -238,6 +239,7 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
         json={
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
             "type": "lunch",
             "ingredients": [],
             "inputMethod": "photo",
@@ -267,7 +269,7 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "cloudId": None,
             "loggedAt": None,
             "timestamp": "2026-03-03T12:00:00.000Z",
-            "dayKey": None,
+            "dayKey": "2026-03-03",
             "loggedAtLocalMin": None,
             "tzOffsetMin": None,
             "type": "lunch",
@@ -294,6 +296,43 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "userUid": None,
         },
     )
+
+
+def test_post_meal_upsert_rejects_missing_day_key(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Missing dayKey"}
+
+
+def test_post_meal_upsert_rejects_invalid_day_key_with_400(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026/03/03",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "dayKey must use YYYY-MM-DD format"}
 
 
 def test_post_meal_delete_uses_backend_service(

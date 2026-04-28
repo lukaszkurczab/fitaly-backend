@@ -296,6 +296,7 @@ class _FakeHistoryQuery:
         self._snapshots = snapshots
         self._failure = failure
         self._limit: int | None = None
+        self._start_after: list[str] | None = None
 
     def where(self, *, filter: object):  # noqa: A002
         del filter
@@ -306,7 +307,7 @@ class _FakeHistoryQuery:
         return self
 
     def start_after(self, cursor: list[str]):
-        del cursor
+        self._start_after = cursor
         return self
 
     def limit(self, value: int):
@@ -317,6 +318,19 @@ class _FakeHistoryQuery:
         if self._failure is not None:
             raise self._failure
         items = self._snapshots
+        if self._start_after and len(self._start_after) == 3:
+            cursor_key = tuple(self._start_after)
+
+            def sort_key(snapshot: _FakeHistorySnapshot) -> tuple[str, str, str]:
+                data = snapshot.to_dict()
+                logged_at = str(data.get("loggedAt") or data.get("timestamp") or "")
+                return (
+                    str(data.get("dayKey") or logged_at[:10]),
+                    logged_at,
+                    snapshot.id,
+                )
+
+            items = [snapshot for snapshot in items if sort_key(snapshot) < cursor_key]
         if self._limit is not None:
             items = items[: self._limit]
         return iter(items)
@@ -491,7 +505,7 @@ def test_list_history_filters_by_day_key_without_logged_at_day_fallback(
     assert next_cursor is None
 
 
-def test_upsert_meal_derives_valid_day_key_from_logged_at(mocker: MockerFixture) -> None:
+def test_upsert_meal_requires_explicit_day_key(mocker: MockerFixture) -> None:
     client = mocker.Mock()
     users_collection = mocker.Mock()
     user_ref = mocker.Mock()
@@ -506,21 +520,132 @@ def test_upsert_meal_derives_valid_day_key_from_logged_at(mocker: MockerFixture)
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
 
-    result = asyncio.run(
-        meal_service.upsert_meal(
-            "user-1",
-            {
-                "mealId": "meal-1",
-                "loggedAt": "2026-04-18T01:30:00.000Z",
-                "type": "snack",
-                "ingredients": [],
-            },
+    with pytest.raises(ValueError, match="Missing dayKey"):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                {
+                    "mealId": "meal-1",
+                    "loggedAt": "2026-04-18T01:30:00.000Z",
+                    "type": "snack",
+                    "ingredients": [],
+                },
+            )
         )
+
+    meal_ref.set.assert_not_called()
+
+
+def test_upsert_meal_rejects_invalid_day_key(mocker: MockerFixture) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    with pytest.raises(ValueError, match="dayKey must use YYYY-MM-DD format"):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                {
+                    "mealId": "meal-1",
+                    "loggedAt": "2026-04-18T01:30:00.000Z",
+                    "dayKey": "2026/04/18",
+                    "type": "snack",
+                    "ingredients": [],
+                },
+            )
+        )
+
+    meal_ref.set.assert_not_called()
+
+
+def test_list_history_paginates_composite_cursor_without_duplicates_or_gaps(
+    mocker: MockerFixture,
+) -> None:
+    snapshots = [
+        _FakeHistorySnapshot(
+            "meal-e",
+            _history_doc(
+                meal_id="meal-e",
+                timestamp="2026-04-19T12:00:00.000Z",
+                day_key="2026-04-19",
+                deleted=False,
+            ),
+        ),
+        _FakeHistorySnapshot(
+            "meal-d",
+            _history_doc(
+                meal_id="meal-d",
+                timestamp="2026-04-19T12:00:00.000Z",
+                day_key="2026-04-19",
+                deleted=False,
+            ),
+        ),
+        _FakeHistorySnapshot(
+            "meal-c",
+            _history_doc(
+                meal_id="meal-c",
+                timestamp="2026-04-19T12:00:00.000Z",
+                day_key="2026-04-19",
+                deleted=False,
+            ),
+        ),
+        _FakeHistorySnapshot(
+            "meal-b",
+            _history_doc(
+                meal_id="meal-b",
+                timestamp="2026-04-18T09:00:00.000Z",
+                day_key="2026-04-18",
+                deleted=False,
+            ),
+        ),
+        _FakeHistorySnapshot(
+            "meal-a",
+            _history_doc(
+                meal_id="meal-a",
+                timestamp="2026-04-17T09:00:00.000Z",
+                day_key="2026-04-17",
+                deleted=False,
+            ),
+        ),
+    ]
+    indexed_query = _FakeHistoryQuery(snapshots=snapshots)
+    degraded_query = _FakeHistoryQuery(snapshots=[])
+    meals_collection = _FakeHistoryMealsCollection(
+        indexed_query=indexed_query,
+        degraded_query=degraded_query,
     )
 
-    assert result["dayKey"] == "2026-04-18"
-    meal_ref.set.assert_called_once()
-    assert meal_ref.set.call_args.args[0]["dayKey"] == "2026-04-18"
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    page1, cursor1 = asyncio.run(meal_service.list_history("user-1", limit_count=2))
+    page2, cursor2 = asyncio.run(
+        meal_service.list_history("user-1", limit_count=2, before_cursor=cursor1)
+    )
+    page3, cursor3 = asyncio.run(
+        meal_service.list_history("user-1", limit_count=2, before_cursor=cursor2)
+    )
+
+    ids = [item["cloudId"] for item in [*page1, *page2, *page3]]
+    assert ids == ["meal-e", "meal-d", "meal-c", "meal-b", "meal-a"]
+    assert len(ids) == len(set(ids))
+    assert cursor1 == "2026-04-19|2026-04-19T12:00:00.000Z|meal-d"
+    assert cursor2 == "2026-04-18|2026-04-18T09:00:00.000Z|meal-b"
+    assert cursor3 is None
 
 
 def test_list_history_raises_firestore_error_on_non_index_failed_precondition(

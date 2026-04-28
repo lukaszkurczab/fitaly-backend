@@ -320,6 +320,7 @@ def normalize_meal_document_payload(
     fallback_cloud_id: str | None = None,
     fallback_updated_at: str | None = None,
     fallback_day_key: str | None = None,
+    allow_logged_at_day_key_fallback: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     now_iso = _now_iso()
     meal_id = _resolve_meal_id(payload, fallback_cloud_id=fallback_cloud_id)
@@ -331,7 +332,7 @@ def normalize_meal_document_payload(
     day_key = _coerce_day_key(
         payload.get("dayKey"),
         fallback_day_key=fallback_day_key,
-        fallback_logged_at=logged_at,
+        fallback_logged_at=logged_at if allow_logged_at_day_key_fallback else None,
     )
     deleted = _as_bool(payload.get("deleted"))
 
@@ -707,7 +708,11 @@ async def list_changes(
 
 
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    meal_id, normalized_document = normalize_meal_document_payload(user_id, payload)
+    meal_id, normalized_document = normalize_meal_document_payload(
+        user_id,
+        payload,
+        allow_logged_at_day_key_fallback=False,
+    )
     meal_ref = _meal_ref(user_id, meal_id)
 
     try:
@@ -716,8 +721,6 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             existing = _normalize_meal_snapshot(user_id, snapshot)
             if existing["updatedAt"] > normalized_document["updatedAt"]:
                 return existing
-            if not normalized_document.get("dayKey"):
-                normalized_document["dayKey"] = coerce_optional_str(existing.get("dayKey"))
         meal_ref.set(normalized_document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(

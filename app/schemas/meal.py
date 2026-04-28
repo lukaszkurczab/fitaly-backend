@@ -174,13 +174,6 @@ class MealUpsertRequest(BaseModel):
     totals: MealTotals | None = None
     userUid: str | None = None
 
-    @field_validator("dayKey")
-    @classmethod
-    def _validate_day_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return validate_day_key_format(value)
-
 
 class MealUpsertResponse(BaseModel):
     meal: MealItem
