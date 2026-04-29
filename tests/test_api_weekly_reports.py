@@ -44,6 +44,27 @@ def test_get_weekly_report_returns_backend_payload(
     }
 
 
+def test_get_weekly_report_returns_503_when_feature_flag_is_disabled(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    get_credits_status = mocker.patch(
+        "app.api.routes.weekly_reports.ai_credits_service.get_credits_status"
+    )
+    get_weekly_report = mocker.patch("app.api.routes.weekly_reports.get_weekly_report")
+    mocker.patch("app.api.routes.weekly_reports.settings.WEEKLY_REPORTS_ENABLED", False)
+
+    response = client.get(
+        "/api/v2/users/me/reports/weekly?weekEnd=2026-03-15",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Weekly reports are disabled"}
+    get_credits_status.assert_not_called()
+    get_weekly_report.assert_not_called()
+
+
 def test_get_weekly_report_returns_400_for_invalid_week_end(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,

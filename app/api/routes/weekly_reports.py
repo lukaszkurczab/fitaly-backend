@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request, raise_http_exception
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request, raise_http_exception, raise_service_unavailable
+from app.core.exceptions import FirestoreServiceError, WeeklyReportUnavailableError
+from app.core.config import settings
 from app.services import ai_credits_service
 from app.schemas.weekly_reports import WeeklyReportResponse
 from app.services.weekly_report_service import get_weekly_report
@@ -24,6 +25,12 @@ async def get_user_weekly_report_me(
     weekEnd: str | None = Query(default=None, min_length=10, max_length=10),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> WeeklyReportResponse:
+    if not settings.WEEKLY_REPORTS_ENABLED:
+        raise_service_unavailable(
+            WeeklyReportUnavailableError("Weekly reports are disabled by configuration."),
+            detail="Weekly reports are disabled",
+        )
+
     try:
         credits_status = await ai_credits_service.get_credits_status(current_user.uid)
         if credits_status.tier != "premium":
@@ -33,6 +40,8 @@ async def get_user_weekly_report_me(
             )
 
         return await get_weekly_report(current_user.uid, week_end=weekEnd)
+    except WeeklyReportUnavailableError as exc:
+        raise_service_unavailable(exc, detail="Weekly reports are disabled")
     except ValueError as exc:
         raise_bad_request(exc)
     except FirestoreServiceError as exc:

@@ -29,6 +29,10 @@ class TelemetryRateLimitError(Exception):
     """Raised when a telemetry client exceeds the allowed request rate."""
 
 
+class NutritionStateUnavailableError(Exception):
+    """Raised when nutrition state is disabled or unavailable by configuration."""
+
+
 class CoachUnavailableError(Exception):
     """Raised when coach insights cannot be computed from required foundations."""
 
@@ -42,6 +46,10 @@ class ReminderDecisionContractError(Exception):
 
     This is always an internal error (500), never a client input error (400).
     """
+
+
+class WeeklyReportUnavailableError(Exception):
+    """Raised when weekly reports are disabled or unavailable by configuration."""
 
 
 class AiGatewayRateLimitError(Exception):

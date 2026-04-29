@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_service_unavailable
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.habits import HabitSignalsResponse
 from app.services.habit_signal_service import get_habit_signals
@@ -22,6 +24,12 @@ router = APIRouter()
 async def get_user_habits_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> HabitSignalsResponse:
+    if not settings.HABITS_ENABLED:
+        raise_service_unavailable(
+            RuntimeError("Habit signals are disabled by configuration."),
+            detail="Habit signals are disabled",
+        )
+
     try:
         return await get_habit_signals(current_user.uid)
     except FirestoreServiceError as exc:

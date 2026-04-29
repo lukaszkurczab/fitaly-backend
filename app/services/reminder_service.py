@@ -30,6 +30,10 @@ async def get_reminder_decision(
 ) -> ReminderDecision:
     if not settings.SMART_REMINDERS_ENABLED:
         raise ReminderUnavailableError("Smart reminders are disabled.")
+    if not settings.STATE_ENABLED:
+        raise ReminderUnavailableError("Smart reminders require enabled nutrition state.")
+    if not settings.HABITS_ENABLED:
+        raise ReminderUnavailableError("Smart reminders require enabled habit signals.")
 
     state = await get_nutrition_state(user_id, day_key=day_key)
     _ensure_required_foundations_available(state)

@@ -33,15 +33,15 @@ Expected responses:
 |---|---|---|
 | `200` | feature computed successfully | valid `WeeklyReportResponse` payload |
 | `400` | invalid `weekEnd` | client input bug |
+| `503` | `WEEKLY_REPORTS_ENABLED=false` | runtime kill switch is active |
 | `500` | backend failure | investigate Firestore/service failure |
 
 Expected payload statuses inside `200`:
 
 - `ready`
 - `insufficient_data`
-- `not_available`
 
-After rollout, `not_available` should only appear when the backend flag is intentionally off.
+After rollout, a disabled response should only appear when the backend flag is intentionally off.
 
 ## Verification Before Rollout
 
@@ -49,7 +49,7 @@ After rollout, `not_available` should only appear when the backend flag is inten
 2. Verify a week with at least `4` valid logged days returns `status="ready"`.
 3. Verify an empty or very sparse week returns `status="insufficient_data"`.
 4. Verify invalid `weekEnd` returns `400`.
-5. Verify disabling `WEEKLY_REPORTS_ENABLED` returns `status="not_available"` without backend crash.
+5. Verify disabling `WEEKLY_REPORTS_ENABLED` returns `503` with `detail="Weekly reports are disabled"` without backend crash.
 6. Verify mobile renders loading, ready, insufficient-data, and unavailable states.
 
 ## QA Notes
@@ -95,7 +95,7 @@ Interpretation:
 
 - `500` above a low single-digit baseline means backend regression
 - `insufficient_data` dominating for established users suggests thresholds are too strict or input quality regressed
-- any `not_available` payload while the flag is on indicates rollout/config drift
+- any disabled response while the flag is on indicates rollout/config drift
 - repeated reports where both top insights say almost the same thing suggests selection redundancy regression
 
 ### Mobile
@@ -131,7 +131,7 @@ WEEKLY_REPORTS_ENABLED=false
 Effect:
 
 - backend still serves the endpoint
-- payload becomes `status="not_available"`
+- backend returns `503` with `detail="Weekly reports are disabled"`
 - no weekly synthesis is computed
 
 ### Mobile rollback
@@ -152,7 +152,7 @@ Covered in tests today:
 
 - ready
 - insufficient_data
-- not_available
+- disabled response count
 - deterministic ordering
 - insight selection
 - priority selection

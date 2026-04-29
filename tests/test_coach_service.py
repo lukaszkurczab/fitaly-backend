@@ -92,6 +92,30 @@ def test_get_coach_response_marks_non_critical_foundation_degradation(
     assert response.meta.isDegraded is True
 
 
+def test_get_coach_response_raises_when_state_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    get_nutrition_state = mocker.patch("app.services.coach_service.get_nutrition_state")
+    mocker.patch("app.services.coach_service.settings.STATE_ENABLED", False)
+
+    with pytest.raises(CoachUnavailableError):
+        asyncio.run(get_coach_response("user-1"))
+
+    get_nutrition_state.assert_not_called()
+
+
+def test_get_coach_response_raises_when_habits_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    get_nutrition_state = mocker.patch("app.services.coach_service.get_nutrition_state")
+    mocker.patch("app.services.coach_service.settings.HABITS_ENABLED", False)
+
+    with pytest.raises(CoachUnavailableError):
+        asyncio.run(get_coach_response("user-1"))
+
+    get_nutrition_state.assert_not_called()
+
+
 def test_get_coach_response_raises_when_habits_foundation_is_unavailable(
     mocker: MockerFixture,
 ) -> None:

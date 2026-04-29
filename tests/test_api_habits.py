@@ -156,6 +156,21 @@ def test_get_user_habits_returns_response_shape(
     }
 
 
+def test_get_user_habits_returns_503_when_feature_flag_is_disabled(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    get_habit_signals = mocker.patch("app.api.routes.habits.get_habit_signals")
+    mocker.patch("app.api.routes.habits.settings.HABITS_ENABLED", False)
+    client = create_test_client()
+
+    response = client.get("/api/v2/users/me/habits", headers=auth_headers("user-1"))
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Habit signals are disabled"}
+    get_habit_signals.assert_not_called()
+
+
 def test_get_user_habits_returns_500_when_backend_fails(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,

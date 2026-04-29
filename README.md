@@ -192,15 +192,16 @@ Telemetry props must stay categorical and bounded. Do not send copy, raw reason 
 
 ## Feature flags
 
-| Flag                      | Default | What it controls                                                                                                                       |
-| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `TELEMETRY_ENABLED`       | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`.                                            |
-| `STATE_ENABLED`           | `true`  | Legacy compatibility flag. Launch runtime serves v2 nutrition state by default.                                                       |
-| `HABITS_ENABLED`          | `true`  | Legacy compatibility flag. Launch runtime computes habit signals by default.                                                           |
-| `SMART_REMINDERS_ENABLED` | `true`  | Legacy compatibility flag. Launch runtime serves v2 Smart Reminders decision endpoint by default.                                     |
-| `WEEKLY_REPORTS_ENABLED`  | `true`  | Legacy compatibility flag. Launch runtime serves v2 weekly reports endpoint by default.                                                |
-| `AI_GATEWAY_ENABLED`      | `true`  | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass.                                                              |
-| `AI_GATEWAY_ML_ENABLED`   | `false` | ML classifier for gateway. Do not enable without a trained model.                                                                      |
+These flags are runtime kill switches for live surfaces. A disabled surface returns a predictable disabled response and does not fall back to legacy behavior.
+
+| Flag                      | Default | What it controls                                                                                                                       | Disabled behavior |
+| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `TELEMETRY_ENABLED`       | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`.                                            | `503 Telemetry ingestion is disabled` |
+| `STATE_ENABLED`           | `true`  | Serve canonical v2 nutrition state. Coach and Smart Reminders require this foundation.                                                  | `503 Nutrition state is disabled` |
+| `HABITS_ENABLED`          | `true`  | Serve v2 habit signals and include habit summaries in nutrition state. Coach and Smart Reminders require this foundation.               | `503 Habit signals are disabled`; nutrition state marks habits as `disabled` |
+| `SMART_REMINDERS_ENABLED` | `true`  | Serve v2 Smart Reminders decision endpoint.                                                                                            | `503 Smart reminders are unavailable` |
+| `WEEKLY_REPORTS_ENABLED`  | `true`  | Serve v2 weekly reports endpoint.                                                                                                      | `503 Weekly reports are disabled` |
+| `AI_GATEWAY_ENABLED`      | `true`  | Enforce legacy v1 AI gateway guardrails and logging for photo/text meal analysis.                                                       | Gateway enforcement is bypassed for legacy v1 analysis routes |
 
 ## Backend setup
 
@@ -234,8 +235,10 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `APP_NAME`                       | No                            | `Fitaly Food Scanner API` | API title in docs/metadata                                     |
 | `VERSION`                        | No                            | `0.1.0`                   | API version exposed by app                                     |
 | `DEBUG`                          | No                            | `false`                   | FastAPI debug mode                                             |
+| `API_V1_PREFIX`                  | No                            | `/api/v1`                 | Current stable API prefix                                      |
+| `API_V2_PREFIX`                  | No                            | `/api/v2`                 | Canonical v2 API prefix                                        |
 | `ENVIRONMENT`                    | No                            | `local`                   | `local`, `development`, `staging`, `production`                |
-| `WEB_CONCURRENCY`                | No                            | `2`                       | Gunicorn worker count; set per Railway environment             |
+| `WEB_CONCURRENCY`                | Runtime only                  | `2`                       | Gunicorn worker count; read by `Procfile`, not app settings    |
 | `OPENAI_API_KEY`                 | Yes in production             | -                         | Auth for OpenAI API calls                                      |
 | `CORS_ORIGINS`                   | Yes in production             | -                         | Comma-separated frontend origins (`*` forbidden in production) |
 | `FIREBASE_PROJECT_ID`            | Yes when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Firebase project selection                                     |
@@ -252,7 +255,7 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `AI_CREDIT_COST_CHAT`            | No                            | `1`                       | Credits per chat request                                       |
 | `AI_CREDIT_COST_PHOTO`           | No                            | `5`                       | Credits per photo analysis                                     |
 | `AI_CREDIT_COST_TEXT_MEAL`       | No                            | `1`                       | Credits per text meal analysis                                 |
-| `AI_GATEWAY_ENABLED`             | No                            | `true`                    | Enforce AI gateway rules                                       |
+| `AI_GATEWAY_ENABLED`             | No                            | `true`                    | Enforce legacy v1 AI gateway rules                             |
 | `TELEMETRY_ENABLED`              | No                            | `false`                   | Accept v2 telemetry batches                                    |
 | `HABITS_ENABLED`                 | No                            | `true`                    | Compute habit signals                                          |
 | `STATE_ENABLED`                  | No                            | `true`                    | Serve v2 nutrition state                                       |
@@ -268,6 +271,7 @@ DESCRIPTION=Backend API for Fitaly mobile application.
 VERSION=0.1.0
 DEBUG=true
 API_V1_PREFIX=/api/v1
+API_V2_PREFIX=/api/v2
 ENVIRONMENT=development
 OPENAI_API_KEY=your_openai_key
 CORS_ORIGINS=http://localhost:19006
@@ -302,7 +306,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `STATE_ENABLED`, `HABITS_ENABLED`, `SMART_REMINDERS_ENABLED`, `WEEKLY_REPORTS_ENABLED`, `AI_GATEWAY_ENABLED`, `TELEMETRY_ENABLED`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
@@ -328,8 +332,8 @@ Use separate Railway environments for launch rehearsal:
 
 | Environment | Runtime profile | Required worker count | Firebase/Firestore startup | Data/integrations |
 | ----------- | --------------- | --------------------- | -------------------------- | ----------------- |
-| `prod`      | Always-on, launch-candidate runtime. Do not disable launch features to reduce cost. | `WEB_CONCURRENCY=2` | `EAGER_FIREBASE_INIT=true`; deploy fails fast when Firebase config or credentials are invalid. | Real production integrations, production Firebase project, production Firestore database (`FIRESTORE_DATABASE_ID=(default)`), Sentry error monitoring enabled with `SENTRY_ENVIRONMENT=production` and `SENTRY_TRACES_SAMPLE_RATE=0.01`. |
-| `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, `fitaly-smoke` Firestore database (`FIRESTORE_DATABASE_ID=fitaly-smoke`), `SENTRY_ENVIRONMENT=smoke`, `SENTRY_TRACES_SAMPLE_RATE=0`, and optional `SENTRY_DSN`; when unset, Sentry is disabled. |
+| `prod`      | Always-on, launch-candidate runtime. Do not disable launch features to reduce cost. | `WEB_CONCURRENCY=2` | `EAGER_FIREBASE_INIT=true`; deploy fails fast when Firebase config or credentials are invalid. | Real production integrations, production Firebase project, production Firestore database (`FIRESTORE_DATABASE_ID=(default)`), OpenAI enabled, Sentry error monitoring enabled with `SENTRY_ENVIRONMENT=production` and `SENTRY_TRACES_SAMPLE_RATE=0.01`, telemetry/credits/premium/reminders enabled according to launch plan. |
+| `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, separate Firestore database/config (`FIRESTORE_DATABASE_ID=fitaly-smoke`), limited OpenAI key if used, `SENTRY_ENVIRONMENT=smoke`, `SENTRY_TRACES_SAMPLE_RATE=0`, and optional `SENTRY_DSN`; when unset, Sentry is disabled. |
 
 RAM baseline is mainly affected by the number of Gunicorn worker processes because each worker loads the FastAPI app, settings, SDK clients, and runtime dependencies. Moving from hardcoded 4 workers to `WEB_CONCURRENCY=2` roughly halves the worker-process baseline for prod while preserving the launch-candidate feature set. Smoke uses `WEB_CONCURRENCY=1` to keep a lower idle baseline and avoid paying for duplicate warm worker processes in a controlled test environment. `EAGER_FIREBASE_INIT=false` in smoke also avoids paying startup cost for Firebase/Firestore until a request path actually needs Firestore.
 
@@ -356,7 +360,7 @@ Railway prod variable checklist:
 - `SENTRY_ENVIRONMENT=production`
 - `SENTRY_TRACES_SAMPLE_RATE=0.01`
 - Railway Health Check Path: `/api/v1/health`
-- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`, `TELEMETRY_ENABLED=true`
 
 Railway smoke variable checklist:
 
@@ -376,6 +380,7 @@ Railway smoke variable checklist:
 - Railway Health Check Path: `/api/v1/health`
 - For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
 - Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+- Set `TELEMETRY_ENABLED=true` when smoke validates telemetry ingestion; otherwise it may stay `false` to keep the runtime quieter.
 
 Railway dashboard checklist:
 

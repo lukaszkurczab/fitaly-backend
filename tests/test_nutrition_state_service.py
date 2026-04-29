@@ -6,7 +6,7 @@ import pytest
 from google.api_core.exceptions import FailedPrecondition, GoogleAPICallError
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import FirestoreServiceError
+from app.core.exceptions import FirestoreServiceError, NutritionStateUnavailableError
 from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 from app.services import nutrition_state_service
 
@@ -431,6 +431,64 @@ def test_get_nutrition_state_degrades_gracefully_for_subservices(
         "streak": "error",
         "ai": "error",
     }
+
+
+def test_get_nutrition_state_raises_when_state_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    get_firestore = mocker.patch("app.services.nutrition_state_service.get_firestore")
+    mocker.patch("app.services.nutrition_state_service.settings.STATE_ENABLED", False)
+
+    with pytest.raises(NutritionStateUnavailableError):
+        asyncio.run(
+            nutrition_state_service.get_nutrition_state(
+                "user-1",
+                day_key="2026-03-18",
+                now=NOW,
+            )
+        )
+
+    get_firestore.assert_not_called()
+
+
+def test_get_nutrition_state_marks_habits_disabled_when_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    client, _ = _mock_firestore(
+        mocker,
+        profile={"calorieTarget": 1800},
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T12:00:00Z",
+                kcal=400,
+                protein=20,
+            )
+        ],
+    )
+    mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
+    build_habits_summary = mocker.patch(
+        "app.services.nutrition_state_service.build_habits_summary"
+    )
+    mocker.patch(
+        "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
+        return_value=_credits_status(),
+    )
+    mocker.patch("app.services.nutrition_state_service.settings.HABITS_ENABLED", False)
+
+    response = asyncio.run(
+        nutrition_state_service.get_nutrition_state(
+            "user-1",
+            day_key="2026-03-18",
+            now=NOW,
+        )
+    )
+
+    assert response.habits.available is False
+    assert response.meta.componentStatus.habits == "disabled"
+    assert response.meta.isDegraded is False
+    build_habits_summary.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

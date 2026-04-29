@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.core.config import settings
 from app.core.datetime_utils import utc_now
+from app.core.exceptions import WeeklyReportUnavailableError
 from app.schemas.weekly_reports import WeeklyReportPeriod, WeeklyReportResponse
 from app.services.weekly_report_aggregation import WeeklyAggregate, collect_weekly_aggregate
 from app.services.weekly_report_selection import build_weekly_report_content
@@ -69,6 +71,9 @@ async def get_weekly_report(
     week_end: str | None = None,
     now: datetime | None = None,
 ) -> WeeklyReportResponse:
+    if not settings.WEEKLY_REPORTS_ENABLED:
+        raise WeeklyReportUnavailableError("Weekly reports are disabled.")
+
     resolved_week_end = resolve_requested_week_end(week_end, now=now)
     period = build_weekly_report_period(resolved_week_end)
     context = WeeklyReportRequestContext(user_id=user_id, period=period)

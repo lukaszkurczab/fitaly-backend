@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
-from app.api.http_errors import raise_bad_request
-from app.core.exceptions import FirestoreServiceError
+from app.api.http_errors import raise_bad_request, raise_service_unavailable
+from app.core.exceptions import FirestoreServiceError, NutritionStateUnavailableError
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.nutrition_state_service import get_nutrition_state
 
@@ -26,6 +26,8 @@ async def get_user_nutrition_state_me(
 ) -> NutritionStateResponse:
     try:
         return await get_nutrition_state(current_user.uid, day_key=day)
+    except NutritionStateUnavailableError as exc:
+        raise_service_unavailable(exc, detail="Nutrition state is disabled")
     except ValueError as exc:
         raise_bad_request(exc)
     except FirestoreServiceError as exc:

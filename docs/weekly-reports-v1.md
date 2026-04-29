@@ -63,7 +63,7 @@ Backend returns `WeeklyReportResponse` with:
 
 Boundaries enforced by schema:
 
-- `status`: `ready | insufficient_data | not_available`
+- `status`: `ready | insufficient_data`
 - `insights.length <= 4`
 - `priorities.length <= 2`
 - `summary.length <= 160`
@@ -97,11 +97,11 @@ Current placeholder behavior:
 - empty `priorities`
 - short bounded `summary`
 
-### `not_available`
+### Disabled surface
 
-Returned when `WEEKLY_REPORTS_ENABLED=false`.
+When `WEEKLY_REPORTS_ENABLED=false`, the endpoint returns `503 Service Unavailable` with `detail="Weekly reports are disabled"`.
 
-This is a product surface state, not an infrastructure error.
+This is a runtime kill switch state, not a fallback weekly report payload.
 
 ## Input Layer
 
@@ -190,7 +190,7 @@ Expected HTTP behavior:
 
 - `200 OK`
   - valid `WeeklyReportResponse`
-  - includes `ready`, `insufficient_data`, or `not_available`
+  - includes `ready` or `insufficient_data`
 - `400 Bad Request`
   - invalid `weekEnd`
 - `500 Internal Server Error`

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from pytest_mock import MockerFixture
 
+from app.core.exceptions import WeeklyReportUnavailableError
 from app.schemas.weekly_reports import WeeklyReportResponse
 from app.services.weekly_report_aggregation import build_weekly_aggregate_from_meals
 from app.services.weekly_report_service import (
@@ -143,6 +144,30 @@ def test_build_weekly_report_period_builds_closed_7_day_window() -> None:
 
     assert period.startDay == "2026-03-09"
     assert period.endDay == "2026-03-15"
+
+
+def test_get_weekly_report_raises_when_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    collect_weekly_aggregate = mocker.patch(
+        "app.services.weekly_report_service.collect_weekly_aggregate"
+    )
+    mocker.patch("app.services.weekly_report_service.settings.WEEKLY_REPORTS_ENABLED", False)
+
+    try:
+        asyncio.run(
+            get_weekly_report(
+                "user-1",
+                week_end="2026-03-15",
+                now=datetime(2026, 3, 21, 8, 0, tzinfo=UTC),
+            )
+        )
+    except WeeklyReportUnavailableError:
+        pass
+    else:
+        raise AssertionError("Expected WeeklyReportUnavailableError")
+
+    collect_weekly_aggregate.assert_not_called()
 
 
 def test_get_weekly_report_returns_insufficient_data_placeholder(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.core.config import settings
 from app.core.exceptions import CoachUnavailableError
 from app.schemas.coach import CoachMeta, CoachResponse
 from app.schemas.nutrition_state import NutritionStateResponse
@@ -12,6 +13,11 @@ async def get_coach_response(
     *,
     day_key: str | None = None,
 ) -> CoachResponse:
+    if not settings.STATE_ENABLED:
+        raise CoachUnavailableError("Coach insights require enabled nutrition state.")
+    if not settings.HABITS_ENABLED:
+        raise CoachUnavailableError("Coach insights require enabled habit signals.")
+
     state = await get_nutrition_state(user_id, day_key=day_key)
     _ensure_required_foundations_available(state)
 

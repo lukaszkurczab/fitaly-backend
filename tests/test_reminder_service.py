@@ -47,6 +47,30 @@ def test_get_reminder_decision_raises_when_feature_is_globally_disabled(
         asyncio.run(get_reminder_decision("user-1"))
 
 
+def test_get_reminder_decision_raises_when_state_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    get_nutrition_state = mocker.patch("app.services.reminder_service.get_nutrition_state")
+    mocker.patch("app.services.reminder_service.settings.STATE_ENABLED", False)
+
+    with pytest.raises(ReminderUnavailableError):
+        asyncio.run(get_reminder_decision("user-1"))
+
+    get_nutrition_state.assert_not_called()
+
+
+def test_get_reminder_decision_raises_when_habits_feature_is_disabled(
+    mocker: MockerFixture,
+) -> None:
+    get_nutrition_state = mocker.patch("app.services.reminder_service.get_nutrition_state")
+    mocker.patch("app.services.reminder_service.settings.HABITS_ENABLED", False)
+
+    with pytest.raises(ReminderUnavailableError):
+        asyncio.run(get_reminder_decision("user-1"))
+
+    get_nutrition_state.assert_not_called()
+
+
 def test_get_reminder_decision_returns_rule_engine_output(
     mocker: MockerFixture,
 ) -> None:

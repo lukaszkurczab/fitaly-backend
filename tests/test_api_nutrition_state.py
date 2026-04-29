@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import FirestoreServiceError
+from app.core.exceptions import FirestoreServiceError, NutritionStateUnavailableError
 from app.main import app
 from app.schemas.ai_credits import CreditCosts
 from app.schemas.nutrition_state import (
@@ -73,6 +73,21 @@ def test_get_nutrition_state_returns_backend_payload(
     assert response.json()["consumed"]["kcal"] == 1200.0
     assert response.json()["streak"]["current"] == 3
     assert response.json()["ai"]["usedThisPeriod"] == 9
+
+
+def test_get_nutrition_state_returns_503_when_feature_flag_is_disabled(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.nutrition_state.get_nutrition_state",
+        side_effect=NutritionStateUnavailableError("disabled"),
+    )
+
+    response = client.get("/api/v2/users/me/state", headers=auth_headers("user-1"))
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Nutrition state is disabled"}
 
 
 def test_get_nutrition_state_returns_500_when_backend_fails(

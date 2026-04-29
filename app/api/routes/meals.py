@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from typing import Any, NoReturn
+
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import ValidationError
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
@@ -37,6 +40,16 @@ def _validate_day_key_range(
     if normalized_start is not None and normalized_end is not None and normalized_start > normalized_end:
         raise ValueError("Invalid dayKey range")
     return normalized_start, normalized_end
+
+
+def _raise_meal_upsert_validation_error(exc: ValidationError) -> NoReturn:
+    for error in exc.errors(include_context=False):
+        if tuple(error.get("loc", ())) == ("dayKey",):
+            raise_bad_request(ValueError("dayKey must use YYYY-MM-DD format"))
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=exc.errors(include_context=False),
+    )
 
 
 @router.get("/users/me/meals/history", response_model=MealsHistoryPageResponse)
@@ -135,11 +148,14 @@ async def upload_meal_photo_me(
 
 @router.post("/users/me/meals", response_model=MealUpsertResponse)
 async def upsert_meal_me(
-    request: MealUpsertRequest,
+    request: dict[str, Any] = Body(...),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealUpsertResponse:
     try:
-        meal = await meal_service.upsert_meal(current_user.uid, request.model_dump())
+        parsed_request = MealUpsertRequest.model_validate(request)
+        meal = await meal_service.upsert_meal(current_user.uid, parsed_request.model_dump())
+    except ValidationError as exc:
+        _raise_meal_upsert_validation_error(exc)
     except ValueError as exc:
         raise_bad_request(exc)
 
