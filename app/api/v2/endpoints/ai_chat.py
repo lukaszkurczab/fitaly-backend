@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.v2.deps import get_chat_orchestrator
+from app.core.config import settings
 from app.core.errors import DomainError
 from app.domain.chat.orchestrator import ChatOrchestrator
 from app.schemas.ai_chat.request import ChatRunRequestDto
@@ -21,9 +22,19 @@ async def create_chat_run(
     """Create one backend-owned AI Chat v2 run.
 
     Error contract:
+    - kill switch returns `503 detail = {"code": "AI_CHAT_DISABLED", "message"}`.
     - domain failures are returned as `detail = {"code", "message"}`.
     - unexpected failures are mapped to `ai_chat_v2_internal_error`.
     """
+    if not settings.AI_CHAT_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "AI_CHAT_DISABLED",
+                "message": "AI Chat v2 is temporarily disabled.",
+            },
+        )
+
     try:
         return await orchestrator.run(
             user_id=current_user.uid,

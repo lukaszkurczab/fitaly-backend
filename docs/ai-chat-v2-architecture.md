@@ -27,18 +27,27 @@ This document defines the canonical backend path for AI Chat v2 and the guardrai
 
 ## Runtime Lifecycle (v2)
 
+Kill switch:
+
+- `AI_CHAT_ENABLED=true` by default.
+- When `AI_CHAT_ENABLED=false`, `POST /api/v2/ai/chat/runs` returns:
+  - status `503`
+  - `detail = {"code": "AI_CHAT_DISABLED", "message": "AI Chat v2 is temporarily disabled."}`
+- The endpoint must not fallback to any v1 chat runtime or hidden compatibility path.
+
 1. auth (endpoint dependency)
-2. consent gate
-3. idempotency lookup by `clientMessageId` in thread scope
-4. ensure/create thread and user message persistence
-5. planner
-6. tool execution via canonical `ToolRegistry`
-7. grounded context build + token budget enforcement
-8. generator + retry policy
-9. assistant message persistence
-10. memory summary refresh
-11. ai_run telemetry update
-12. response DTO mapping
+2. kill switch gate
+3. consent gate
+4. idempotency lookup by `clientMessageId` in thread scope
+5. ensure/create thread and user message persistence
+6. planner
+7. tool execution via canonical `ToolRegistry`
+8. grounded context build + token budget enforcement
+9. generator + retry policy
+10. assistant message persistence
+11. memory summary refresh
+12. ai_run telemetry update
+13. response DTO mapping
 
 ## v1/v2 Boundary Rules
 
