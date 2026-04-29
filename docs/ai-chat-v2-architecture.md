@@ -24,6 +24,11 @@ This document defines the canonical backend path for AI Chat v2 and the guardrai
   - `app/infra/firestore/mappers/*`
 - DTO contracts:
   - `app/schemas/ai_chat/*`
+- Context ownership:
+  - profile, goal, nutrition, and meal context used by AI Chat v2 are backend-owned and loaded via `app/domain/tools/*`
+  - frontend request payload must stay minimal (`threadId`, `clientMessageId`, `message`, `language`, optional `uiContext`)
+  - frontend must not send raw `meals`, `profile`, or competing meal summaries with chat runs
+  - if launch later needs unsynced client-only context, add a bounded `contextSnapshot` DTO with explicit semantics and limits; do not pass full meal history lists
 
 ## Runtime Lifecycle (v2)
 
@@ -43,7 +48,7 @@ Kill switch:
 6. idempotent credits deduct for `userId + threadId + clientMessageId + action=chat`
 7. ensure/create thread and user message persistence
 8. planner
-9. tool execution via canonical `ToolRegistry`
+9. tool execution via canonical `ToolRegistry` to fetch backend-owned profile/goal/nutrition/meal context
 10. grounded context build + token budget enforcement
 11. generator + retry policy
 12. assistant message persistence
@@ -74,6 +79,7 @@ Kill switch:
   - backward-compat alias exports in `app/api/routes/ai.py` (`legacy_*`, `ai_context_service = ...`, etc.)
   - chat-only v1 modules in `app/services/*` and `app/schemas/ai_ask.py`
 - v2 path must not depend on legacy AI context/prompt flow.
+- v2 path must not accept or depend on frontend-owned meal/profile history for canonical chat context.
 - Forbidden in canonical v2 path:
   - `app.services.ai_context_service`
   - `app.services.ai_chat_prompt_service`

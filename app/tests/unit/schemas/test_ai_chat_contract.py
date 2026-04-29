@@ -54,6 +54,28 @@ def test_ai_chat_v2_request_rejects_legacy_or_missing_fields() -> None:
             }
         )
 
+    with pytest.raises(ValidationError):
+        ChatRunRequestDto.model_validate(
+            {
+                "threadId": "thread-1",
+                "clientMessageId": "client-1",
+                "message": "Hej",
+                "language": "pl",
+                "meals": [],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ChatRunRequestDto.model_validate(
+            {
+                "threadId": "thread-1",
+                "clientMessageId": "client-1",
+                "message": "Hej",
+                "language": "pl",
+                "profile": {"goal": "maintain"},
+            }
+        )
+
 
 def test_ai_chat_v2_response_serializes_minimal_contract_only() -> None:
     response = ChatRunResponseDto.model_validate(
