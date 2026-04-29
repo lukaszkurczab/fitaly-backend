@@ -130,6 +130,7 @@ class ChatOrchestrator:
         )
         reply = ""
         assistant_message_id = ""
+        scope_decision = "ALLOW_APP"
         scope_resolved: str | None = None
         retry_count = 0
         run_status: RunStatus = "completed"
@@ -186,9 +187,11 @@ class ChatOrchestrator:
 
             if planner_result.task_type == "out_of_scope_refusal":
                 reply = self.prompt_composer.build_refusal_response(language)
+                scope_decision = "DENY_OTHER"
                 run_status = "rejected"
                 run_outcome = "rejected"
             elif planner_result.needs_follow_up:
+                scope_decision = self._derive_scope_decision(planner_result)
                 reply = (
                     planner_result.follow_up_question
                     or self._default_follow_up_question(language=language)
@@ -200,6 +203,7 @@ class ChatOrchestrator:
                     request=request,
                 )
                 tools_used = execution.names
+                scope_decision = self._derive_scope_decision(planner_result)
                 tool_metrics = execution.metrics
                 scope_resolved = execution.scope_resolved
 
@@ -285,6 +289,7 @@ class ChatOrchestrator:
                     "scopeResolved": scope_resolved,
                     "historyTurns": budget.history_turns,
                     "followUpRequired": follow_up_required,
+                    "scopeDecision": scope_decision,
                     "clientMessageId": request.client_message_id,
                     "threadId": request.thread_id,
                     "language": language,
@@ -313,6 +318,7 @@ class ChatOrchestrator:
                 "scopeResolved": scope_resolved,
                 "historyTurns": budget.history_turns,
                 "followUpRequired": follow_up_required,
+                "scopeDecision": scope_decision,
                 "clientMessageId": request.client_message_id,
                 "threadId": request.thread_id,
                 "language": language,
@@ -322,6 +328,7 @@ class ChatOrchestrator:
         return ChatRunResponseDto(
             runId=run_id,
             threadId=request.thread_id,
+            clientMessageId=request.client_message_id,
             assistantMessageId=assistant_message_id,
             reply=reply,
             usage=UsageDto(
@@ -330,14 +337,13 @@ class ChatOrchestrator:
                 totalTokens=usage.total_tokens,
             ),
             contextStats=ContextStatsDto(
-                plannerUsed=planner_used,
                 usedSummary=budget.used_summary,
                 historyTurns=budget.history_turns,
-                toolsUsed=tools_used,
                 truncated=budget.truncated,
-                scopeResolved=scope_resolved,
+                scopeDecision=scope_decision,
             ),
             credits=None,
+            persistence="backend_owned",
         )
 
     async def _ensure_run_started(
@@ -395,6 +401,7 @@ class ChatOrchestrator:
         return self._response_from_existing_run(
             run_id=user_message.run_id,
             thread_id=thread_id,
+            client_message_id=user_message.client_message_id or user_message.id,
             assistant_message=assistant,
             run=run,
         )
@@ -530,35 +537,33 @@ class ChatOrchestrator:
         *,
         run_id: str,
         thread_id: str,
+        client_message_id: str,
         assistant_message: ChatMessage,
         run: AiRun | None,
     ) -> ChatRunResponseDto:
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
-        planner_used = False
         used_summary = False
         history_turns = 0
-        tools_used: list[str] = []
         truncated = False
-        scope_resolved: str | None = None
+        scope_decision = "ALLOW_APP"
 
         if run is not None:
             prompt_tokens = run.prompt_tokens
             completion_tokens = run.completion_tokens
             total_tokens = run.total_tokens
-            planner_used = run.planner_used
             used_summary = run.summary_used
             history_turns = self._coerce_int(run.metadata.get("historyTurns"), default=0)
-            tools_used = list(run.tools_used)
             truncated = run.truncated
-            metadata_scope = run.metadata.get("scopeResolved")
-            if isinstance(metadata_scope, str) and metadata_scope.strip():
-                scope_resolved = metadata_scope.strip()
+            metadata_scope_decision = run.metadata.get("scopeDecision")
+            if isinstance(metadata_scope_decision, str) and metadata_scope_decision.strip():
+                scope_decision = metadata_scope_decision.strip()
 
         return ChatRunResponseDto(
             runId=run_id,
             threadId=thread_id,
+            clientMessageId=client_message_id,
             assistantMessageId=assistant_message.id,
             reply=assistant_message.content,
             usage=UsageDto(
@@ -567,14 +572,13 @@ class ChatOrchestrator:
                 totalTokens=total_tokens,
             ),
             contextStats=ContextStatsDto(
-                plannerUsed=planner_used,
                 usedSummary=used_summary,
                 historyTurns=history_turns,
-                toolsUsed=tools_used,
                 truncated=truncated,
-                scopeResolved=scope_resolved,
+                scopeDecision=scope_decision,
             ),
             credits=None,
+            persistence="backend_owned",
         )
 
     def _map_provider_error(self, exc: Exception) -> Exception:
@@ -583,6 +587,27 @@ class ChatOrchestrator:
                 "AI provider timed out or is temporarily unavailable."
             )
         return AiProviderNonRetryableError("AI provider request failed.")
+
+    @staticmethod
+    def _derive_scope_decision(planner_result: PlannerResultDto) -> str:
+        if planner_result.task_type == "out_of_scope_refusal":
+            return "DENY_OTHER"
+
+        capability_names = {capability.name for capability in planner_result.capabilities}
+        if capability_names & {
+            "resolve_time_scope",
+            "get_nutrition_period_summary",
+            "compare_periods",
+            "get_meal_logging_quality",
+        }:
+            return "ALLOW_NUTRITION"
+        if capability_names & {
+            "get_profile_summary",
+            "get_goal_context",
+            "get_recent_chat_summary",
+        }:
+            return "ALLOW_USER_DATA"
+        return "ALLOW_APP"
 
     @staticmethod
     def _normalize_language(value: str | None) -> str:

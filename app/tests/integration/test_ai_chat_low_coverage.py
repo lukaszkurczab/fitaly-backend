@@ -80,10 +80,10 @@ async def test_ai_chat_v2_low_coverage_uses_trimmed_grounding() -> None:
         ),
     )
 
-    assert response.context_stats.tools_used == [
-        "resolve_time_scope",
-        "get_nutrition_period_summary",
-    ]
+    assert response.client_message_id == "client-low-1"
+    assert response.context_stats.scope_decision == "ALLOW_NUTRITION"
+    assert response.persistence == "backend_owned"
+    assert response.credits is None
     assert response.reply.startswith("Masz niskie pokrycie")
 
     sent_messages = harness.generator.calls[0]

@@ -98,15 +98,15 @@ async def test_ai_chat_v2_run_e2e_happy_path() -> None:
     )
 
     assert response.thread_id == "thread-1"
+    assert response.client_message_id == "client-1"
     assert response.reply == "Masz dzisiaj dobre pokrycie logowania i stabilne bialko."
-    assert response.context_stats.planner_used is True
-    assert response.context_stats.tools_used == [
-        "resolve_time_scope",
-        "get_nutrition_period_summary",
-        "get_meal_logging_quality",
-    ]
-    assert response.context_stats.scope_resolved == "today"
+    assert response.context_stats.used_summary is False
+    assert response.context_stats.history_turns == 1
+    assert response.context_stats.truncated is False
+    assert response.context_stats.scope_decision == "ALLOW_NUTRITION"
     assert response.usage.total_tokens == 222
+    assert response.credits is None
+    assert response.persistence == "backend_owned"
 
     run = await harness.ai_run_service.get_run(run_id=response.run_id)
     assert run is not None

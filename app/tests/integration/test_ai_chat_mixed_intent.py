@@ -84,12 +84,10 @@ async def test_ai_chat_v2_mixed_intent_executes_multiple_capabilities() -> None:
         ),
     )
 
-    assert response.context_stats.tools_used == [
-        "resolve_time_scope",
-        "get_goal_context",
-        "get_nutrition_period_summary",
-    ]
-    assert response.context_stats.scope_resolved == "calendar_week"
+    assert response.client_message_id == "client-mixed-1"
+    assert response.context_stats.scope_decision == "ALLOW_NUTRITION"
+    assert response.persistence == "backend_owned"
+    assert response.credits is None
     assert response.reply.startswith("Postep celu")
 
     assert len(harness.tools["resolve_time_scope"].calls) == 1
