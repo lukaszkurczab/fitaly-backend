@@ -12,9 +12,11 @@ from app.core.exceptions import AiCreditsExhaustedError
 from app.domain.ai_runs.models.ai_run import AiRun, RunStatus
 from app.domain.ai_runs.services.ai_run_service import AiRunService
 from app.core.errors import (
+    AiChatIdempotencyConflictError,
     AiCreditsExhaustedDomainError,
     AiProviderNonRetryableError,
     AiProviderRetryableError,
+    AiProviderTimeoutError,
     ToolExecutionError,
 )
 from app.domain.chat.context_builder import BudgetResult, ContextBuilder
@@ -136,6 +138,13 @@ class ChatOrchestrator:
             )
             if replay is not None:
                 return replay
+            existing_run = await self.ai_run_service.get_run(
+                run_id=existing_user_message.run_id
+            )
+            if existing_run is not None and existing_run.status != "failed":
+                raise AiChatIdempotencyConflictError(
+                    "AI Chat run is already in progress or missing a replayable assistant response."
+                )
 
         run_id = (
             existing_user_message.run_id
@@ -371,18 +380,24 @@ class ChatOrchestrator:
                         },
                     )
 
-            if isinstance(exc, (AiProviderRetryableError, AiProviderNonRetryableError)):
+            if isinstance(
+                exc,
+                (AiProviderTimeoutError, AiProviderRetryableError, AiProviderNonRetryableError),
+            ):
                 retry_count = max(
                     retry_count,
                     self._coerce_int(getattr(exc, "retry_count", retry_count), default=retry_count),
                 )
-                failure_reason = (
-                    "provider_retryable_error"
-                    if isinstance(exc, AiProviderRetryableError)
-                    else "provider_non_retryable_error"
-                )
+                if isinstance(exc, AiProviderTimeoutError):
+                    failure_reason = "provider_timeout"
+                elif isinstance(exc, AiProviderRetryableError):
+                    failure_reason = "provider_retryable_error"
+                else:
+                    failure_reason = "provider_non_retryable_error"
             elif isinstance(exc, ToolExecutionError):
                 failure_reason = "tool_execution_failed"
+            elif isinstance(exc, AiChatIdempotencyConflictError):
+                failure_reason = "idempotency_conflict"
             else:
                 failure_reason = "orchestrator_failed"
 
@@ -627,9 +642,15 @@ class ChatOrchestrator:
             result = await self.retry_policy.run_with_retry(_invoke)
         except Exception as exc:  # noqa: BLE001
             retry_count = max(0, attempts - 1)
+            if self._is_timeout_error(exc):
+                wrapped = AiProviderTimeoutError(
+                    "AI provider timed out before a response was generated."
+                )
+                setattr(wrapped, "retry_count", retry_count)
+                raise wrapped from exc
             if self.retry_policy.is_retryable(exc):
                 wrapped = AiProviderRetryableError(
-                    "AI provider timed out or is temporarily unavailable."
+                    "AI provider is temporarily unavailable."
                 )
                 setattr(wrapped, "retry_count", retry_count)
                 raise wrapped from exc
@@ -787,11 +808,30 @@ class ChatOrchestrator:
         )
 
     def _map_provider_error(self, exc: Exception) -> Exception:
+        if self._is_timeout_error(exc):
+            return AiProviderTimeoutError(
+                "AI provider timed out before a response was generated."
+            )
         if self.retry_policy.is_retryable(exc):
             return AiProviderRetryableError(
-                "AI provider timed out or is temporarily unavailable."
+                "AI provider is temporarily unavailable."
             )
         return AiProviderNonRetryableError("AI provider request failed.")
+
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        if isinstance(exc, TimeoutError):
+            return True
+
+        for candidate in (exc, exc.__cause__, exc.__context__):
+            if candidate is None:
+                continue
+            if isinstance(candidate, TimeoutError):
+                return True
+            name = candidate.__class__.__name__.lower()
+            if "timeout" in name:
+                return True
+        return False
 
     @staticmethod
     def _derive_scope_decision(planner_result: PlannerResultDto) -> str:

@@ -11,8 +11,10 @@ from app.api.deps.auth import AuthenticatedUser
 from app.api.v2.endpoints.ai_chat import create_chat_run
 from app.core.config import settings
 from app.core.errors import (
+    AiChatIdempotencyConflictError,
     AiProviderNonRetryableError,
     AiProviderRetryableError,
+    AiProviderTimeoutError,
     ConsentRequiredError,
 )
 from app.core.firestore_constants import AI_RUNS_COLLECTION
@@ -376,7 +378,21 @@ async def test_ai_chat_v2_concurrent_same_client_message_id_charges_once() -> No
 class _FailingRetryableOrchestrator:
     async def run(self, *, user_id: str, request: ChatRunRequestDto):
         del user_id, request
-        raise AiProviderRetryableError("AI provider timed out or is temporarily unavailable.")
+        raise AiProviderRetryableError("AI provider is temporarily unavailable.")
+
+
+class _FailingTimeoutOrchestrator:
+    async def run(self, *, user_id: str, request: ChatRunRequestDto):
+        del user_id, request
+        raise AiProviderTimeoutError("AI provider timed out before a response was generated.")
+
+
+class _FailingIdempotencyConflictOrchestrator:
+    async def run(self, *, user_id: str, request: ChatRunRequestDto):
+        del user_id, request
+        raise AiChatIdempotencyConflictError(
+            "AI Chat run is already in progress or missing a replayable assistant response."
+        )
 
 
 class _RecordingOrchestrator:
@@ -479,8 +495,52 @@ async def test_v2_endpoint_maps_domain_error_to_api_contract() -> None:
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == {
-        "code": "ai_provider_retryable_failed",
-        "message": "AI provider timed out or is temporarily unavailable.",
+        "code": "AI_CHAT_PROVIDER_UNAVAILABLE",
+        "message": "AI provider is temporarily unavailable.",
+    }
+
+
+async def test_v2_endpoint_maps_timeout_error_to_api_contract() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await create_chat_run(
+            payload=ChatRunRequestDto.model_validate(
+                {
+                    "threadId": "thread-1",
+                    "clientMessageId": "msg-1",
+                    "message": "test",
+                    "language": "pl",
+                }
+            ),
+            current_user=AuthenticatedUser(uid="user-1", claims={}),
+            orchestrator=_FailingTimeoutOrchestrator(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 504
+    assert exc_info.value.detail == {
+        "code": "AI_CHAT_TIMEOUT",
+        "message": "AI provider timed out before a response was generated.",
+    }
+
+
+async def test_v2_endpoint_maps_idempotency_conflict_to_api_contract() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await create_chat_run(
+            payload=ChatRunRequestDto.model_validate(
+                {
+                    "threadId": "thread-1",
+                    "clientMessageId": "msg-1",
+                    "message": "test",
+                    "language": "pl",
+                }
+            ),
+            current_user=AuthenticatedUser(uid="user-1", claims={}),
+            orchestrator=_FailingIdempotencyConflictOrchestrator(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "code": "AI_CHAT_IDEMPOTENCY_CONFLICT",
+        "message": "AI Chat run is already in progress or missing a replayable assistant response.",
     }
 
 
@@ -507,6 +567,6 @@ async def test_v2_endpoint_maps_unexpected_error_to_internal_contract() -> None:
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == {
-        "code": "ai_chat_v2_internal_error",
+        "code": "AI_CHAT_INTERNAL_ERROR",
         "message": "AI Chat v2 run failed.",
     }

@@ -24,7 +24,7 @@ async def create_chat_run(
     Error contract:
     - kill switch returns `503 detail = {"code": "AI_CHAT_DISABLED", "message"}`.
     - domain failures are returned as `detail = {"code", "message"}`.
-    - unexpected failures are mapped to `ai_chat_v2_internal_error`.
+    - unexpected failures are mapped to `AI_CHAT_INTERNAL_ERROR`.
     """
     if not settings.AI_CHAT_ENABLED:
         raise HTTPException(
@@ -54,7 +54,7 @@ async def create_chat_run(
         raise HTTPException(
             status_code=500,
             detail={
-                "code": "ai_chat_v2_internal_error",
+                "code": "AI_CHAT_INTERNAL_ERROR",
                 "message": "AI Chat v2 run failed.",
             },
         ) from exc

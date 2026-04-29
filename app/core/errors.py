@@ -3,7 +3,7 @@ class DomainError(Exception):
     status_code: int = 400
 
 class ConsentRequiredError(DomainError):
-    code = "ai_health_data_consent_required"
+    code = "AI_CHAT_CONSENT_REQUIRED"
     status_code = 403
 
 class OutOfScopeError(DomainError):
@@ -11,26 +11,34 @@ class OutOfScopeError(DomainError):
     status_code = 400
 
 class InvalidPlannerOutputError(DomainError):
-    code = "invalid_planner_output"
-    status_code = 502
+    code = "AI_CHAT_CONTEXT_UNAVAILABLE"
+    status_code = 503
 
 class ToolExecutionError(DomainError):
-    code = "tool_execution_failed"
-    status_code = 500
+    code = "AI_CHAT_CONTEXT_UNAVAILABLE"
+    status_code = 503
 
 class AiProviderError(DomainError):
-    code = "ai_provider_failed"
-    status_code = 502
+    code = "AI_CHAT_PROVIDER_UNAVAILABLE"
+    status_code = 503
+
+
+class AiProviderTimeoutError(DomainError):
+    code = "AI_CHAT_TIMEOUT"
+    status_code = 504
 
 
 class AiProviderRetryableError(AiProviderError):
-    code = "ai_provider_retryable_failed"
     status_code = 503
 
 
 class AiProviderNonRetryableError(AiProviderError):
-    code = "ai_provider_non_retryable_failed"
-    status_code = 502
+    status_code = 503
+
+
+class AiChatIdempotencyConflictError(DomainError):
+    code = "AI_CHAT_IDEMPOTENCY_CONFLICT"
+    status_code = 409
 
 
 class AiCreditsExhaustedDomainError(DomainError):
