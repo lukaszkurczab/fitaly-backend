@@ -229,12 +229,15 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `VERSION`                        | No                            | `0.1.0`                   | API version exposed by app                                     |
 | `DEBUG`                          | No                            | `false`                   | FastAPI debug mode                                             |
 | `ENVIRONMENT`                    | No                            | `local`                   | `local`, `development`, `staging`, `production`                |
+| `WEB_CONCURRENCY`                | No                            | `2`                       | Gunicorn worker count; set per Railway environment             |
 | `OPENAI_API_KEY`                 | Yes in production             | -                         | Auth for OpenAI API calls                                      |
 | `CORS_ORIGINS`                   | Yes in production             | -                         | Comma-separated frontend origins (`*` forbidden in production) |
-| `FIREBASE_PROJECT_ID`            | Yes in production             | -                         | Firebase project selection                                     |
-| `GOOGLE_APPLICATION_CREDENTIALS` | One of required in production | -                         | Path to Firebase service account JSON                          |
-| `FIREBASE_CLIENT_EMAIL`          | One of required in production | -                         | Service account email; preferred on Railway                    |
-| `FIREBASE_PRIVATE_KEY`           | One of required in production | -                         | Service account private key; preferred on Railway              |
+| `FIREBASE_PROJECT_ID`            | Yes when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Firebase project selection                                     |
+| `FIRESTORE_DATABASE_ID`          | No                            | `(default)`               | Firestore database ID; use `fitaly-smoke` for smoke            |
+| `EAGER_FIREBASE_INIT`            | No                            | `true`                    | Initialize Firestore during startup; prod `true`, smoke `false` unless readiness-testing infra |
+| `GOOGLE_APPLICATION_CREDENTIALS` | One credential source required when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Path to Firebase service account JSON                          |
+| `FIREBASE_CLIENT_EMAIL`          | One credential source required when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Service account email; preferred on Railway                    |
+| `FIREBASE_PRIVATE_KEY`           | One credential source required when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Service account private key; preferred on Railway              |
 | `SENTRY_DSN`                     | No                            | empty                     | Sentry DSN; empty disables Sentry                              |
 | `SENTRY_ENVIRONMENT`             | No                            | `development`             | Sentry environment tag                                         |
 | `AI_CREDITS_FREE`                | No                            | `100`                     | Monthly AI credit allocation for free users                    |
@@ -291,12 +294,12 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
 ```bash
-gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:$PORT app.main:app
+gunicorn -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 --log-level info --access-logfile - --error-logfile - app.main:app
 ```
 
 7. Do not set `PORT` manually. Railway injects it automatically for the running container.
@@ -308,6 +311,50 @@ gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:$PORT app.main:app
 GET https://<your-domain>/api/v1/health
 GET https://<your-domain>/api/v1/version
 ```
+
+### Railway dual-env profile
+
+Use separate Railway environments for launch rehearsal:
+
+| Environment | Runtime profile | Required worker count | Firebase/Firestore startup | Data/integrations |
+| ----------- | --------------- | --------------------- | -------------------------- | ----------------- |
+| `prod`      | Always-on, launch-candidate runtime. Do not disable launch features to reduce cost. | `WEB_CONCURRENCY=2` | `EAGER_FIREBASE_INIT=true`; deploy fails fast when Firebase config or credentials are invalid. | Real production integrations, production Firebase project, production Firestore database (`FIRESTORE_DATABASE_ID=(default)`), production Sentry environment. |
+| `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, `fitaly-smoke` Firestore database (`FIRESTORE_DATABASE_ID=fitaly-smoke`), smoke Sentry environment, non-production credentials where available. |
+
+RAM baseline is mainly affected by the number of Gunicorn worker processes because each worker loads the FastAPI app, settings, SDK clients, and runtime dependencies. Moving from hardcoded 4 workers to `WEB_CONCURRENCY=2` roughly halves the worker-process baseline for prod while preserving the launch-candidate feature set. Smoke uses `WEB_CONCURRENCY=1` to keep a lower idle baseline and avoid paying for duplicate warm worker processes in a controlled test environment. `EAGER_FIREBASE_INIT=false` in smoke also avoids paying startup cost for Firebase/Firestore until a request path actually needs Firestore.
+
+Railway prod variable checklist:
+
+- `ENVIRONMENT=production`
+- `DEBUG=false`
+- `WEB_CONCURRENCY=2`
+- `FIRESTORE_DATABASE_ID=(default)`
+- `EAGER_FIREBASE_INIT=true`
+- `FIREBASE_PROJECT_ID=<production-project>`
+- `FIREBASE_CLIENT_EMAIL=<production-service-account-email>`
+- `FIREBASE_PRIVATE_KEY=<production-service-account-private-key>`
+- `OPENAI_API_KEY=<production-openai-key>`
+- `CORS_ORIGINS=<production-mobile-or-web-origins>`
+- `SENTRY_DSN=<production-sentry-dsn>`
+- `SENTRY_ENVIRONMENT=production`
+- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+
+Railway smoke variable checklist:
+
+- `ENVIRONMENT=production`
+- `DEBUG=false`
+- `WEB_CONCURRENCY=1`
+- `FIRESTORE_DATABASE_ID=fitaly-smoke`
+- `EAGER_FIREBASE_INIT=false`
+- `FIREBASE_PROJECT_ID=<smoke-or-shared-project>`
+- `FIREBASE_CLIENT_EMAIL=<smoke-service-account-email>`
+- `FIREBASE_PRIVATE_KEY=<smoke-service-account-private-key>`
+- `OPENAI_API_KEY=<smoke-or-limited-openai-key>`
+- `CORS_ORIGINS=<smoke-client-or-test-origins>`
+- `SENTRY_DSN=<smoke-sentry-dsn>`
+- `SENTRY_ENVIRONMENT=smoke`
+- For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
+- Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
 
 ### Sentry & Firestore notes
 

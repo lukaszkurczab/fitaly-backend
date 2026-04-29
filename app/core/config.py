@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     FIREBASE_PRIVATE_KEY: str = ""
     FIREBASE_STORAGE_BUCKET: str = ""
     FIRESTORE_DATABASE_ID: str = "(default)"
+    EAGER_FIREBASE_INIT: bool = True
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "development"

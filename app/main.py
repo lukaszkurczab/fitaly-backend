@@ -58,6 +58,8 @@ def _validate_production_startup_config(cors_origins: list[str]) -> None:
         raise RuntimeError(
             "Invalid production configuration: OPENAI_API_KEY must be configured."
         )
+    if not settings.EAGER_FIREBASE_INIT:
+        return
     if not settings.FIREBASE_PROJECT_ID.strip():
         raise RuntimeError(
             "Invalid production configuration: FIREBASE_PROJECT_ID must be configured."
@@ -92,8 +94,8 @@ def create_app() -> FastAPI:
         title=settings.APP_NAME,
         description=(
             f"{settings.DESCRIPTION}\n\n"
-            "CORS is configured for allowed client origins and Firebase is "
-            "initialized during application startup.\n\n"
+            "CORS is configured for allowed client origins. Firebase startup "
+            "initialization is controlled by EAGER_FIREBASE_INIT.\n\n"
             f"{api_version_note}"
         ),
         version=settings.VERSION,
@@ -114,13 +116,14 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(webhooks_router)
 
-    try:
-        get_firestore()
-    # Intentionally broad: Firebase SDK can raise various internal errors on init.
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to initialize Firebase during application startup.")
-        if _is_production_environment():
-            raise
+    if settings.EAGER_FIREBASE_INIT:
+        try:
+            get_firestore()
+        # Intentionally broad: Firebase SDK can raise various internal errors on init.
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to initialize Firebase during application startup.")
+            if _is_production_environment():
+                raise
 
     return app
 

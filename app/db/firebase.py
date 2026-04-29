@@ -98,7 +98,7 @@ def get_firestore() -> firestore.Client:
     application.
 
     The target Firestore database is controlled by FIRESTORE_DATABASE_ID.
-    Use "(default)" for production and "fitaly-smoke" for the staging environment.
+    Use "(default)" for production and "fitaly-smoke" for the smoke environment.
     """
     app = init_firebase()
     return admin_firestore.client(app=app, database_id=settings.FIRESTORE_DATABASE_ID)  # type: ignore[call-arg]
