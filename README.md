@@ -121,6 +121,12 @@ Health check:
 GET http://127.0.0.1:8000/api/v1/health
 ```
 
+Manual deep readiness check:
+
+```text
+GET http://127.0.0.1:8000/api/v1/health/firestore
+```
+
 Run tests:
 
 ```bash
@@ -312,6 +318,8 @@ GET https://<your-domain>/api/v1/health
 GET https://<your-domain>/api/v1/version
 ```
 
+Use `GET https://<your-domain>/api/v1/health/firestore` only as a manual deep readiness check when you intentionally want to validate Firestore connectivity and perform a Firestore read.
+
 ### Railway dual-env profile
 
 Use separate Railway environments for launch rehearsal:
@@ -322,6 +330,13 @@ Use separate Railway environments for launch rehearsal:
 | `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, `fitaly-smoke` Firestore database (`FIRESTORE_DATABASE_ID=fitaly-smoke`), smoke Sentry environment, non-production credentials where available. |
 
 RAM baseline is mainly affected by the number of Gunicorn worker processes because each worker loads the FastAPI app, settings, SDK clients, and runtime dependencies. Moving from hardcoded 4 workers to `WEB_CONCURRENCY=2` roughly halves the worker-process baseline for prod while preserving the launch-candidate feature set. Smoke uses `WEB_CONCURRENCY=1` to keep a lower idle baseline and avoid paying for duplicate warm worker processes in a controlled test environment. `EAGER_FIREBASE_INIT=false` in smoke also avoids paying startup cost for Firebase/Firestore until a request path actually needs Firestore.
+
+Railway healthcheck profile:
+
+- Railway liveness path for `prod`: `/api/v1/health`
+- Railway liveness path for `smoke`: `/api/v1/health`
+- `/api/v1/health` is intentionally lightweight and must not query Firestore.
+- `/api/v1/health/firestore` remains available as a manual deep readiness check and performs a Firestore read.
 
 Railway prod variable checklist:
 
@@ -337,6 +352,7 @@ Railway prod variable checklist:
 - `CORS_ORIGINS=<production-mobile-or-web-origins>`
 - `SENTRY_DSN=<production-sentry-dsn>`
 - `SENTRY_ENVIRONMENT=production`
+- Railway Health Check Path: `/api/v1/health`
 - Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
 
 Railway smoke variable checklist:
@@ -353,8 +369,17 @@ Railway smoke variable checklist:
 - `CORS_ORIGINS=<smoke-client-or-test-origins>`
 - `SENTRY_DSN=<smoke-sentry-dsn>`
 - `SENTRY_ENVIRONMENT=smoke`
+- Railway Health Check Path: `/api/v1/health`
 - For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
 - Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+
+Railway dashboard checklist:
+
+1. Open the backend service settings for `prod` and confirm `Health Check Path` is `/api/v1/health`.
+2. Open the backend service settings for `smoke` and confirm `Health Check Path` is `/api/v1/health`.
+3. Confirm no Railway liveness or uptime monitor is pointed at `/api/v1/health/firestore`.
+4. Keep `/api/v1/health/firestore` for manual deep readiness validation only.
+5. After deploy, verify `GET /api/v1/health` returns `200` before running any manual Firestore check.
 
 ### Sentry & Firestore notes
 

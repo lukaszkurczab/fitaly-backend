@@ -96,7 +96,8 @@ gcloud firestore operations list --project="${TARGET_PROJECT_ID}" \
 ```
 
 4. Run backend health check and selected smoke checks against the restored environment.
-   - default automated checks: `GET /api/v1/health`, `GET /api/v1/health/firestore`, `GET /api/v1/version`
+   - default automated checks: `GET /api/v1/health`, `GET /api/v1/version`
+   - manual deep readiness check: `GET /api/v1/health/firestore`
 
 ## Monthly Restore Drill Checklist
 

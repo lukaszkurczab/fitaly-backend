@@ -22,11 +22,13 @@ This runbook defines the minimum production monitoring baseline for:
 2. It checks:
    - `GET /api/v1/health` on smoke
    - `GET /api/v1/health` on production
+   - Railway service `Health Check Path` is configured to `/api/v1/health` for both environments
    - authenticated smoke flow contracts (`scripts/check-flow-contracts.py`) when smoke secrets are configured:
      - `GET /api/v1/users/me/export`
      - `GET /api/v1/ai/credits`
      - `GET /api/v2/users/me/reports/weekly` (expected `403 WEEKLY_REPORT_PREMIUM_REQUIRED` for free smoke user)
-3. It fails when:
+3. `GET /api/v1/health/firestore` is excluded from automated Railway liveness because it performs a Firestore read. Use it only as a manual deep readiness check when validating Firestore connectivity on purpose.
+4. It fails when:
    - HTTP status is not `200`
    - latency is over threshold
    - payload does not contain `status: "ok"` (or `healthy`)
@@ -54,14 +56,15 @@ If those thresholds fail repeatedly, treat as an incident candidate even when up
 
 1. Confirm current deployment version on Railway.
 2. Verify `GET /api/v1/health` and `GET /api/v1/version`.
-3. Check latest Sentry errors and affected endpoint group in the backend production Sentry project dashboard.
-4. Open the Railway backend service dashboard and confirm the active deployment, logs, and recent restart history.
-5. Validate Firebase/OpenAI config variables are still present.
-6. Apply kill-switches if needed:
+3. Run `GET /api/v1/health/firestore` only if incident triage requires explicit Firestore connectivity validation.
+4. Check latest Sentry errors and affected endpoint group in the backend production Sentry project dashboard.
+5. Open the Railway backend service dashboard and confirm the active deployment, logs, recent restart history, and `Health Check Path=/api/v1/health`.
+6. Validate Firebase/OpenAI config variables are still present.
+7. Apply kill-switches if needed:
    - `SMART_REMINDERS_ENABLED=false`
    - `WEEKLY_REPORTS_ENABLED=false`
    - `TELEMETRY_ENABLED=false`
-7. If user impact persists, rollback to last known-good release.
+8. If user impact persists, rollback to last known-good release.
 
 ## Ownership
 

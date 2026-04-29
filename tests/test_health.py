@@ -20,6 +20,18 @@ def test_health_check() -> None:
     assert "timestamp" in data
 
 
+def test_health_check_does_not_call_get_firestore(mocker: MockerFixture) -> None:
+    get_firestore = mocker.patch(
+        "app.services.health_service.get_firestore",
+        side_effect=AssertionError("get_firestore should not be called by /api/v1/health"),
+    )
+
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 200
+    get_firestore.assert_not_called()
+
+
 def test_health_check_without_version_not_found() -> None:
     response = client.get("/health")
 
