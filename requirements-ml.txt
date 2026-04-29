@@ -1,0 +1,4 @@
+# Optional research/training dependencies.
+# Not installed in Railway runtime; the launch backend does not load an ML gateway classifier.
+scikit-learn==1.6.1
+joblib==1.4.2

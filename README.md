@@ -20,6 +20,8 @@ It owns AI execution for the mobile app and exposes the server-side entrypoints 
 - Pytest + HTTPX (tests)
 - Pyright (static type checking)
 
+Optional notebook-only ML dependencies live in `requirements-ml.txt`. They are not part of the Railway runtime because the launch AI gateway does not load a local sklearn/joblib classifier.
+
 ## Project Structure
 
 ```text
@@ -209,6 +211,14 @@ These flags are runtime kill switches for live surfaces. A disabled surface retu
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+For offline classifier experiments only:
+
+```bash
+pip install -r requirements.txt -r requirements-ml.txt
+```
+
+The notebook classifier path is research-only/future scope. Production and smoke runtime must not require `scikit-learn` or `joblib`.
 
 Health check: `GET http://127.0.0.1:8000/api/v1/health`
 

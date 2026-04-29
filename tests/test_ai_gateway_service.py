@@ -1,5 +1,7 @@
 from collections import deque
+import builtins
 from time import monotonic
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -205,6 +207,24 @@ async def test_gateway_disabled_bypasses_rate_limit_and_payload_guards(mocker: M
     assert result["decision"] == "FORWARD"
     assert result["reason"] == FORWARD_REASON_GATEWAY_DISABLED
     assert result["enforced"] is False
+
+
+async def test_evaluate_request_does_not_import_optional_ml_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> object:
+        if name.split(".", 1)[0] in {"sklearn", "joblib"}:
+            raise AssertionError(f"Unexpected optional ML import: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    result = await evaluate_request("user-1", "text_meal_analysis", "owsianka z jogurtem")
+
+    assert result["decision"] == "FORWARD"
+    assert result["reason"] == FORWARD_REASON_PASS_THROUGH
 
 
 async def test_evaluate_request_rate_limits_per_user(mocker: MockerFixture) -> None:

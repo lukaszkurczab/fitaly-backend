@@ -15,8 +15,6 @@ firebase-admin==6.9.0
 
 # AI SDK
 openai==1.109.1
-scikit-learn==1.6.1
-joblib==1.4.2
 
 # Monitoring
 sentry-sdk[fastapi]==2.57.0
