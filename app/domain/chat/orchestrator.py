@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from time import perf_counter
 from typing import Any, Protocol
 
+from app.core.config import settings
+from app.core.exceptions import AiCreditsExhaustedError
 from app.domain.ai_runs.models.ai_run import AiRun, RunStatus
 from app.domain.ai_runs.services.ai_run_service import AiRunService
 from app.core.errors import (
+    AiCreditsExhaustedDomainError,
     AiProviderNonRetryableError,
     AiProviderRetryableError,
     ToolExecutionError,
@@ -25,9 +29,13 @@ from app.domain.chat_memory.services.summary_service import SummaryService
 from app.domain.chat_memory.services.thread_service import ThreadService
 from app.domain.tools.registry import ToolRegistry
 from app.domain.users.services.consent_service import ConsentService
+from app.schemas.ai_credits import AiCreditsStatus
 from app.schemas.ai_chat.planner import PlannerResultDto
 from app.schemas.ai_chat.request import ChatRunRequestDto
-from app.schemas.ai_chat.response import ChatRunResponseDto, ContextStatsDto, UsageDto
+from app.schemas.ai_chat.response import ChatRunResponseDto, ContextStatsDto, CreditsDto, UsageDto
+from app.services import ai_credits_service
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,6 +48,28 @@ class _ToolExecutionResult:
 
 class _ToolLike(Protocol):
     async def execute(self, *, user_id: str, args: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class _CreditsLike(Protocol):
+    async def get_credits_status(self, user_id: str) -> AiCreditsStatus: ...
+
+    async def deduct_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        cost: int,
+        action: str,
+        idempotency_key: str,
+    ) -> ai_credits_service.IdempotentCreditResult: ...
+
+    async def refund_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        cost: int,
+        action: str,
+        idempotency_key: str,
+    ) -> ai_credits_service.IdempotentCreditResult: ...
 
 
 class ChatOrchestrator:
@@ -57,6 +87,7 @@ class ChatOrchestrator:
         prompt_composer: PromptComposer,
         generator: ChatGenerator,
         retry_policy: RetryPolicy,
+        credits_service: _CreditsLike = ai_credits_service,
         recent_turns_limit: int = 10,
     ) -> None:
         self.consent_service = consent_service
@@ -70,6 +101,7 @@ class ChatOrchestrator:
         self.prompt_composer = prompt_composer
         self.generator = generator
         self.retry_policy = retry_policy
+        self.credits_service = credits_service
         self.recent_turns_limit = max(2, recent_turns_limit)
 
     async def run(self, *, user_id: str, request: ChatRunRequestDto) -> ChatRunResponseDto:
@@ -111,13 +143,18 @@ class ChatOrchestrator:
             else self.ai_run_service.new_run_id()
         )
         started_at = perf_counter()
-
-        await self._ensure_run_started(
-            run_id=run_id,
+        credit_cost = settings.AI_CREDIT_COST_CHAT
+        credit_action = "chat"
+        credit_idempotency_key = self._credit_idempotency_key(
             user_id=user_id,
             thread_id=request.thread_id,
-            request=request,
+            client_message_id=request.client_message_id,
+            action=credit_action,
         )
+        credits_status: AiCreditsStatus | None = None
+        credit_deducted = False
+        credit_refunded = False
+        credit_deduct_idempotent_replay = False
 
         planner_used = False
         tools_used: list[str] = []
@@ -141,6 +178,61 @@ class ChatOrchestrator:
         follow_up_required = False
 
         try:
+            await self._ensure_run_started(
+                run_id=run_id,
+                user_id=user_id,
+                thread_id=request.thread_id,
+                request=request,
+            )
+            # AI Chat v2 charges every consented chat run before planner execution.
+            # Out-of-scope refusals still consume provider/planner capacity, so they
+            # remain billable and are covered by integration tests.
+            if credit_cost > 0:
+                try:
+                    credit_result = await self.credits_service.deduct_credits_idempotent(
+                        user_id,
+                        cost=credit_cost,
+                        action=credit_action,
+                        idempotency_key=credit_idempotency_key,
+                    )
+                except AiCreditsExhaustedError as exc:
+                    credits_status = await self.credits_service.get_credits_status(user_id)
+                    await self.ai_run_service.update_run(
+                        run_id=run_id,
+                        status="failed",
+                        outcome="failed",
+                        failure_reason="credits_exhausted",
+                        total_latency_ms=self._elapsed_ms(started_at),
+                        metadata=self._run_metadata(
+                            request=request,
+                            language=language,
+                            planner_task_type=planner_task_type,
+                            planner_response_mode=planner_response_mode,
+                            scope_resolved=scope_resolved,
+                            history_turns=budget.history_turns,
+                            follow_up_required=follow_up_required,
+                            scope_decision=scope_decision,
+                            credit_cost=credit_cost,
+                            credit_deducted=False,
+                            credit_refunded=False,
+                            credits_status=credits_status,
+                            idempotent_replay=False,
+                            credit_idempotency_key=credit_idempotency_key,
+                            credit_deduct_idempotent_replay=False,
+                        ),
+                    )
+                    raise AiCreditsExhaustedDomainError(
+                        "AI credits exhausted",
+                        credits_status=credits_status,
+                    ) from exc
+
+                credits_status = credit_result.status
+                credit_deducted = credit_result.applied
+                credit_refunded = credit_result.refunded
+                credit_deduct_idempotent_replay = not credit_result.applied
+            else:
+                credits_status = await self.credits_service.get_credits_status(user_id)
+
             await self.thread_service.ensure_thread(
                 user_id=user_id,
                 thread_id=request.thread_id,
@@ -253,6 +345,32 @@ class ChatOrchestrator:
             )
 
         except Exception as exc:  # noqa: BLE001
+            if (
+                not isinstance(exc, AiCreditsExhaustedDomainError)
+                and credit_cost > 0
+                and credits_status is not None
+            ):
+                try:
+                    refund_result = await self.credits_service.refund_credits_idempotent(
+                        user_id,
+                        cost=credit_cost,
+                        action=f"{credit_action}_failure_refund",
+                        idempotency_key=credit_idempotency_key,
+                    )
+                    credits_status = refund_result.status
+                    credit_refunded = (
+                        credit_refunded or refund_result.applied or refund_result.refunded
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to refund AI Chat v2 credits after run failure.",
+                        extra={
+                            "user_id": user_id,
+                            "thread_id": request.thread_id,
+                            "client_message_id": request.client_message_id,
+                        },
+                    )
+
             if isinstance(exc, (AiProviderRetryableError, AiProviderNonRetryableError)):
                 retry_count = max(
                     retry_count,
@@ -283,17 +401,23 @@ class ChatOrchestrator:
                 completion_tokens=usage.completion_tokens,
                 total_tokens=usage.total_tokens,
                 total_latency_ms=self._elapsed_ms(started_at),
-                metadata={
-                    "taskType": planner_task_type,
-                    "responseMode": planner_response_mode,
-                    "scopeResolved": scope_resolved,
-                    "historyTurns": budget.history_turns,
-                    "followUpRequired": follow_up_required,
-                    "scopeDecision": scope_decision,
-                    "clientMessageId": request.client_message_id,
-                    "threadId": request.thread_id,
-                    "language": language,
-                },
+                metadata=self._run_metadata(
+                    request=request,
+                    language=language,
+                    planner_task_type=planner_task_type,
+                    planner_response_mode=planner_response_mode,
+                    scope_resolved=scope_resolved,
+                    history_turns=budget.history_turns,
+                    follow_up_required=follow_up_required,
+                    scope_decision=scope_decision,
+                    credit_cost=credit_cost,
+                    credit_deducted=credit_deducted,
+                    credit_refunded=credit_refunded,
+                    credits_status=credits_status,
+                    idempotent_replay=False,
+                    credit_idempotency_key=credit_idempotency_key,
+                    credit_deduct_idempotent_replay=credit_deduct_idempotent_replay,
+                ),
             )
             raise
 
@@ -312,17 +436,23 @@ class ChatOrchestrator:
             completion_tokens=usage.completion_tokens,
             total_tokens=usage.total_tokens,
             total_latency_ms=self._elapsed_ms(started_at),
-            metadata={
-                "taskType": planner_task_type,
-                "responseMode": planner_response_mode,
-                "scopeResolved": scope_resolved,
-                "historyTurns": budget.history_turns,
-                "followUpRequired": follow_up_required,
-                "scopeDecision": scope_decision,
-                "clientMessageId": request.client_message_id,
-                "threadId": request.thread_id,
-                "language": language,
-            },
+            metadata=self._run_metadata(
+                request=request,
+                language=language,
+                planner_task_type=planner_task_type,
+                planner_response_mode=planner_response_mode,
+                scope_resolved=scope_resolved,
+                history_turns=budget.history_turns,
+                follow_up_required=follow_up_required,
+                scope_decision=scope_decision,
+                credit_cost=credit_cost,
+                credit_deducted=credit_deducted,
+                credit_refunded=credit_refunded,
+                credits_status=credits_status,
+                idempotent_replay=False,
+                credit_idempotency_key=credit_idempotency_key,
+                credit_deduct_idempotent_replay=credit_deduct_idempotent_replay,
+            ),
         )
 
         return ChatRunResponseDto(
@@ -342,7 +472,7 @@ class ChatOrchestrator:
                 truncated=budget.truncated,
                 scopeDecision=scope_decision,
             ),
-            credits=None,
+            credits=self._credits_dto(credits_status),
             persistence="backend_owned",
         )
 
@@ -398,12 +528,25 @@ class ChatOrchestrator:
             return None
 
         run = await self.ai_run_service.get_run(run_id=user_message.run_id)
+        credits_status = await self.credits_service.get_credits_status(user_id)
+        if run is not None:
+            await self.ai_run_service.update_run(
+                run_id=user_message.run_id,
+                status=run.status,
+                outcome=run.outcome,
+                metadata={
+                    **run.metadata,
+                    "idempotentReplay": True,
+                    "balanceAfter": credits_status.balance,
+                },
+            )
         return self._response_from_existing_run(
             run_id=user_message.run_id,
             thread_id=thread_id,
             client_message_id=user_message.client_message_id or user_message.id,
             assistant_message=assistant,
             run=run,
+            credits_status=credits_status,
         )
 
     async def _execute_tools(
@@ -540,6 +683,7 @@ class ChatOrchestrator:
         client_message_id: str,
         assistant_message: ChatMessage,
         run: AiRun | None,
+        credits_status: AiCreditsStatus | None,
     ) -> ChatRunResponseDto:
         prompt_tokens = 0
         completion_tokens = 0
@@ -577,8 +721,69 @@ class ChatOrchestrator:
                 truncated=truncated,
                 scopeDecision=scope_decision,
             ),
-            credits=None,
+            credits=self._credits_dto(credits_status),
             persistence="backend_owned",
+        )
+
+    def _run_metadata(
+        self,
+        *,
+        request: ChatRunRequestDto,
+        language: str,
+        planner_task_type: str | None,
+        planner_response_mode: str | None,
+        scope_resolved: str | None,
+        history_turns: int,
+        follow_up_required: bool,
+        scope_decision: str,
+        credit_cost: int,
+        credit_deducted: bool,
+        credit_refunded: bool,
+        credits_status: AiCreditsStatus | None,
+        idempotent_replay: bool,
+        credit_idempotency_key: str,
+        credit_deduct_idempotent_replay: bool,
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "taskType": planner_task_type,
+            "responseMode": planner_response_mode,
+            "scopeResolved": scope_resolved,
+            "historyTurns": history_turns,
+            "followUpRequired": follow_up_required,
+            "scopeDecision": scope_decision,
+            "clientMessageId": request.client_message_id,
+            "threadId": request.thread_id,
+            "language": language,
+            "creditCost": credit_cost,
+            "creditDeducted": credit_deducted,
+            "creditRefunded": credit_refunded,
+            "balanceAfter": credits_status.balance if credits_status is not None else None,
+            "idempotentReplay": idempotent_replay,
+            "creditIdempotencyKey": credit_idempotency_key,
+        }
+        if credit_deduct_idempotent_replay:
+            metadata["creditDeductIdempotentReplay"] = True
+        return metadata
+
+    @staticmethod
+    def _credits_dto(status: AiCreditsStatus | None) -> CreditsDto | None:
+        if status is None:
+            return None
+        return CreditsDto.model_validate(status.model_dump())
+
+    @staticmethod
+    def _credit_idempotency_key(
+        *,
+        user_id: str,
+        thread_id: str,
+        client_message_id: str,
+        action: str,
+    ) -> str:
+        return (
+            f"userId={user_id}\n"
+            f"threadId={thread_id}\n"
+            f"clientMessageId={client_message_id}\n"
+            f"action={action}"
         )
 
     def _map_provider_error(self, exc: Exception) -> Exception:

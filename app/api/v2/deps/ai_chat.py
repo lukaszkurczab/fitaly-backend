@@ -33,6 +33,7 @@ from app.infra.firestore.repositories.ai_run_repository import AiRunRepository
 from app.infra.firestore.repositories.chat_message_repository import ChatMessageRepository
 from app.infra.firestore.repositories.chat_thread_repository import ChatThreadRepository
 from app.infra.firestore.repositories.memory_summary_repository import MemorySummaryRepository
+from app.services import ai_credits_service
 
 
 @lru_cache(maxsize=1)
@@ -89,6 +90,7 @@ def _orchestrator_singleton() -> ChatOrchestrator:
         prompt_composer=prompt_composer,
         generator=generator,
         retry_policy=retry_policy,
+        credits_service=ai_credits_service,
     )
 
 

@@ -1,6 +1,8 @@
 """Service helpers for AI credits with rolling monthly periods."""
 
+from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import logging
 from typing import Literal
 
@@ -29,6 +31,14 @@ from app.schemas.ai_credits import AiCreditTransactionItem, AiCreditsStatus, Cre
 
 logger = logging.getLogger(__name__)
 Tier = Literal["free", "premium"]
+AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION = "aiCreditIdempotency"
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotentCreditResult:
+    status: AiCreditsStatus
+    applied: bool
+    refunded: bool = False
 
 
 def _billing_document_ref(client: firestore.Client, user_id: str) -> firestore.DocumentReference:
@@ -53,6 +63,19 @@ def _transactions_collection_ref(
     user_id: str,
 ) -> firestore.CollectionReference:
     return _billing_document_ref(client, user_id).collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION)
+
+
+def _idempotency_document_ref(
+    client: firestore.Client,
+    user_id: str,
+    idempotency_key: str,
+) -> firestore.DocumentReference:
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return (
+        _billing_document_ref(client, user_id)
+        .collection(AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION)
+        .document(digest)
+    )
 
 
 def _coerce_optional_datetime(value: object) -> datetime | None:
@@ -286,6 +309,127 @@ def _refund_credits_transaction(
     return document, previous_balance, next_balance
 
 
+@firestore.transactional
+def _deduct_credits_idempotent_transaction(
+    transaction: firestore.Transaction,
+    document_ref: firestore.DocumentReference,
+    idempotency_ref: firestore.DocumentReference,
+    user_id: str,
+    now: datetime,
+    cost: int,
+    action: str,
+    idempotency_key: str,
+) -> tuple[dict[str, object], int, int, bool, bool]:
+    idempotency_snapshot = idempotency_ref.get(transaction=transaction)
+    credits_snapshot = document_ref.get(transaction=transaction)
+    credits_data: dict[str, object] | None = (
+        (credits_snapshot.to_dict() or {}) if credits_snapshot.exists else None
+    )
+    document, should_write = _document_for_current_period(
+        user_id=user_id,
+        data=credits_data,
+        now=now,
+    )
+
+    if idempotency_snapshot.exists:
+        idempotency_data = dict(idempotency_snapshot.to_dict() or {})
+        if should_write:
+            transaction.set(document_ref, document)
+        current_balance = coerce_int(document.get("balance"), 0)
+        return (
+            document,
+            current_balance,
+            current_balance,
+            False,
+            idempotency_data.get("creditRefunded") is True,
+        )
+
+    previous_balance = coerce_int(document.get("balance"), 0)
+    if previous_balance < cost:
+        raise AiCreditsExhaustedError("AI credits exhausted.")
+
+    next_balance = previous_balance - cost
+    document["balance"] = next_balance
+    document["updatedAt"] = now
+    transaction.set(document_ref, document)
+    transaction.set(
+        idempotency_ref,
+        {
+            "key": idempotency_key,
+            "userId": user_id,
+            "action": action,
+            "cost": cost,
+            "state": "deducted",
+            "creditDeducted": True,
+            "creditRefunded": False,
+            "balanceBefore": previous_balance,
+            "balanceAfter": next_balance,
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+
+    return document, previous_balance, next_balance, True, False
+
+
+@firestore.transactional
+def _refund_credits_idempotent_transaction(
+    transaction: firestore.Transaction,
+    document_ref: firestore.DocumentReference,
+    idempotency_ref: firestore.DocumentReference,
+    user_id: str,
+    now: datetime,
+    fallback_cost: int,
+) -> tuple[dict[str, object], int, int, bool]:
+    idempotency_snapshot = idempotency_ref.get(transaction=transaction)
+    credits_snapshot = document_ref.get(transaction=transaction)
+    credits_data: dict[str, object] | None = (
+        (credits_snapshot.to_dict() or {}) if credits_snapshot.exists else None
+    )
+    document, should_write = _document_for_current_period(
+        user_id=user_id,
+        data=credits_data,
+        now=now,
+    )
+
+    idempotency_data: dict[str, object] = (
+        dict(idempotency_snapshot.to_dict() or {}) if idempotency_snapshot.exists else {}
+    )
+    was_deducted = idempotency_data.get("creditDeducted") is True
+    was_refunded = idempotency_data.get("creditRefunded") is True
+    if not was_deducted or was_refunded:
+        if should_write:
+            transaction.set(document_ref, document)
+        current_balance = coerce_int(document.get("balance"), 0)
+        return document, current_balance, current_balance, False
+
+    cost = coerce_int(idempotency_data.get("cost"), fallback_cost)
+    if cost <= 0:
+        cost = fallback_cost
+
+    previous_balance = coerce_int(document.get("balance"), 0)
+    allocation = coerce_int(document.get("allocation"), _tier_allocation("free"))
+    next_balance = min(previous_balance + cost, allocation)
+
+    document["balance"] = next_balance
+    document["updatedAt"] = now
+    transaction.set(document_ref, document)
+    transaction.set(
+        idempotency_ref,
+        {
+            **idempotency_data,
+            "state": "refunded",
+            "creditRefunded": True,
+            "refundBalanceBefore": previous_balance,
+            "refundBalanceAfter": next_balance,
+            "updatedAt": now,
+        },
+        merge=True,
+    )
+
+    return document, previous_balance, next_balance, True
+
+
 async def get_credits_status(user_id: str) -> AiCreditsStatus:
     return await refresh_if_period_expired(user_id)
 
@@ -345,6 +489,68 @@ async def deduct_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
     return _build_status(document, user_id=user_id)
 
 
+async def deduct_credits_idempotent(
+    user_id: str,
+    *,
+    cost: int,
+    action: str,
+    idempotency_key: str,
+) -> IdempotentCreditResult:
+    if cost <= 0:
+        raise ValueError("Credit cost must be greater than zero.")
+    if not idempotency_key.strip():
+        raise ValueError("idempotency_key must be non-empty.")
+
+    client: firestore.Client = get_firestore()
+    document_ref = _credits_document_ref(client, user_id)
+    idempotency_ref = _idempotency_document_ref(client, user_id, idempotency_key)
+    transaction = client.transaction()
+    now = _utc_now()
+
+    try:
+        (
+            document,
+            balance_before,
+            balance_after,
+            applied,
+            already_refunded,
+        ) = _deduct_credits_idempotent_transaction(
+            transaction,
+            document_ref,
+            idempotency_ref,
+            user_id,
+            now,
+            cost,
+            action,
+            idempotency_key,
+        )
+    except AiCreditsExhaustedError:
+        raise
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to deduct AI credits idempotently.",
+            extra={"user_id": user_id, "action": action},
+        )
+        raise FirestoreServiceError("Failed to deduct AI credits.") from exc
+
+    if applied:
+        _log_credit_transaction(
+            user_id=user_id,
+            transaction_type="deduct",
+            action=action,
+            cost=cost,
+            balance_before=balance_before,
+            balance_after=balance_after,
+            document=document,
+            idempotency_key=idempotency_key,
+        )
+    return IdempotentCreditResult(
+        status=_build_status(document, user_id=user_id),
+        applied=applied,
+        refunded=already_refunded,
+    )
+
+
 async def refund_credits(user_id: str, cost: int, action: str) -> AiCreditsStatus:
     if cost <= 0:
         raise ValueError("Credit cost must be greater than zero.")
@@ -376,6 +582,58 @@ async def refund_credits(user_id: str, cost: int, action: str) -> AiCreditsStatu
         document=document,
     )
     return _build_status(document, user_id=user_id)
+
+
+async def refund_credits_idempotent(
+    user_id: str,
+    *,
+    cost: int,
+    action: str,
+    idempotency_key: str,
+) -> IdempotentCreditResult:
+    if cost <= 0:
+        raise ValueError("Credit cost must be greater than zero.")
+    if not idempotency_key.strip():
+        raise ValueError("idempotency_key must be non-empty.")
+
+    client: firestore.Client = get_firestore()
+    document_ref = _credits_document_ref(client, user_id)
+    idempotency_ref = _idempotency_document_ref(client, user_id, idempotency_key)
+    transaction = client.transaction()
+    now = _utc_now()
+
+    try:
+        document, balance_before, balance_after, applied = _refund_credits_idempotent_transaction(
+            transaction,
+            document_ref,
+            idempotency_ref,
+            user_id,
+            now,
+            cost,
+        )
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to refund AI credits idempotently.",
+            extra={"user_id": user_id, "action": action},
+        )
+        raise FirestoreServiceError("Failed to refund AI credits.") from exc
+
+    if applied:
+        _log_credit_transaction(
+            user_id=user_id,
+            transaction_type="refund",
+            action=action,
+            cost=cost,
+            balance_before=balance_before,
+            balance_after=balance_after,
+            document=document,
+            idempotency_key=idempotency_key,
+        )
+    return IdempotentCreditResult(
+        status=_build_status(document, user_id=user_id),
+        applied=applied,
+        refunded=applied,
+    )
 
 
 async def start_free_cycle(user_id: str, anchor_at: datetime) -> AiCreditsStatus:
@@ -755,6 +1013,7 @@ def _log_credit_transaction(
     balance_before: int,
     balance_after: int,
     document: dict[str, object],
+    idempotency_key: str | None = None,
 ) -> None:
     period_start_at = _coerce_optional_datetime(document.get("periodStartAt")) or _utc_now()
     period_end_at = _coerce_optional_datetime(document.get("periodEndAt")) or _utc_now()
@@ -771,6 +1030,8 @@ def _log_credit_transaction(
         "periodEndAt": period_end_at,
         "createdAt": _utc_now(),
     }
+    if idempotency_key is not None:
+        transaction_doc["idempotencyKey"] = idempotency_key
 
     try:
         client: firestore.Client = get_firestore()

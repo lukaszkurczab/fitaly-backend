@@ -42,9 +42,13 @@ async def create_chat_run(
         )
     except DomainError as exc:
         detail_message = str(exc).strip() or exc.code
+        detail = {"code": exc.code, "message": detail_message}
+        credits_status = getattr(exc, "credits_status", None)
+        if credits_status is not None:
+            detail["credits"] = credits_status.model_dump(mode="json")
         raise HTTPException(
             status_code=exc.status_code,
-            detail={"code": exc.code, "message": detail_message},
+            detail=detail,
         ) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(

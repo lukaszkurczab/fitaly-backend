@@ -38,16 +38,29 @@ Kill switch:
 1. auth (endpoint dependency)
 2. kill switch gate
 3. consent gate
-4. idempotency lookup by `clientMessageId` in thread scope
-5. ensure/create thread and user message persistence
-6. planner
-7. tool execution via canonical `ToolRegistry`
-8. grounded context build + token budget enforcement
-9. generator + retry policy
-10. assistant message persistence
-11. memory summary refresh
-12. ai_run telemetry update
-13. response DTO mapping
+4. response replay lookup by `clientMessageId` in thread scope
+5. ai_run bootstrap
+6. idempotent credits deduct for `userId + threadId + clientMessageId + action=chat`
+7. ensure/create thread and user message persistence
+8. planner
+9. tool execution via canonical `ToolRegistry`
+10. grounded context build + token budget enforcement
+11. generator + retry policy
+12. assistant message persistence
+13. memory summary refresh
+14. ai_run telemetry update
+15. response DTO mapping
+
+## Credits Contract
+
+- Every consented AI Chat v2 request costs `AI_CREDIT_COST_CHAT`, including `out_of_scope_refusal`.
+- Out-of-scope refusal is billable because the backend already spends planner/provider capacity to classify the request before it can refuse safely.
+- Credits deduct is backend-owned and idempotent per `userId + threadId + clientMessageId + action=chat`.
+- Successful retry/replay of the same `clientMessageId` returns the existing assistant response and does not deduct again.
+- Provider failure after deduct triggers an idempotent refund using the same credit idempotency key.
+- Success responses include the updated credits status in `credits`.
+- Exhausted credits return HTTP `402` with `detail.code = "AI_CREDITS_EXHAUSTED"` and current credits status in `detail.credits`.
+- `ai_run.metadata` records `creditCost`, `creditDeducted`, `creditRefunded`, `balanceAfter`, and `idempotentReplay`.
 
 ## v1/v2 Boundary Rules
 
@@ -89,7 +102,7 @@ Recommended commands:
 
 ## Known Limitations (Current)
 
-- No distributed lock around same-`clientMessageId` concurrent requests; behavior relies on persistence idempotency + replay checks.
+- Same-`clientMessageId` concurrency is protected for credits by the billing idempotency document, but full run/message writes are still eventually reconciled by persistence replay.
 - No cross-document transaction spanning full run/thread/message/summary write set.
 - Summary refresh is intentionally lightweight and not a full long-context summarization pipeline.
 - Planner/tools/generator orchestration is backend-owned, but deeper adaptive policies are deferred to later iterations.

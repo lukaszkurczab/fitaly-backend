@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, cast
 
+from app.core.config import settings
+from app.core.exceptions import AiCreditsExhaustedError
 from app.domain.ai_runs.services.ai_run_service import AiRunService
 from app.domain.chat.context_builder import ContextBuilder
 from app.domain.chat.generator import GenerationResult, GenerationUsage
@@ -20,7 +23,9 @@ from app.infra.firestore.repositories.ai_run_repository import AiRunRepository
 from app.infra.firestore.repositories.chat_message_repository import ChatMessageRepository
 from app.infra.firestore.repositories.chat_thread_repository import ChatThreadRepository
 from app.infra.firestore.repositories.memory_summary_repository import MemorySummaryRepository
+from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 from app.schemas.ai_chat.planner import PlannerResultDto
+from app.services.ai_credits_service import IdempotentCreditResult
 
 
 @dataclass
@@ -210,6 +215,106 @@ class FakeGenerator:
         return item
 
 
+class FakeAiCreditsService:
+    def __init__(self, *, balance: int = 10, tier: str = "free") -> None:
+        self.balance = balance
+        self.allocation = max(balance, settings.AI_CREDITS_FREE)
+        self.tier = "premium" if tier == "premium" else "free"
+        self.deductions: list[dict[str, Any]] = []
+        self.refunds: list[dict[str, Any]] = []
+        self.idempotency: dict[str, dict[str, Any]] = {}
+
+    async def get_credits_status(self, user_id: str) -> AiCreditsStatus:
+        return self._status(user_id)
+
+    async def deduct_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        cost: int,
+        action: str,
+        idempotency_key: str,
+    ) -> IdempotentCreditResult:
+        if idempotency_key in self.idempotency:
+            return IdempotentCreditResult(
+                status=self._status(user_id),
+                applied=False,
+                refunded=self.idempotency[idempotency_key].get("creditRefunded") is True,
+            )
+        if self.balance < cost:
+            raise AiCreditsExhaustedError("AI credits exhausted.")
+
+        before = self.balance
+        self.balance -= cost
+        self.idempotency[idempotency_key] = {
+            "cost": cost,
+            "action": action,
+            "creditDeducted": True,
+            "creditRefunded": False,
+            "balanceBefore": before,
+            "balanceAfter": self.balance,
+        }
+        self.deductions.append(
+            {
+                "user_id": user_id,
+                "cost": cost,
+                "action": action,
+                "idempotency_key": idempotency_key,
+                "balance_after": self.balance,
+            }
+        )
+        return IdempotentCreditResult(status=self._status(user_id), applied=True)
+
+    async def refund_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        cost: int,
+        action: str,
+        idempotency_key: str,
+    ) -> IdempotentCreditResult:
+        item = self.idempotency.get(idempotency_key)
+        if item is None or item.get("creditRefunded") is True:
+            return IdempotentCreditResult(status=self._status(user_id), applied=False)
+
+        refund_cost = int(item.get("cost") or cost)
+        before = self.balance
+        self.balance = min(self.balance + refund_cost, self.allocation)
+        item["creditRefunded"] = True
+        item["refundBalanceBefore"] = before
+        item["refundBalanceAfter"] = self.balance
+        self.refunds.append(
+            {
+                "user_id": user_id,
+                "cost": refund_cost,
+                "action": action,
+                "idempotency_key": idempotency_key,
+                "balance_after": self.balance,
+            }
+        )
+        return IdempotentCreditResult(
+            status=self._status(user_id),
+            applied=True,
+            refunded=True,
+        )
+
+    def _status(self, user_id: str) -> AiCreditsStatus:
+        now = datetime(2026, 4, 19, tzinfo=timezone.utc)
+        return AiCreditsStatus(
+            userId=user_id,
+            tier=cast(Any, self.tier),
+            balance=self.balance,
+            allocation=self.allocation,
+            periodStartAt=now,
+            periodEndAt=datetime(2026, 5, 19, tzinfo=timezone.utc),
+            costs=CreditCosts(
+                chat=settings.AI_CREDIT_COST_CHAT,
+                textMeal=settings.AI_CREDIT_COST_TEXT_MEAL,
+                photo=settings.AI_CREDIT_COST_PHOTO,
+            ),
+        )
+
+
 @dataclass
 class OrchestratorHarness:
     orchestrator: ChatOrchestrator
@@ -220,6 +325,7 @@ class OrchestratorHarness:
     ai_run_service: AiRunService
     message_service: MessageService
     summary_service: SummaryService
+    credits_service: FakeAiCreditsService
 
 
 def planner_result_payload(
@@ -275,6 +381,7 @@ def build_orchestrator_harness(
     generator_script: list[GenerationResult | Exception],
     consent_allowed: bool = True,
     retry_policy: RetryPolicy | None = None,
+    initial_credits: int = 10,
 ) -> OrchestratorHarness:
     db = FakeFirestore()
 
@@ -295,6 +402,7 @@ def build_orchestrator_harness(
     registry = ToolRegistry(list(static_tools.values()))
 
     generator = FakeGenerator(scripted=generator_script)
+    credits_service = FakeAiCreditsService(balance=initial_credits)
     effective_retry_policy = retry_policy or RetryPolicy(
         max_attempts=3,
         timeout_seconds=0.2,
@@ -314,6 +422,7 @@ def build_orchestrator_harness(
         prompt_composer=PromptComposer(),
         generator=generator,  # type: ignore[arg-type]
         retry_policy=effective_retry_policy,
+        credits_service=credits_service,
     )
 
     return OrchestratorHarness(
@@ -325,4 +434,5 @@ def build_orchestrator_harness(
         ai_run_service=ai_run_service,
         message_service=message_service,
         summary_service=summary_service,
+        credits_service=credits_service,
     )

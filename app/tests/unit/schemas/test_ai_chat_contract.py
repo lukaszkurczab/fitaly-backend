@@ -56,25 +56,27 @@ def test_ai_chat_v2_request_rejects_legacy_or_missing_fields() -> None:
 
 
 def test_ai_chat_v2_response_serializes_minimal_contract_only() -> None:
-    response = ChatRunResponseDto(
-        runId="run-1",
-        threadId="thread-1",
-        clientMessageId="client-1",
-        assistantMessageId="assistant-1",
-        reply="Czesc",
-        usage={
-            "promptTokens": 10,
-            "completionTokens": 5,
-            "totalTokens": 15,
-        },
-        contextStats={
-            "usedSummary": False,
-            "historyTurns": 2,
-            "truncated": False,
-            "scopeDecision": "ALLOW_NUTRITION",
-        },
-        credits=None,
-        persistence="backend_owned",
+    response = ChatRunResponseDto.model_validate(
+        {
+            "runId": "run-1",
+            "threadId": "thread-1",
+            "clientMessageId": "client-1",
+            "assistantMessageId": "assistant-1",
+            "reply": "Czesc",
+            "usage": {
+                "promptTokens": 10,
+                "completionTokens": 5,
+                "totalTokens": 15,
+            },
+            "contextStats": {
+                "usedSummary": False,
+                "historyTurns": 2,
+                "truncated": False,
+                "scopeDecision": "ALLOW_NUTRITION",
+            },
+            "credits": None,
+            "persistence": "backend_owned",
+        }
     )
 
     assert response.model_dump(by_alias=True) == {

@@ -31,3 +31,12 @@ class AiProviderRetryableError(AiProviderError):
 class AiProviderNonRetryableError(AiProviderError):
     code = "ai_provider_non_retryable_failed"
     status_code = 502
+
+
+class AiCreditsExhaustedDomainError(DomainError):
+    code = "AI_CREDITS_EXHAUSTED"
+    status_code = 402
+
+    def __init__(self, message: str, *, credits_status: object) -> None:
+        super().__init__(message)
+        self.credits_status = credits_status

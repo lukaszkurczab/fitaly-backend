@@ -105,7 +105,8 @@ async def test_ai_chat_v2_run_e2e_happy_path() -> None:
     assert response.context_stats.truncated is False
     assert response.context_stats.scope_decision == "ALLOW_NUTRITION"
     assert response.usage.total_tokens == 222
-    assert response.credits is None
+    assert response.credits is not None
+    assert response.credits.balance == 9
     assert response.persistence == "backend_owned"
 
     run = await harness.ai_run_service.get_run(run_id=response.run_id)
@@ -118,6 +119,11 @@ async def test_ai_chat_v2_run_e2e_happy_path() -> None:
         "get_meal_logging_quality",
     ]
     assert run.total_tokens == 222
+    assert run.metadata["creditCost"] == 1
+    assert run.metadata["creditDeducted"] is True
+    assert run.metadata["creditRefunded"] is False
+    assert run.metadata["balanceAfter"] == 9
+    assert run.metadata["idempotentReplay"] is False
 
     summary = await harness.summary_service.get_current_summary(
         user_id="user-1",
