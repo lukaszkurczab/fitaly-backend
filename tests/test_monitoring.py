@@ -37,6 +37,7 @@ def test_init_sentry_uses_configured_sentry_environment(mocker: MockerFixture) -
     mocker.patch.object(monitoring.settings, "SENTRY_DSN", "https://example@sentry.io/1")
     mocker.patch.object(monitoring.settings, "ENVIRONMENT", "production")
     mocker.patch.object(monitoring.settings, "SENTRY_ENVIRONMENT", "staging")
+    mocker.patch.object(monitoring.settings, "SENTRY_TRACES_SAMPLE_RATE", 0.25)
     mocker.patch.object(monitoring.settings, "VERSION", "1.2.3")
     mocker.patch.object(monitoring, "_running_under_pytest", return_value=False)
     sentry_init = mocker.patch.object(monitoring.sentry_sdk, "init")
@@ -49,5 +50,5 @@ def test_init_sentry_uses_configured_sentry_environment(mocker: MockerFixture) -
     assert kwargs["environment"] == "staging"
     assert kwargs["release"] == "1.2.3"
     assert kwargs["send_default_pii"] is False
-    assert kwargs["traces_sample_rate"] == 0.1
+    assert kwargs["traces_sample_rate"] == 0.25
     assert len(kwargs["integrations"]) == 2

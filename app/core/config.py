@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "development"
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=0.01, ge=0.0, le=1.0)
 
     # Product limits
     AI_CREDITS_FREE: int = Field(default=100, ge=0)

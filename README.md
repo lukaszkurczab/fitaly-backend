@@ -246,6 +246,7 @@ Use [.env.example](./.env.example) as the source of truth for local and deployme
 | `FIREBASE_PRIVATE_KEY`           | One credential source required when Firebase is used; fail-fast in production with `EAGER_FIREBASE_INIT=true` | -                         | Service account private key; preferred on Railway              |
 | `SENTRY_DSN`                     | No                            | empty                     | Sentry DSN; empty disables Sentry                              |
 | `SENTRY_ENVIRONMENT`             | No                            | `development`             | Sentry environment tag                                         |
+| `SENTRY_TRACES_SAMPLE_RATE`      | No                            | `0.01`                    | Sentry performance tracing sample rate; use `0` to disable traces |
 | `AI_CREDITS_FREE`                | No                            | `100`                     | Monthly AI credit allocation for free users                    |
 | `AI_CREDITS_PREMIUM`             | No                            | `800`                     | Monthly AI credit allocation for premium users                 |
 | `AI_CREDIT_COST_CHAT`            | No                            | `1`                       | Credits per chat request                                       |
@@ -276,6 +277,7 @@ FIREBASE_CLIENT_EMAIL=your_service_account_email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
 SENTRY_ENVIRONMENT=development
+SENTRY_TRACES_SAMPLE_RATE=0.01
 AI_CREDITS_FREE=100
 AI_CREDITS_PREMIUM=800
 AI_CREDIT_COST_CHAT=1
@@ -300,7 +302,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
@@ -326,8 +328,8 @@ Use separate Railway environments for launch rehearsal:
 
 | Environment | Runtime profile | Required worker count | Firebase/Firestore startup | Data/integrations |
 | ----------- | --------------- | --------------------- | -------------------------- | ----------------- |
-| `prod`      | Always-on, launch-candidate runtime. Do not disable launch features to reduce cost. | `WEB_CONCURRENCY=2` | `EAGER_FIREBASE_INIT=true`; deploy fails fast when Firebase config or credentials are invalid. | Real production integrations, production Firebase project, production Firestore database (`FIRESTORE_DATABASE_ID=(default)`), production Sentry environment. |
-| `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, `fitaly-smoke` Firestore database (`FIRESTORE_DATABASE_ID=fitaly-smoke`), smoke Sentry environment, non-production credentials where available. |
+| `prod`      | Always-on, launch-candidate runtime. Do not disable launch features to reduce cost. | `WEB_CONCURRENCY=2` | `EAGER_FIREBASE_INIT=true`; deploy fails fast when Firebase config or credentials are invalid. | Real production integrations, production Firebase project, production Firestore database (`FIRESTORE_DATABASE_ID=(default)`), Sentry error monitoring enabled with `SENTRY_ENVIRONMENT=production` and `SENTRY_TRACES_SAMPLE_RATE=0.01`. |
+| `smoke`     | Controlled test runtime. Use on-demand/serverless behavior where Railway supports it. | `WEB_CONCURRENCY=1` | `EAGER_FIREBASE_INIT=false` by default; set `true` only for infra readiness tests that intentionally validate Firebase credentials at startup. | Separate Railway variables, `fitaly-smoke` Firestore database (`FIRESTORE_DATABASE_ID=fitaly-smoke`), `SENTRY_ENVIRONMENT=smoke`, `SENTRY_TRACES_SAMPLE_RATE=0`, and optional `SENTRY_DSN`; when unset, Sentry is disabled. |
 
 RAM baseline is mainly affected by the number of Gunicorn worker processes because each worker loads the FastAPI app, settings, SDK clients, and runtime dependencies. Moving from hardcoded 4 workers to `WEB_CONCURRENCY=2` roughly halves the worker-process baseline for prod while preserving the launch-candidate feature set. Smoke uses `WEB_CONCURRENCY=1` to keep a lower idle baseline and avoid paying for duplicate warm worker processes in a controlled test environment. `EAGER_FIREBASE_INIT=false` in smoke also avoids paying startup cost for Firebase/Firestore until a request path actually needs Firestore.
 
@@ -352,6 +354,7 @@ Railway prod variable checklist:
 - `CORS_ORIGINS=<production-mobile-or-web-origins>`
 - `SENTRY_DSN=<production-sentry-dsn>`
 - `SENTRY_ENVIRONMENT=production`
+- `SENTRY_TRACES_SAMPLE_RATE=0.01`
 - Railway Health Check Path: `/api/v1/health`
 - Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
 
@@ -367,8 +370,9 @@ Railway smoke variable checklist:
 - `FIREBASE_PRIVATE_KEY=<smoke-service-account-private-key>`
 - `OPENAI_API_KEY=<smoke-or-limited-openai-key>`
 - `CORS_ORIGINS=<smoke-client-or-test-origins>`
-- `SENTRY_DSN=<smoke-sentry-dsn>`
+- `SENTRY_DSN=<smoke-sentry-dsn>` or unset to disable Sentry in smoke
 - `SENTRY_ENVIRONMENT=smoke`
+- `SENTRY_TRACES_SAMPLE_RATE=0`
 - Railway Health Check Path: `/api/v1/health`
 - For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
 - Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
@@ -383,7 +387,7 @@ Railway dashboard checklist:
 
 ### Sentry & Firestore notes
 
-Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish development, staging, and production events.
+Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish development, staging, production, and smoke events. Use `SENTRY_TRACES_SAMPLE_RATE` to tune performance tracing per Railway environment.
 Sentry initialization is skipped automatically when `ENVIRONMENT=local` and during `pytest` runs, so local tests do not send synthetic failures.
 
 Repository-level release/ops workflows additionally expect these GitHub secrets:
@@ -454,7 +458,8 @@ Error responses:
 
 - `sentry-sdk[fastapi]` captures unhandled errors and performance traces from the API.
 - Minimum setup: set `SENTRY_DSN` and initialize Sentry at app startup.
-- Keep different `SENTRY_ENVIRONMENT` values for `development`, `staging`, and `production`.
+- Keep different `SENTRY_ENVIRONMENT` values for `development`, `staging`, `production`, and `smoke`.
+- Use `SENTRY_TRACES_SAMPLE_RATE=0.01` for prod launch-candidate and `SENTRY_TRACES_SAMPLE_RATE=0` for smoke when traces should be disabled.
 
 ## Error Monitoring
 
@@ -462,9 +467,10 @@ Set `SENTRY_DSN` in `.env` to enable Sentry reporting:
 
 ```env
 SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
+SENTRY_TRACES_SAMPLE_RATE=0.01
 ```
 
-If `SENTRY_DSN` is empty, Sentry stays disabled and the backend only writes logs locally. When configured, the backend reports unhandled exceptions, selected log messages, and request performance traces to Sentry.
+If `SENTRY_DSN` is empty, Sentry stays disabled and the backend only writes logs locally. When configured, the backend reports unhandled exceptions and selected log messages to Sentry; request performance traces are controlled by `SENTRY_TRACES_SAMPLE_RATE`.
 
 All responses include the `X-Request-ID` header. This identifier is attached to request logs and should be included in support/debug flows when correlating backend activity with client reports.
 
