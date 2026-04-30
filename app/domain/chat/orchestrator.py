@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import logging
 from time import perf_counter
@@ -46,6 +47,12 @@ class _ToolExecutionResult:
     names: list[str]
     metrics: list[dict[str, Any]]
     scope_resolved: str | None
+
+
+@dataclass
+class _IdempotencyLockEntry:
+    lock: asyncio.Lock
+    ref_count: int = 0
 
 
 class _ToolLike(Protocol):
@@ -112,8 +119,24 @@ class ChatOrchestrator:
         self.retry_policy = retry_policy
         self.credits_service = credits_service
         self.recent_turns_limit = max(2, recent_turns_limit)
+        self._idempotency_lock_guard = asyncio.Lock()
+        self._idempotency_locks: dict[str, _IdempotencyLockEntry] = {}
 
     async def run(self, *, user_id: str, request: ChatRunRequestDto) -> ChatRunResponseDto:
+        lock_key = self._run_idempotency_lock_key(user_id=user_id, request=request)
+        lock_entry = await self._acquire_idempotency_lock_entry(lock_key)
+        try:
+            async with lock_entry.lock:
+                return await self._run_unlocked(user_id=user_id, request=request)
+        finally:
+            await self._release_idempotency_lock_entry(lock_key, lock_entry)
+
+    async def _run_unlocked(
+        self,
+        *,
+        user_id: str,
+        request: ChatRunRequestDto,
+    ) -> ChatRunResponseDto:
         """Execute canonical AI Chat v2 lifecycle for one user request.
 
         Flow order:
@@ -505,6 +528,28 @@ class ChatOrchestrator:
             persistence="backend_owned",
         )
 
+    async def _acquire_idempotency_lock_entry(
+        self,
+        lock_key: str,
+    ) -> _IdempotencyLockEntry:
+        async with self._idempotency_lock_guard:
+            entry = self._idempotency_locks.get(lock_key)
+            if entry is None:
+                entry = _IdempotencyLockEntry(lock=asyncio.Lock())
+                self._idempotency_locks[lock_key] = entry
+            entry.ref_count += 1
+            return entry
+
+    async def _release_idempotency_lock_entry(
+        self,
+        lock_key: str,
+        entry: _IdempotencyLockEntry,
+    ) -> None:
+        async with self._idempotency_lock_guard:
+            entry.ref_count -= 1
+            if entry.ref_count <= 0 and self._idempotency_locks.get(lock_key) is entry:
+                self._idempotency_locks.pop(lock_key, None)
+
     async def _ensure_run_started(
         self,
         *,
@@ -819,6 +864,18 @@ class ChatOrchestrator:
             f"threadId={thread_id}\n"
             f"clientMessageId={client_message_id}\n"
             f"action={action}"
+        )
+
+    @staticmethod
+    def _run_idempotency_lock_key(
+        *,
+        user_id: str,
+        request: ChatRunRequestDto,
+    ) -> str:
+        return (
+            f"userId={user_id}\n"
+            f"threadId={request.thread_id}\n"
+            f"clientMessageId={request.client_message_id}"
         )
 
     def _map_provider_error(self, exc: Exception) -> Exception:
