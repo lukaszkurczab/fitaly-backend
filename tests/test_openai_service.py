@@ -2,7 +2,6 @@
 
 import asyncio
 
-import openai
 import pytest
 from pytest_mock import MockerFixture
 
