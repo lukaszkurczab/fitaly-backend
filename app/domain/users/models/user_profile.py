@@ -18,5 +18,8 @@ class UserProfile:
     preferences: list[str] = field(default_factory=_empty_preferences)
     allergies: list[str] = field(default_factory=_empty_allergies)
     language: str = "pl"
+    ai_style: str | None = None
+    ai_persona: str = "calm_guide"
+    style_profile: dict[str, str] = field(default_factory=dict)
     ai_health_data_consent_at: str | None = None
     survey_completed: bool = False

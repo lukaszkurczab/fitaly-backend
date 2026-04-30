@@ -87,3 +87,11 @@ def test_v1_ai_route_has_no_backward_compat_chat_aliases() -> None:
     content = ai_v1_path.read_text(encoding="utf-8")
     for forbidden in FORBIDDEN_V1_CHAT_SNIPPETS:
         assert forbidden not in content, f"Forbidden v1 chat compatibility residue in {ai_v1_path}: {forbidden}"
+
+
+def test_v1_router_does_not_mount_chat_thread_projection_endpoints() -> None:
+    v1_router_path = _repo_root() / "app" / "api" / "v1" / "router.py"
+    content = v1_router_path.read_text(encoding="utf-8")
+
+    assert "chat_threads" not in content
+    assert "users/me/chat" not in content

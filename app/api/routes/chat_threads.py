@@ -1,7 +1,7 @@
-"""Legacy v1 chat thread endpoints.
+"""AI Chat v2 thread projection endpoints.
 
-These endpoints expose legacy thread/message persistence under `/api/v1`.
-Canonical AI Chat v2 run lifecycle is under `/api/v2/ai/chat/runs`.
+These endpoints expose backend-owned AI Chat thread/message projections under
+`/api/v2`. The canonical run lifecycle remains `/api/v2/ai/chat/runs`.
 """
 
 from fastapi import APIRouter, Depends, Query
@@ -9,8 +9,6 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.schemas.chat_thread import (
     ChatMessageItem,
-    ChatMessagePersistRequest,
-    ChatMessagePersistResponse,
     ChatMessagesPageResponse,
     ChatThreadItem,
     ChatThreadsPageResponse,
@@ -58,30 +56,4 @@ async def get_chat_thread_messages_me(
     return ChatMessagesPageResponse(
         items=[ChatMessageItem.model_validate(item) for item in items],
         nextBeforeCreatedAt=next_before_created_at,
-    )
-
-
-@router.post(
-    "/users/me/chat/threads/{threadId}/messages",
-    response_model=ChatMessagePersistResponse,
-)
-async def persist_chat_thread_message_me(
-    threadId: str,
-    request: ChatMessagePersistRequest,
-    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
-) -> ChatMessagePersistResponse:
-    await chat_thread_service.persist_message(
-        current_user.uid,
-        threadId,
-        message_id=request.messageId,
-        role=request.role,
-        content=request.content,
-        created_at=request.createdAt,
-        title=request.title,
-    )
-
-    return ChatMessagePersistResponse(
-        threadId=threadId,
-        messageId=request.messageId,
-        updated=True,
     )

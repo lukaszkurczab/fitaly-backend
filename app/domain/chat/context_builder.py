@@ -106,6 +106,12 @@ class ContextBuilder:
                 "summary": summary_text,
             },
         }
+        profile_summary = grounding.get("profileSummary")
+        if isinstance(profile_summary, dict):
+            profile_map = cast(dict[str, Any], profile_summary)
+            style_profile = profile_map.get("styleProfile")
+            if isinstance(style_profile, dict):
+                grounding["styleProfile"] = style_profile
         self._trim_low_value_context(grounding)
         return grounding
 

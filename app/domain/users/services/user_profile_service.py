@@ -41,6 +41,51 @@ def _normalize_int(value: object) -> int | None:
     return None
 
 
+_AI_PERSONA_LABELS = {
+    "calm_guide": "Calm Guide",
+    "cheerful_companion": "Cheerful Companion",
+    "focused_coach": "Focused Coach",
+    "mediterranean_friend": "Mediterranean Friend",
+}
+
+_AI_PERSONA_ALIASES = {
+    "": "calm_guide",
+    "none": "calm_guide",
+    "calm": "calm_guide",
+    "calm_guide": "calm_guide",
+    "calm guide": "calm_guide",
+    "friendly": "cheerful_companion",
+    "cheerful": "cheerful_companion",
+    "cheerful_companion": "cheerful_companion",
+    "cheerful companion": "cheerful_companion",
+    "concise": "focused_coach",
+    "focused": "focused_coach",
+    "focused_coach": "focused_coach",
+    "focused coach": "focused_coach",
+    "mediterranean": "mediterranean_friend",
+    "mediterranean_friend": "mediterranean_friend",
+    "mediterranean friend": "mediterranean_friend",
+}
+
+
+def _normalize_ai_persona(*, ai_persona: object, ai_style: object) -> str:
+    persona_text = str(ai_persona or "").strip().lower().replace("-", "_")
+    persona_key = _AI_PERSONA_ALIASES.get(persona_text) if persona_text else None
+    if persona_key:
+        return persona_key
+
+    style_text = str(ai_style or "").strip().lower().replace("-", "_")
+    return _AI_PERSONA_ALIASES.get(style_text, "calm_guide")
+
+
+def _style_profile(persona: str) -> dict[str, str]:
+    label = _AI_PERSONA_LABELS.get(persona, _AI_PERSONA_LABELS["calm_guide"])
+    return {
+        "id": persona if persona in _AI_PERSONA_LABELS else "calm_guide",
+        "label": label,
+    }
+
+
 class UserProfileService:
     async def get_profile(self, *, user_id: str) -> UserProfile | None:
         raw = await user_account_service.get_user_profile_data(user_id)
@@ -54,6 +99,11 @@ class UserProfileService:
         consent_at_text = str(consent_at).strip() if consent_at is not None else None
         if consent_at_text == "":
             consent_at_text = None
+        ai_style = str(raw.get("aiStyle")).strip() if raw.get("aiStyle") else None
+        ai_persona = _normalize_ai_persona(
+            ai_persona=raw.get("aiPersona"),
+            ai_style=ai_style,
+        )
         return UserProfile(
             user_id=user_id,
             goal=str(raw.get("goal")).strip() if raw.get("goal") else None,
@@ -64,6 +114,9 @@ class UserProfileService:
             preferences=_normalize_list(raw.get("preferences")),
             allergies=_normalize_list(raw.get("allergies")),
             language=_normalize_language(raw.get("language")),
+            ai_style=ai_style,
+            ai_persona=ai_persona,
+            style_profile=_style_profile(ai_persona),
             ai_health_data_consent_at=consent_at_text,
             survey_completed=bool(raw.get("surveyComplited")),
         )
@@ -77,6 +130,9 @@ class UserProfileService:
                 "preferences": [],
                 "allergies": [],
                 "language": "pl",
+                "aiStyle": None,
+                "aiPersona": "calm_guide",
+                "styleProfile": _style_profile("calm_guide"),
             }
 
         return {
@@ -85,6 +141,9 @@ class UserProfileService:
             "preferences": profile.preferences,
             "allergies": profile.allergies,
             "language": profile.language,
+            "aiStyle": profile.ai_style,
+            "aiPersona": profile.ai_persona,
+            "styleProfile": profile.style_profile,
         }
 
     async def get_goal_context(self, *, user_id: str) -> dict[str, Any]:

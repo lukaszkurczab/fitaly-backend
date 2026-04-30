@@ -26,6 +26,14 @@ class ProfileSummaryDto(BaseModel):
     preferences: list[str] = Field(default_factory=_empty_str_list)
     allergies: list[str] = Field(default_factory=_empty_str_list)
     language: str = "pl"
+    ai_style: str | None = Field(default=None, alias="aiStyle")
+    ai_persona: Literal[
+        "calm_guide",
+        "cheerful_companion",
+        "focused_coach",
+        "mediterranean_friend",
+    ] = Field(default="calm_guide", alias="aiPersona")
+    style_profile: dict[str, str] = Field(default_factory=dict, alias="styleProfile")
 
 class GoalContextDto(BaseModel):
     goal: str | None = None

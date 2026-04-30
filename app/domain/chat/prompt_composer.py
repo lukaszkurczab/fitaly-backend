@@ -12,7 +12,8 @@ SYSTEM_PROMPT = (
     "Treat coverage/reliability/signals as first-class evidence. "
     "If data is partial, communicate limited confidence clearly. "
     "Never invent missing facts. "
-    "Never provide medical diagnosis or treatment."
+    "Never provide medical diagnosis or treatment. "
+    "Stay calm, supportive, smart, light, and non-judgmental."
 )
 
 _NUTRITION_CAPABILITIES = {
@@ -39,6 +40,31 @@ _EXPLICIT_LISTING_MARKERS = (
     "exact meals",
     "detailed entries",
 )
+
+_STYLE_RULES = {
+    "calm_guide": {
+        "label": "Calm Guide",
+        "expression": "steady, clear, reassuring, minimal hype",
+    },
+    "cheerful_companion": {
+        "label": "Cheerful Companion",
+        "expression": "warmer and lightly encouraging without pressure",
+    },
+    "focused_coach": {
+        "label": "Focused Coach",
+        "expression": "direct, concise, action-oriented, no aggressive fitness tone",
+    },
+    "mediterranean_friend": {
+        "label": "Mediterranean Friend",
+        "expression": "warm, relaxed, food-positive, simple everyday framing",
+    },
+}
+
+_CORE_STYLE_GUARDRAILS = [
+    "Fitaly brand core is always calm, supportive, smart, light, and non-judgmental.",
+    "Persona changes expression only; it never changes facts, safety, medical boundaries, or evidence confidence.",
+    "No diagnosis, no treatment instructions, no shame, no guilt, no aggressive fitness tone.",
+]
 
 
 class PromptComposer:
@@ -70,12 +96,15 @@ class PromptComposer:
             user_message=dto.user_message,
             explicit_listing_requested=explicit_listing_requested,
         )
+        style_rules = self._style_rules(grounding_payload)
         developer_payload: dict[str, Any] = {
             "contract": "fitaly_chat_v2_grounded_response",
             "language": dto.language,
             "responseMode": dto.response_mode,
             "responseShape": response_shape,
             "grounding": grounding_payload,
+            "brandCore": _CORE_STYLE_GUARDRAILS,
+            "styleRules": style_rules,
             "responseBlueprint": self._response_blueprint(response_shape),
             "antiListingPolicy": {
                 "explicitListingRequested": explicit_listing_requested,
@@ -116,6 +145,8 @@ class PromptComposer:
                 "Coverage/reliability/signals must influence confidence and wording.",
                 "With low/partial coverage, avoid confident reduction claims from logged kcal only.",
                 "Goal-related questions require interpretation, not only target restatement.",
+                "Persona/style settings are bounded voice controls only.",
+                "Never use shame, guilt, diagnosis, treatment, or aggressive fitness pressure.",
                 "If planner marked out_of_scope, refuse briefly and redirect to supported scope.",
                 "Do not output hidden reasoning or internal chain-of-thought.",
             ],
@@ -138,6 +169,29 @@ class PromptComposer:
         return (
             "Mogę pomóc tylko w kwestiach Fitaly, Twoich danych w aplikacji oraz tematów żywieniowych."
         )
+
+    def _style_rules(self, grounding: dict[str, Any]) -> dict[str, Any]:
+        style_profile = grounding.get("styleProfile")
+        style_map = cast(dict[str, Any], style_profile) if isinstance(style_profile, dict) else {}
+        persona = str(style_map.get("id") or "").strip()
+        if persona not in _STYLE_RULES:
+            profile_summary = grounding.get("profileSummary")
+            profile_map = (
+                cast(dict[str, Any], profile_summary)
+                if isinstance(profile_summary, dict)
+                else {}
+            )
+            persona = str(profile_map.get("aiPersona") or "").strip()
+        if persona not in _STYLE_RULES:
+            persona = "calm_guide"
+
+        selected = _STYLE_RULES[persona]
+        return {
+            "aiPersona": persona,
+            "label": selected["label"],
+            "expression": selected["expression"],
+            "guardrails": _CORE_STYLE_GUARDRAILS,
+        }
 
     def _infer_response_shape(
         self,

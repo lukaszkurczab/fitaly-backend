@@ -69,6 +69,12 @@ async def test_profile_and_goal_tools_return_structured_payloads() -> None:
                 "preferences": ["high_protein"],
                 "allergies": ["nuts"],
                 "language": "pl",
+                "aiStyle": "friendly",
+                "aiPersona": "cheerful_companion",
+                "styleProfile": {
+                    "id": "cheerful_companion",
+                    "label": "Cheerful Companion",
+                },
             },
             goal_context={},
         )  # type: ignore[arg-type]
@@ -89,6 +95,8 @@ async def test_profile_and_goal_tools_return_structured_payloads() -> None:
 
     assert profile["activityLevel"] == "moderate"
     assert profile["preferences"] == ["high_protein"]
+    assert profile["aiPersona"] == "cheerful_companion"
+    assert profile["styleProfile"]["label"] == "Cheerful Companion"
     assert goal["calorieTarget"] == 2200
 
 
@@ -187,6 +195,7 @@ async def test_user_profile_service_reuses_user_account_profile_data(
             "preferences": ["vegan"],
             "allergies": ["soy"],
             "language": "en-US",
+            "aiStyle": "concise",
             "aiHealthDataConsentAt": "2026-04-10T11:00:00Z",
             "surveyComplited": True,
         }
@@ -201,7 +210,37 @@ async def test_user_profile_service_reuses_user_account_profile_data(
     assert profile is not None
     assert profile.language == "en"
     assert profile.calorie_target == 2800
+    assert profile.ai_style == "concise"
+    assert profile.ai_persona == "focused_coach"
+    assert profile.style_profile == {"id": "focused_coach", "label": "Focused Coach"}
     assert profile.ai_health_data_consent_at == "2026-04-10T11:00:00Z"
 
     goal_context = await service.get_goal_context(user_id="user-1")
     assert goal_context["proteinStrategy"] == "higher_protein_with_calorie_surplus"
+
+
+async def test_user_profile_service_bounds_future_ai_persona_to_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_get_user_profile_data(user_id: str) -> dict[str, Any]:
+        del user_id
+        return {
+            "goal": "maintain",
+            "language": "pl",
+            "aiPersona": "Mediterranean Friend",
+            "aiStyle": "aggressive",
+        }
+
+    monkeypatch.setattr(
+        "app.domain.users.services.user_profile_service.user_account_service.get_user_profile_data",
+        _fake_get_user_profile_data,
+    )
+
+    service = UserProfileService()
+    summary = await service.get_profile_summary(user_id="user-1")
+
+    assert summary["aiPersona"] == "mediterranean_friend"
+    assert summary["styleProfile"] == {
+        "id": "mediterranean_friend",
+        "label": "Mediterranean Friend",
+    }

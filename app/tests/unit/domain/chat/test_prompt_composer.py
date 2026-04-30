@@ -19,6 +19,11 @@ def _base_grounding() -> dict[str, Any]:
             ],
         },
         "scope": {"type": "calendar_week"},
+        "profileSummary": {
+            "aiPersona": "calm_guide",
+            "styleProfile": {"id": "calm_guide", "label": "Calm Guide"},
+        },
+        "styleProfile": {"id": "calm_guide", "label": "Calm Guide"},
         "nutritionSummary": {"loggingCoverage": {"coverageLevel": "low"}},
     }
 
@@ -48,6 +53,67 @@ def test_prompt_composer_builds_structured_messages_without_blob_sections() -> N
     assert "PROFILE=" not in developer_raw
     assert "HISTORY=" not in developer_raw
     assert "MEALS_CONTEXT=" not in developer_raw
+
+
+def test_prompt_composer_adds_bounded_persona_style_rules() -> None:
+    composer = PromptComposer()
+    grounding = _base_grounding()
+    grounding["styleProfile"] = {
+        "id": "cheerful_companion",
+        "label": "Cheerful Companion",
+    }
+    prompt_input = composer.build_prompt_input(
+        language="en",
+        response_mode="assessment_plus_guidance",
+        grounding=grounding,
+        user_message="How did I eat this week?",
+    )
+
+    developer_payload = json.loads(composer.compose_messages(prompt_input)[1]["content"])
+
+    assert developer_payload["styleRules"]["aiPersona"] == "cheerful_companion"
+    assert "lightly encouraging" in developer_payload["styleRules"]["expression"]
+    guardrails = " ".join(developer_payload["styleRules"]["guardrails"])
+    assert "non-judgmental" in guardrails
+    assert "No diagnosis" in guardrails
+    assert "no shame" in guardrails
+    assert "no aggressive fitness tone" in guardrails
+
+
+def test_prompt_composer_persona_changes_expression_not_core_rules() -> None:
+    composer = PromptComposer()
+
+    focused = _base_grounding()
+    focused["styleProfile"] = {"id": "focused_coach", "label": "Focused Coach"}
+    mediterranean = _base_grounding()
+    mediterranean["styleProfile"] = {
+        "id": "mediterranean_friend",
+        "label": "Mediterranean Friend",
+    }
+
+    focused_payload = json.loads(
+        composer.compose_messages(
+            composer.build_prompt_input(
+                language="en",
+                response_mode="assessment_plus_guidance",
+                grounding=focused,
+                user_message="How did I eat?",
+            )
+        )[1]["content"]
+    )
+    mediterranean_payload = json.loads(
+        composer.compose_messages(
+            composer.build_prompt_input(
+                language="en",
+                response_mode="assessment_plus_guidance",
+                grounding=mediterranean,
+                user_message="How did I eat?",
+            )
+        )[1]["content"]
+    )
+
+    assert focused_payload["styleRules"]["expression"] != mediterranean_payload["styleRules"]["expression"]
+    assert focused_payload["styleRules"]["guardrails"] == mediterranean_payload["styleRules"]["guardrails"]
 
 
 def test_prompt_composer_enforces_verdict_first_blueprint_for_analytical_modes() -> None:

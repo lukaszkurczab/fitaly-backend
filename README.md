@@ -54,9 +54,13 @@ README.md
   - Deterministic tools: `app/domain/tools/*`
   - Chat memory + runs persistence: `app/domain/chat_memory/*`, `app/domain/ai_runs/*`, `app/infra/firestore/repositories/*`
   - Schemas: `app/schemas/ai_chat/*`
+  - Thread projection reads: `GET /api/v2/users/me/chat/threads`, `GET /api/v2/users/me/chat/threads/{threadId}/messages`
+  - Chat writes are only through `POST /api/v2/ai/chat/runs`.
+  - Bounded persona/style profile is backend-owned from user profile `aiStyle`/`aiPersona` and normalized into `styleProfile`.
 - **Legacy AI v1 analysis (kept for compatibility)**
   - Route: `app/api/routes/ai.py` (photo/text meal analysis only)
   - Supporting services: `ai_gateway_service`, `ai_gateway_logger`, `openai_service`, `text_meal_service`
+  - `openai_service` remains only for meal photo/text analysis helpers, not AI Chat runtime.
 - **Removed legacy chat v1**
   - Legacy v1 ask endpoint and its chat-only helper modules were removed.
   - Reintroduction of chat compatibility aliases/patch points is disallowed.
@@ -176,6 +180,8 @@ The backend exposes two API versions:
 - `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state
 - `GET /api/v2/users/me/habits` — habit signals
 - `POST /api/v2/ai/chat/runs` — canonical AI Chat v2 run lifecycle
+- `GET /api/v2/users/me/chat/threads` — AI Chat v2 thread projection reads
+- `GET /api/v2/users/me/chat/threads/{threadId}/messages` — AI Chat v2 message projection reads
 
 **v2 follow-up technical surface**:
 
@@ -449,6 +455,7 @@ Example response:
 
 `POST /api/v2/ai/chat/runs` is the only backend AI chat entrypoint used by the mobile app.
 Legacy v1 ask endpoint has been removed.
+AI Chat thread/message projection reads are mounted under `/api/v2/users/me/chat/*`, not `/api/v1`.
 
 `POST /api/v1/ai/photo/analyze` is the backend photo-analysis entrypoint used by the mobile app for meal-photo AI flows.
 

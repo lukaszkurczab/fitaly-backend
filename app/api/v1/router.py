@@ -11,7 +11,6 @@ from app.api.routes.users import router as users_router
 from app.api.routes.usernames import router as usernames_router
 from app.api.routes.badges import router as badges_router
 from app.api.routes.notifications import router as notifications_router
-from app.api.routes.chat_threads import router as chat_threads_router
 from app.api.routes.meals import router as meals_router
 from app.api.routes.my_meals import router as my_meals_router
 from app.api.routes.feedback import router as feedback_router
@@ -28,7 +27,6 @@ router.include_router(users_router, tags=["users"], prefix="")
 router.include_router(streaks_router, tags=["users"], prefix="")
 router.include_router(badges_router, tags=["users"], prefix="")
 router.include_router(notifications_router, tags=["users"], prefix="")
-router.include_router(chat_threads_router, tags=["users"], prefix="")
 router.include_router(meals_router, tags=["users"], prefix="")
 router.include_router(my_meals_router, tags=["users"], prefix="")
 router.include_router(feedback_router, tags=["users"], prefix="")

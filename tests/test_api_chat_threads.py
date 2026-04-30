@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -6,6 +7,13 @@ from app.main import app
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+pytestmark = pytest.mark.ai_v2
+
+
+def test_v1_chat_thread_projection_is_not_mounted(auth_headers: AuthHeaders) -> None:
+    response = client.get("/api/v1/users/me/chat/threads", headers=auth_headers("user-1"))
+
+    assert response.status_code == 404
 
 
 def test_get_chat_threads_returns_backend_payload(
@@ -29,7 +37,7 @@ def test_get_chat_threads_returns_backend_payload(
         ),
     )
 
-    response = client.get("/api/v1/users/me/chat/threads", headers=auth_headers("user-1"))
+    response = client.get("/api/v2/users/me/chat/threads", headers=auth_headers("user-1"))
 
     assert response.status_code == 200
     assert response.json() == {
@@ -74,7 +82,7 @@ def test_get_chat_messages_returns_backend_payload(
     )
 
     response = client.get(
-        "/api/v1/users/me/chat/threads/thread-1/messages",
+        "/api/v2/users/me/chat/threads/thread-1/messages",
         headers=auth_headers("user-1"),
     )
 
@@ -100,17 +108,9 @@ def test_get_chat_messages_returns_backend_payload(
     )
 
 
-def test_post_chat_message_persists_with_backend_service(
-    mocker: MockerFixture,
-    auth_headers: AuthHeaders,
-) -> None:
-    persist_message = mocker.patch(
-        "app.api.routes.chat_threads.chat_thread_service.persist_message",
-        return_value=None,
-    )
-
+def test_direct_chat_message_persist_endpoint_is_not_mounted(auth_headers: AuthHeaders) -> None:
     response = client.post(
-        "/api/v1/users/me/chat/threads/thread-1/messages",
+        "/api/v2/users/me/chat/threads/thread-1/messages",
         json={
             "messageId": "msg-1",
             "role": "user",
@@ -121,21 +121,7 @@ def test_post_chat_message_persists_with_backend_service(
         headers=auth_headers("user-1"),
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "threadId": "thread-1",
-        "messageId": "msg-1",
-        "updated": True,
-    }
-    persist_message.assert_called_once_with(
-        "user-1",
-        "thread-1",
-        message_id="msg-1",
-        role="user",
-        content="hello",
-        created_at=100,
-        title="First chat",
-    )
+    assert response.status_code == 405
 
 
 def test_get_chat_threads_returns_500_for_firestore_errors(
@@ -147,7 +133,7 @@ def test_get_chat_threads_returns_500_for_firestore_errors(
         side_effect=FirestoreServiceError("boom"),
     )
 
-    response = client.get("/api/v1/users/me/chat/threads", headers=auth_headers("user-1"))
+    response = client.get("/api/v2/users/me/chat/threads", headers=auth_headers("user-1"))
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Database error"}

@@ -9,6 +9,11 @@ This document defines the canonical backend path for AI Chat v2 and the guardrai
 - API endpoint:
   - `app/api/v2/endpoints/ai_chat.py`
   - `POST /api/v2/ai/chat/runs`
+- Thread projection endpoints:
+  - `app/api/routes/chat_threads.py`, mounted only by `app/api/v2/router.py`
+  - `GET /api/v2/users/me/chat/threads`
+  - `GET /api/v2/users/me/chat/threads/{threadId}/messages`
+  - direct client message persistence is not mounted; writes happen through `POST /api/v2/ai/chat/runs`
 - DI/wiring:
   - `app/api/v2/deps/ai_chat.py`
 - Orchestration:
@@ -26,6 +31,7 @@ This document defines the canonical backend path for AI Chat v2 and the guardrai
   - `app/schemas/ai_chat/*`
 - Context ownership:
   - profile, goal, nutrition, and meal context used by AI Chat v2 are backend-owned and loaded via `app/domain/tools/*`
+  - selected assistant style is read from backend user profile data (`aiStyle` today, bounded to canonical `aiPersona`/`styleProfile`)
   - frontend request payload must stay minimal (`threadId`, `clientMessageId`, `message`, `language`, optional `uiContext`)
   - frontend must not send raw `meals`, `profile`, or competing meal summaries with chat runs
   - if launch later needs unsynced client-only context, add a bounded `contextSnapshot` DTO with explicit semantics and limits; do not pass full meal history lists
@@ -49,7 +55,7 @@ Kill switch:
 7. ensure/create thread and user message persistence
 8. planner
 9. tool execution via canonical `ToolRegistry` to fetch backend-owned profile/goal/nutrition/meal context
-10. grounded context build + token budget enforcement
+10. grounded context build, bounded style profile, and token budget enforcement
 11. generator + retry policy
 12. assistant message persistence
 13. memory summary refresh
@@ -71,6 +77,8 @@ Kill switch:
 
 - Canonical chat runtime is only:
   - `POST /api/v2/ai/chat/runs`
+  - `GET /api/v2/users/me/chat/threads`
+  - `GET /api/v2/users/me/chat/threads/{threadId}/messages`
   - `app/api/v2/endpoints/ai_chat.py`
   - `app/api/v2/deps/ai_chat.py`
   - `app/domain/chat/*`
@@ -80,6 +88,7 @@ Kill switch:
   - chat-only v1 modules in `app/services/*` and `app/schemas/ai_ask.py`
 - v2 path must not depend on legacy AI context/prompt flow.
 - v2 path must not accept or depend on frontend-owned meal/profile history for canonical chat context.
+- v1 router must not mount chat thread/message projection endpoints.
 - Forbidden in canonical v2 path:
   - `app.services.ai_context_service`
   - `app.services.ai_chat_prompt_service`
@@ -89,6 +98,19 @@ Kill switch:
   - `app.services.openai_service` (for chat flow)
 - Allowed legacy v1 AI surface:
   - `app/api/routes/ai.py` endpoints for photo/text meal analysis.
+
+## Bounded Persona Usage
+
+- Backend source of truth:
+  - current mobile profile field: `aiStyle`
+  - optional future backend profile field: `aiPersona`
+- `GetProfileSummaryTool` normalizes this into allowlisted `aiPersona` and `styleProfile`:
+  - `calm_guide` / Calm Guide
+  - `cheerful_companion` / Cheerful Companion
+  - `focused_coach` / Focused Coach
+  - `mediterranean_friend` / Mediterranean Friend
+- Persona is a bounded expression control only. It may change warmth, brevity, and framing, but must not change facts, confidence, safety boundaries, medical disclaimers, or nutrition evidence.
+- PromptComposer always includes Fitaly brand core guardrails: calm, supportive, smart, light, non-judgmental, no diagnosis, no shame, and no aggressive fitness pressure.
 
 ## Test Ownership
 

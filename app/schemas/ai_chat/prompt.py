@@ -12,6 +12,7 @@ class GroundingBundleDto(BaseModel):
     app_help_context: Optional[Dict[str, Any]] = Field(default=None, alias="appHelpContext")
     chat_summary: Optional[Dict[str, Any]] = Field(default=None, alias="chatSummary")
     thread_memory: Optional[Dict[str, Any]] = Field(default=None, alias="threadMemory")
+    style_profile: Optional[Dict[str, Any]] = Field(default=None, alias="styleProfile")
 
 class PromptBuildInputDto(BaseModel):
     language: Literal["pl", "en"] = "pl"

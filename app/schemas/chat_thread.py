@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ChatThreadItem(BaseModel):
@@ -29,17 +29,3 @@ class ChatMessageItem(BaseModel):
 class ChatMessagesPageResponse(BaseModel):
     items: list[ChatMessageItem]
     nextBeforeCreatedAt: int | None = None
-
-
-class ChatMessagePersistRequest(BaseModel):
-    messageId: str = Field(min_length=1)
-    role: Literal["user", "assistant", "system"]
-    content: str
-    createdAt: int = Field(ge=0)
-    title: str | None = None
-
-
-class ChatMessagePersistResponse(BaseModel):
-    threadId: str
-    messageId: str
-    updated: bool

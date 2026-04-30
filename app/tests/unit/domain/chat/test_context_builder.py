@@ -59,6 +59,10 @@ def test_context_builder_low_coverage_grounding_trims_daily_breakdown() -> None:
                 "loggingCoverage": {"coverageLevel": "low"},
                 "dailyBreakdown": [{"date": "2026-04-19", "kcal": 1200}],
             },
+            "get_profile_summary": {
+                "aiPersona": "focused_coach",
+                "styleProfile": {"id": "focused_coach", "label": "Focused Coach"},
+            },
             "get_app_help_context": {"topic": "meal_logging", "answerFacts": ["a", "b", "c", "d", "e", "f"]},
         },
         recent_turns=[
@@ -69,6 +73,7 @@ def test_context_builder_low_coverage_grounding_trims_daily_breakdown() -> None:
     )
     assert "dailyBreakdown" not in grounding["nutritionSummary"]
     assert len(grounding["appHelpContext"]["answerFacts"]) == 5
+    assert grounding["styleProfile"] == {"id": "focused_coach", "label": "Focused Coach"}
     assert len(grounding["threadMemory"]["lastTurns"]) == 2
     assert grounding["threadMemory"]["lastTurns"][0]["content"].endswith("…")
 
