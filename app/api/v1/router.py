@@ -6,6 +6,7 @@ from app.api.routes.version import router as version_router
 from app.api.routes.ai import router as ai_router
 from app.api.routes.ai_credits import router as ai_credits_router
 from app.api.routes.ai_credits_sync import router as ai_credits_sync_router
+from app.api.routes.access_state import router as access_state_router
 from app.api.routes.streaks import router as streaks_router
 from app.api.routes.users import router as users_router
 from app.api.routes.usernames import router as usernames_router
@@ -22,6 +23,7 @@ router.include_router(version_router, tags=["meta"])
 router.include_router(ai_router, tags=["ai"], prefix="")
 router.include_router(ai_credits_router, tags=["ai"], prefix="")
 router.include_router(ai_credits_sync_router, tags=["ai"], prefix="")
+router.include_router(access_state_router, tags=["billing"], prefix="")
 router.include_router(usernames_router, tags=["users"], prefix="")
 router.include_router(users_router, tags=["users"], prefix="")
 router.include_router(streaks_router, tags=["users"], prefix="")
