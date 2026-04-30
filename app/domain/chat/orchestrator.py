@@ -73,6 +73,13 @@ class _CreditsLike(Protocol):
         idempotency_key: str,
     ) -> ai_credits_service.IdempotentCreditResult: ...
 
+    async def complete_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        idempotency_key: str,
+    ) -> ai_credits_service.IdempotentCreditResult: ...
+
 
 class ChatOrchestrator:
     def __init__(
@@ -352,6 +359,13 @@ class ChatOrchestrator:
                 previous_summary=memory_summary,
                 covered_until_message_id=assistant_message.id,
             )
+
+            if credit_cost > 0 and credits_status is not None:
+                complete_result = await self.credits_service.complete_credits_idempotent(
+                    user_id,
+                    idempotency_key=credit_idempotency_key,
+                )
+                credits_status = complete_result.status
 
         except Exception as exc:  # noqa: BLE001
             if (
@@ -787,9 +801,9 @@ class ChatOrchestrator:
         return metadata
 
     @staticmethod
-    def _credits_dto(status: AiCreditsStatus | None) -> CreditsDto | None:
+    def _credits_dto(status: AiCreditsStatus | None) -> CreditsDto:
         if status is None:
-            return None
+            raise RuntimeError("AI Chat v2 success response requires credits status.")
         return CreditsDto.model_validate(status.model_dump())
 
     @staticmethod

@@ -34,6 +34,22 @@ class _RetryableProviderError(Exception):
         self.status_code = 503
 
 
+def _credits_payload(*, balance: int = 9) -> dict[str, Any]:
+    return {
+        "userId": "user-1",
+        "tier": "free",
+        "balance": balance,
+        "allocation": settings.AI_CREDITS_FREE,
+        "periodStartAt": "2026-04-19T00:00:00Z",
+        "periodEndAt": "2026-05-19T00:00:00Z",
+        "costs": {
+            "chat": settings.AI_CREDIT_COST_CHAT,
+            "textMeal": settings.AI_CREDIT_COST_TEXT_MEAL,
+            "photo": settings.AI_CREDIT_COST_PHOTO,
+        },
+    }
+
+
 async def test_ai_chat_v2_idempotent_replay_returns_existing_response() -> None:
     planner_result = planner_result_payload(
         task_type="data_grounded_answer",
@@ -74,8 +90,11 @@ async def test_ai_chat_v2_idempotent_replay_returns_existing_response() -> None:
     assert len(harness.generator.calls) == 1
     assert len(harness.credits_service.deductions) == 1
     assert harness.credits_service.balance == 9
+    assert first.credits is not None
+    assert first.credits.balance == 9
     assert second.credits is not None
     assert second.credits.balance == 9
+    assert next(iter(harness.credits_service.idempotency.values()))["state"] == "completed"
 
     run = await harness.ai_run_service.get_run(run_id=first.run_id)
     assert run is not None
@@ -255,7 +274,7 @@ async def test_ai_chat_v2_exhausted_credits_returns_402_with_current_status() ->
     assert len(harness.generator.calls) == 0
 
 
-async def test_ai_chat_v2_retry_after_partial_failure_does_not_double_deduct() -> None:
+async def test_ai_chat_v2_retry_after_refunded_failure_charges_final_success_once() -> None:
     planner_result = planner_result_payload(
         task_type="data_grounded_answer",
         capabilities=[{"name": "resolve_time_scope", "priority": 1, "args": {"label": "today"}}],
@@ -298,15 +317,67 @@ async def test_ai_chat_v2_retry_after_partial_failure_does_not_double_deduct() -
     second = await harness.orchestrator.run(user_id="user-partial", request=payload)
 
     assert second.reply == "Retry zakonczony powodzeniem."
-    assert len(harness.credits_service.deductions) == 1
+    assert len(harness.credits_service.deductions) == 2
     assert len(harness.credits_service.refunds) == 1
-    assert harness.credits_service.balance == 10
+    assert harness.credits_service.balance == 9
+    assert second.credits is not None
+    assert second.credits.balance == 9
 
     run = await harness.ai_run_service.get_run(run_id=second.run_id)
     assert run is not None
-    assert run.metadata["creditDeducted"] is False
-    assert run.metadata["creditRefunded"] is True
-    assert run.metadata["creditDeductIdempotentReplay"] is True
+    assert run.metadata["creditDeducted"] is True
+    assert run.metadata["creditRefunded"] is False
+    assert "creditDeductIdempotentReplay" not in run.metadata
+    assert next(iter(harness.credits_service.idempotency.values()))["state"] == "completed"
+
+
+async def test_ai_chat_v2_retry_after_refunded_failure_and_second_failure_refunds_again() -> None:
+    planner_result = planner_result_payload(
+        task_type="data_grounded_answer",
+        capabilities=[{"name": "resolve_time_scope", "priority": 1, "args": {"label": "today"}}],
+        response_mode="concise_answer",
+    )
+    harness = build_orchestrator_harness(
+        planner_result=planner_result,
+        tools={
+            "resolve_time_scope": {
+                "type": "today",
+                "startDate": "2026-04-19",
+                "endDate": "2026-04-19",
+                "timezone": "Europe/Warsaw",
+                "isPartial": True,
+            }
+        },
+        generator_script=[
+            RuntimeError("provider failed after first debit"),
+            RuntimeError("provider failed after retry debit"),
+        ],
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            timeout_seconds=0.2,
+            base_delay_seconds=0.0,
+            jitter_seconds=0.0,
+        ),
+    )
+    payload = ChatRunRequestDto.model_validate(
+        {
+            "threadId": "thread-second-failure",
+            "clientMessageId": "second-failure-1",
+            "message": "Podsumuj dzisiaj",
+            "language": "pl",
+        }
+    )
+
+    with pytest.raises(AiProviderNonRetryableError):
+        await harness.orchestrator.run(user_id="user-second-failure", request=payload)
+
+    with pytest.raises(AiProviderNonRetryableError):
+        await harness.orchestrator.run(user_id="user-second-failure", request=payload)
+
+    assert len(harness.credits_service.deductions) == 2
+    assert len(harness.credits_service.refunds) == 2
+    assert harness.credits_service.balance == 10
+    assert next(iter(harness.credits_service.idempotency.values()))["state"] == "refunded"
 
 
 async def test_ai_chat_v2_out_of_scope_refusal_is_billable_after_planner() -> None:
@@ -455,7 +526,7 @@ async def test_v2_endpoint_runs_normally_when_kill_switch_enabled(
                 "truncated": False,
                 "scopeDecision": "ALLOW_APP",
             },
-            "credits": None,
+            "credits": _credits_payload(balance=9),
             "persistence": "backend_owned",
         }
     )

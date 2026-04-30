@@ -51,5 +51,5 @@ class ChatRunResponseDto(BaseModel):
     reply: str
     usage: UsageDto
     context_stats: ContextStatsDto = Field(alias="contextStats")
-    credits: CreditsDto | None
+    credits: CreditsDto
     persistence: Literal["backend_owned"]

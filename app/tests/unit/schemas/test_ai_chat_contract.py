@@ -7,6 +7,18 @@ from app.schemas.ai_chat.request import ChatRunRequestDto
 from app.schemas.ai_chat.response import ChatRunResponseDto
 
 
+def _credits_payload() -> dict[str, object]:
+    return {
+        "userId": "user-1",
+        "tier": "free",
+        "balance": 9,
+        "allocation": 10,
+        "periodStartAt": "2026-04-19T00:00:00Z",
+        "periodEndAt": "2026-05-19T00:00:00Z",
+        "costs": {"chat": 1, "textMeal": 1, "photo": 5},
+    }
+
+
 def test_ai_chat_v2_request_requires_minimal_explicit_contract() -> None:
     payload = ChatRunRequestDto.model_validate(
         {
@@ -96,7 +108,7 @@ def test_ai_chat_v2_response_serializes_minimal_contract_only() -> None:
                 "truncated": False,
                 "scopeDecision": "ALLOW_NUTRITION",
             },
-            "credits": None,
+            "credits": _credits_payload(),
             "persistence": "backend_owned",
         }
     )
@@ -118,6 +130,44 @@ def test_ai_chat_v2_response_serializes_minimal_contract_only() -> None:
             "truncated": False,
             "scopeDecision": "ALLOW_NUTRITION",
         },
-        "credits": None,
+        "credits": {
+            "userId": "user-1",
+            "tier": "free",
+            "balance": 9,
+            "allocation": 10,
+            "periodStartAt": response.credits.period_start_at,
+            "periodEndAt": response.credits.period_end_at,
+            "costs": {"chat": 1, "textMeal": 1, "photo": 5},
+            "renewalAnchorSource": None,
+            "revenueCatEntitlementId": None,
+            "revenueCatExpirationAt": None,
+            "lastRevenueCatEventId": None,
+        },
         "persistence": "backend_owned",
     }
+
+
+def test_ai_chat_v2_response_requires_credits_on_success() -> None:
+    with pytest.raises(ValidationError):
+        ChatRunResponseDto.model_validate(
+            {
+                "runId": "run-1",
+                "threadId": "thread-1",
+                "clientMessageId": "client-1",
+                "assistantMessageId": "assistant-1",
+                "reply": "Czesc",
+                "usage": {
+                    "promptTokens": 10,
+                    "completionTokens": 5,
+                    "totalTokens": 15,
+                },
+                "contextStats": {
+                    "usedSummary": False,
+                    "historyTurns": 2,
+                    "truncated": False,
+                    "scopeDecision": "ALLOW_NUTRITION",
+                },
+                "credits": None,
+                "persistence": "backend_owned",
+            }
+        )

@@ -236,10 +236,36 @@ class FakeAiCreditsService:
         idempotency_key: str,
     ) -> IdempotentCreditResult:
         if idempotency_key in self.idempotency:
+            item = self.idempotency[idempotency_key]
+            if item.get("state") == "refunded" or item.get("creditRefunded") is True:
+                if self.balance < cost:
+                    raise AiCreditsExhaustedError("AI credits exhausted.")
+                before = self.balance
+                self.balance -= cost
+                item.update(
+                    {
+                        "state": "deducted",
+                        "creditDeducted": True,
+                        "creditRefunded": False,
+                        "balanceBefore": before,
+                        "balanceAfter": self.balance,
+                        "deductCount": int(item.get("deductCount") or 1) + 1,
+                    }
+                )
+                self.deductions.append(
+                    {
+                        "user_id": user_id,
+                        "cost": cost,
+                        "action": action,
+                        "idempotency_key": idempotency_key,
+                        "balance_after": self.balance,
+                    }
+                )
+                return IdempotentCreditResult(status=self._status(user_id), applied=True)
             return IdempotentCreditResult(
                 status=self._status(user_id),
                 applied=False,
-                refunded=self.idempotency[idempotency_key].get("creditRefunded") is True,
+                refunded=item.get("state") == "refunded",
             )
         if self.balance < cost:
             raise AiCreditsExhaustedError("AI credits exhausted.")
@@ -249,8 +275,11 @@ class FakeAiCreditsService:
         self.idempotency[idempotency_key] = {
             "cost": cost,
             "action": action,
+            "state": "deducted",
             "creditDeducted": True,
             "creditRefunded": False,
+            "deductCount": 1,
+            "refundCount": 0,
             "balanceBefore": before,
             "balanceAfter": self.balance,
         }
@@ -274,13 +303,15 @@ class FakeAiCreditsService:
         idempotency_key: str,
     ) -> IdempotentCreditResult:
         item = self.idempotency.get(idempotency_key)
-        if item is None or item.get("creditRefunded") is True:
+        if item is None or item.get("state") != "deducted":
             return IdempotentCreditResult(status=self._status(user_id), applied=False)
 
         refund_cost = int(item.get("cost") or cost)
         before = self.balance
         self.balance = min(self.balance + refund_cost, self.allocation)
+        item["state"] = "refunded"
         item["creditRefunded"] = True
+        item["refundCount"] = int(item.get("refundCount") or 0) + 1
         item["refundBalanceBefore"] = before
         item["refundBalanceAfter"] = self.balance
         self.refunds.append(
@@ -296,6 +327,24 @@ class FakeAiCreditsService:
             status=self._status(user_id),
             applied=True,
             refunded=True,
+        )
+
+    async def complete_credits_idempotent(
+        self,
+        user_id: str,
+        *,
+        idempotency_key: str,
+    ) -> IdempotentCreditResult:
+        item = self.idempotency.get(idempotency_key)
+        if item is None:
+            return IdempotentCreditResult(status=self._status(user_id), applied=False)
+        if item.get("state") == "deducted":
+            item["state"] = "completed"
+            return IdempotentCreditResult(status=self._status(user_id), applied=True)
+        return IdempotentCreditResult(
+            status=self._status(user_id),
+            applied=False,
+            refunded=item.get("state") == "refunded",
         )
 
     def _status(self, user_id: str) -> AiCreditsStatus:
