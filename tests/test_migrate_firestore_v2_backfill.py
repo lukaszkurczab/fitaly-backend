@@ -86,9 +86,9 @@ def test_normalize_legacy_meal_payload_maps_timestamp_and_builds_image_ref() -> 
         migrated_at_iso="2026-04-23T10:00:00Z",
     )
 
-    assert normalized["loggedAt"] == "2026-04-20T08:45:00Z"
-    assert normalized["createdAt"] == "2026-04-20T08:40:00Z"
-    assert normalized["updatedAt"] == "2026-04-20T09:00:00Z"
+    assert normalized["loggedAt"] == "2026-04-20T08:45:00.000Z"
+    assert normalized["createdAt"] == "2026-04-20T08:40:00.000Z"
+    assert normalized["updatedAt"] == "2026-04-20T09:00:00.000Z"
     assert normalized["type"] == "breakfast"
     assert normalized["imageRef"] == {
         "imageId": "img-123",
