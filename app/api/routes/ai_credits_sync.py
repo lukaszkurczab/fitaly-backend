@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from typing import cast
 from urllib.parse import quote
 
@@ -12,6 +13,7 @@ from app.schemas.ai_credits import AiCreditsResponse
 from app.services import ai_credits_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _as_object_map(value: object) -> dict[str, object] | None:
@@ -154,5 +156,16 @@ async def sync_ai_credits_tier(
             ),
             entitlement_id=entitlement_id,
         )
+
+    logger.info(
+        "revenuecat_sync_tier_reconciled",
+        extra={
+            "user_id": user_id,
+            "had_active_entitlement": active_entitlement is not None,
+            "previous_tier": current_status.tier,
+            "result_tier": status_after_sync.tier,
+            "entitlement_id": active_entitlement[0] if active_entitlement is not None else None,
+        },
+    )
 
     return AiCreditsResponse(**status_after_sync.model_dump())

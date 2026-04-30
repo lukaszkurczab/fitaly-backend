@@ -1,5 +1,6 @@
 from datetime import datetime
 import hmac
+import logging
 from typing import cast
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -10,6 +11,7 @@ from app.schemas.ai_credits import RevenueCatWebhookPayload
 from app.services import ai_credits_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _extract_header_secret(authorization: str | None) -> str | None:
@@ -142,6 +144,17 @@ async def revenuecat_webhook(
         credits_status = await ai_credits_service.get_credits_status(user_id)
     else:
         credits_status = await ai_credits_service.get_credits_status(user_id)
+
+    logger.info(
+        "revenuecat_webhook_processed",
+        extra={
+            "event_type": event_type or "UNKNOWN",
+            "user_id": user_id,
+            "event_id": event_id,
+            "entitlement_id": entitlement_id,
+            "tier": credits_status.tier,
+        },
+    )
 
     return {
         "ok": True,

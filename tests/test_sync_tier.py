@@ -44,6 +44,7 @@ def test_sync_tier_repairs_to_premium_when_entitlement_is_active(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
 ) -> None:
+    logger_info = mocker.patch("app.api.routes.ai_credits_sync.logger.info")
     mocker.patch(
         "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
         return_value={
@@ -86,6 +87,16 @@ def test_sync_tier_repairs_to_premium_when_entitlement_is_active(
     activation.assert_called_once()
     assert activation.call_args.args[0] == "user-1"
     assert activation.call_args.kwargs["entitlement_id"] == "premium"
+    logger_info.assert_called_once_with(
+        "revenuecat_sync_tier_reconciled",
+        extra={
+            "user_id": "user-1",
+            "had_active_entitlement": True,
+            "previous_tier": "free",
+            "result_tier": "premium",
+            "entitlement_id": "premium",
+        },
+    )
 
 
 def test_sync_tier_transitions_to_free_when_entitlement_is_missing(

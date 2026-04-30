@@ -246,19 +246,28 @@ def test_telemetry_batch_accepts_launch_kpi_events(mocker: MockerFixture) -> Non
             },
             {
                 "eventId": "evt-paywall",
-                "name": "paywall_viewed",
+                "name": "paywall_view",
                 "ts": "2026-03-18T12:00:20Z",
-                "props": {"source": "meal_text_limit"},
+                "props": {
+                    "source": "meal_text_limit",
+                    "trigger_source": "meal_text_limit_modal",
+                },
             },
             {
                 "eventId": "evt-purchase",
-                "name": "purchase_completed",
+                "name": "purchase_started",
                 "ts": "2026-03-18T12:00:30Z",
                 "props": {"source": "manage_subscription"},
             },
             {
+                "eventId": "evt-purchase-success",
+                "name": "purchase_succeeded",
+                "ts": "2026-03-18T12:00:35Z",
+                "props": {"source": "manage_subscription"},
+            },
+            {
                 "eventId": "evt-entitlement",
-                "name": "entitlement_activated",
+                "name": "entitlement_confirmed",
                 "ts": "2026-03-18T12:00:40Z",
                 "props": {"source": "purchase", "tier": "premium"},
             },
@@ -287,7 +296,7 @@ def test_telemetry_batch_accepts_launch_kpi_events(mocker: MockerFixture) -> Non
     response = client.post("/api/v2/telemetry/events/batch", json=payload)
 
     assert response.status_code == 202
-    assert response.json()["acceptedCount"] == 7
+    assert response.json()["acceptedCount"] == 8
     assert response.json()["rejectedCount"] == 0
 
 
@@ -439,8 +448,11 @@ def test_telemetry_batch_rejects_invalid_enum_values(
         "/api/v2/telemetry/events/batch",
         json=build_payload(
             {
-                "name": "paywall_viewed",
-                "props": {"source": "unsupported_source"},
+                "name": "paywall_view",
+                "props": {
+                    "source": "unsupported_source",
+                    "trigger_source": "meal_text_limit_modal",
+                },
             }
         ),
     )

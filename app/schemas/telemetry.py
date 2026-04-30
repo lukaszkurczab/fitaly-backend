@@ -28,9 +28,15 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "meal_logged",
         "ai_meal_review_saved",
         "notification_opened",
-        "paywall_viewed",
-        "purchase_completed",
-        "entitlement_activated",
+        "paywall_view",
+        "purchase_started",
+        "purchase_succeeded",
+        "entitlement_confirmed",
+        "entitlement_confirmation_failed",
+        "first_premium_feature_used",
+        "restore_started",
+        "restore_succeeded",
+        "restore_failed",
         "weekly_report_opened",
         "smart_reminder_suppressed",
         "smart_reminder_scheduled",
@@ -71,9 +77,28 @@ MEAL_INPUT_METHODS = frozenset(
 MEAL_SOURCES = frozenset({"manual", "ai", "saved"})
 AI_MEAL_REVIEW_INPUT_METHODS = frozenset({"photo", "text"})
 PAYWALL_SOURCES = frozenset({"manage_subscription", "meal_text_limit"})
+PAYWALL_TRIGGER_SOURCES = frozenset(
+    {"manage_subscription_screen", "meal_text_limit_modal"}
+)
 PURCHASE_SOURCES = frozenset({"manage_subscription"})
 ENTITLEMENT_SOURCES = frozenset({"purchase", "restore"})
 ENTITLEMENT_TIERS = frozenset({"premium"})
+ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
+    {
+        "billing_unavailable",
+        "billing_not_initialized",
+        "entitlement_inactive",
+        "login_failed",
+        "network",
+        "no_offerings",
+        "purchase_not_allowed",
+        "sign_in_required",
+        "store_problem",
+        "sync_tier_failed",
+        "credits_not_premium",
+        "unknown",
+    }
+)
 WEEKLY_REPORT_STATUSES = frozenset({"ready", "insufficient_data", "unavailable"})
 ONBOARDING_MODES = frozenset({"first", "refill"})
 NOTIFICATION_ORIGINS = frozenset(
@@ -93,9 +118,15 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
         {"inputMethod", "corrected", "ingredientCount", "requestId"}
     ),
     "notification_opened": frozenset({"notificationType", "origin"}),
-    "paywall_viewed": frozenset({"source"}),
-    "purchase_completed": frozenset({"source"}),
-    "entitlement_activated": frozenset({"source", "tier"}),
+    "paywall_view": frozenset({"source", "trigger_source"}),
+    "purchase_started": frozenset({"source"}),
+    "purchase_succeeded": frozenset({"source"}),
+    "entitlement_confirmed": frozenset({"source", "tier"}),
+    "entitlement_confirmation_failed": frozenset({"source", "reason"}),
+    "first_premium_feature_used": frozenset({"source", "feature"}),
+    "restore_started": frozenset({"source"}),
+    "restore_succeeded": frozenset({"source", "confirmed"}),
+    "restore_failed": frozenset({"source", "reason"}),
     "weekly_report_opened": frozenset(
         {"reportStatus", "insightCount", "priorityCount"}
     ),
@@ -155,15 +186,30 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
     "notification_opened": {
         "origin": NOTIFICATION_ORIGINS,
     },
-    "paywall_viewed": {
+    "paywall_view": {
         "source": PAYWALL_SOURCES,
+        "trigger_source": PAYWALL_TRIGGER_SOURCES,
     },
-    "purchase_completed": {
+    "purchase_started": {
         "source": PURCHASE_SOURCES,
     },
-    "entitlement_activated": {
+    "purchase_succeeded": {
+        "source": PURCHASE_SOURCES,
+    },
+    "entitlement_confirmed": {
         "source": ENTITLEMENT_SOURCES,
         "tier": ENTITLEMENT_TIERS,
+    },
+    "entitlement_confirmation_failed": {
+        "source": ENTITLEMENT_SOURCES,
+        "reason": ENTITLEMENT_CONFIRMATION_FAILURE_REASONS,
+    },
+    "restore_started": {
+        "source": PURCHASE_SOURCES,
+    },
+    "restore_failed": {
+        "source": PURCHASE_SOURCES,
+        "reason": ENTITLEMENT_CONFIRMATION_FAILURE_REASONS,
     },
     "weekly_report_opened": {
         "reportStatus": WEEKLY_REPORT_STATUSES,

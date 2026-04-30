@@ -135,6 +135,7 @@ def test_revenuecat_webhook_rejects_invalid_secret(mocker: MockerFixture) -> Non
 
 
 def test_revenuecat_webhook_handles_initial_purchase(mocker: MockerFixture) -> None:
+    logger_info = mocker.patch("app.api.routes.webhooks.logger.info")
     activation = mocker.patch(
         "app.api.routes.webhooks.ai_credits_service.apply_premium_activation",
         return_value=_status(
@@ -168,6 +169,16 @@ def test_revenuecat_webhook_handles_initial_purchase(mocker: MockerFixture) -> N
     assert activation.call_args.args[0] == "user-1"
     assert activation.call_args.kwargs["event_id"] == "evt-purchase-1"
     assert activation.call_args.kwargs["entitlement_id"] == "premium"
+    logger_info.assert_called_once_with(
+        "revenuecat_webhook_processed",
+        extra={
+            "event_type": "INITIAL_PURCHASE",
+            "user_id": "user-1",
+            "event_id": "evt-purchase-1",
+            "entitlement_id": "premium",
+            "tier": "premium",
+        },
+    )
 
 
 def test_revenuecat_webhook_handles_renewal(mocker: MockerFixture) -> None:
