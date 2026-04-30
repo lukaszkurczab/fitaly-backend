@@ -28,6 +28,16 @@ class AiCreditsResponse(AiCreditsStatus):
     pass
 
 
+class AiCreditsSyncMetadata(BaseModel):
+    entitlementStatus: Literal["active", "confirmed_inactive"]
+    syncAction: Literal["activated_premium", "expired_to_free", "kept_current"]
+    entitlementId: str | None = None
+
+
+class AiCreditsSyncResponse(AiCreditsResponse):
+    syncStatus: AiCreditsSyncMetadata
+
+
 class AiCreditTransactionItem(BaseModel):
     id: str
     type: str
