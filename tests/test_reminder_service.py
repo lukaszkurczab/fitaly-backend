@@ -71,7 +71,7 @@ def test_get_reminder_decision_raises_when_habits_feature_is_disabled(
     get_nutrition_state.assert_not_called()
 
 
-def test_get_reminder_decision_returns_rule_engine_output(
+def test_get_reminder_decision_uses_notification_preferences_without_backend_scheduling(
     mocker: MockerFixture,
 ) -> None:
     state = _load_state_fixture()
@@ -142,6 +142,7 @@ def test_get_reminder_decision_returns_rule_engine_output(
     assert evaluate.call_args.kwargs["preferences"].reminders_enabled is False
     assert evaluate.call_args.kwargs["preferences"].quiet_hours is not None
     assert evaluate.call_args.kwargs["activity"].already_logged_recently is True
+    assert decision.scheduledAtUtc is not None
     assert evaluate.call_args.kwargs["context"].now_local == datetime(
         2026,
         3,

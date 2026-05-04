@@ -1,47 +1,4 @@
-from typing import Literal
-
 from pydantic import BaseModel, Field
-
-
-class NotificationTime(BaseModel):
-    hour: int = Field(ge=0, le=23)
-    minute: int = Field(ge=0, le=59)
-
-
-def _notification_days_default() -> list[int]:
-    return []
-
-
-def _notification_items_default() -> list["UserNotificationItem"]:
-    return []
-
-
-class UserNotificationItem(BaseModel):
-    id: str = Field(min_length=1)
-    type: Literal["meal_reminder", "calorie_goal", "day_fill"]
-    name: str = Field(min_length=1)
-    text: str | None = None
-    time: NotificationTime
-    days: list[int] = Field(default_factory=_notification_days_default)
-    enabled: bool
-    createdAt: int = Field(ge=0)
-    updatedAt: int = Field(ge=0)
-    mealKind: Literal["breakfast", "lunch", "dinner", "snack"] | None = None
-    kcalByHour: float | None = None
-
-
-class NotificationListResponse(BaseModel):
-    items: list[UserNotificationItem] = Field(default_factory=_notification_items_default)
-
-
-class NotificationUpsertResponse(BaseModel):
-    item: UserNotificationItem
-    updated: bool
-
-
-class NotificationDeleteResponse(BaseModel):
-    notificationId: str
-    deleted: bool
 
 
 class NotificationQuietHours(BaseModel):

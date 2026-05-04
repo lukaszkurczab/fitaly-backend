@@ -6,7 +6,6 @@ from typing import Any, cast
 
 from app.core.datetime_utils import ensure_utc_datetime, parse_flexible_datetime
 from app.services.meal_service import list_changes, list_history
-from app.services.notification_service import list_notifications
 from app.services.reminder_decision_store import get_daily_send_count
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.reminder_engine.types import (
@@ -14,10 +13,8 @@ from app.services.reminder_engine.types import (
     ReminderActivityInput,
     ReminderPreferencesInput,
     ReminderQuietHours,
-    ReminderWindow,
 )
 
-PREFERRED_WINDOW_RADIUS_MIN = 60
 UTC = timezone.utc
 
 
@@ -64,14 +61,11 @@ async def build_reminder_inputs(
         latest_meal=latest_meal,
         client_tz_offset_min=tz_offset_min,
     )
-    notification_items = await _load_notification_items(user_id=user_id)
     send_count_result = await get_daily_send_count(user_id, state.dayKey)
 
     return ReminderInputs(
         preferences=_build_preferences_input(
             raw_prefs=raw_prefs,
-            notification_items=notification_items,
-            now_local=now_local,
         ),
         activity=_build_activity_input(
             recent_meals=recent_meals,
@@ -128,52 +122,25 @@ async def _load_latest_meal(*, user_id: str) -> dict[str, Any] | None:
     return meals[0]
 
 
-async def _load_notification_items(*, user_id: str) -> list[dict[str, Any]]:
-    return await list_notifications(user_id)
-
-
 def _build_preferences_input(
     *,
     raw_prefs: dict[str, Any],
-    notification_items: list[dict[str, Any]],
-    now_local: datetime,
 ) -> ReminderPreferencesInput:
-    reminders_enabled = _derive_reminders_enabled(
-        raw_prefs=raw_prefs,
-        notification_items=notification_items,
-    )
-
     return ReminderPreferencesInput(
-        reminders_enabled=reminders_enabled,
+        reminders_enabled=_derive_reminders_enabled(raw_prefs=raw_prefs),
         quiet_hours=_build_quiet_hours(raw_prefs.get("quietHours")),
-        first_meal_window=_derive_preferred_window(
-            notification_items=notification_items,
-            now_local=now_local,
-            kind="log_first_meal",
-        ),
-        next_meal_window=_derive_preferred_window(
-            notification_items=notification_items,
-            now_local=now_local,
-            kind="log_next_meal",
-        ),
-        complete_day_window=_derive_preferred_window(
-            notification_items=notification_items,
-            now_local=now_local,
-            kind="complete_day",
-        ),
     )
 
 
 def _derive_reminders_enabled(
     *,
     raw_prefs: dict[str, Any],
-    notification_items: list[dict[str, Any]],
 ) -> bool:
     explicit_value = raw_prefs.get("smartRemindersEnabled")
     if isinstance(explicit_value, bool):
         return explicit_value
 
-    return any(_is_enabled_smart_reminder_preference(item) for item in notification_items)
+    return True
 
 
 def _build_quiet_hours(raw_quiet_hours: object) -> ReminderQuietHours | None:
@@ -243,116 +210,6 @@ def _derive_recent_activity_detected(
             return True
 
     return False
-
-
-def _derive_preferred_window(
-    *,
-    notification_items: list[dict[str, Any]],
-    now_local: datetime,
-    kind: str,
-) -> ReminderWindow | None:
-    current_min = now_local.hour * 60 + now_local.minute
-    candidates: list[ReminderWindow] = sorted(
-        (
-            window
-            for item in notification_items
-            if _matches_preferred_window_kind(item, kind=kind, now_local=now_local)
-            if (window := _window_for_notification(item)) is not None
-        ),
-        key=lambda window: window.start_min,
-    )
-
-    active_candidates: list[ReminderWindow] = [
-        window
-        for window in candidates
-        if _is_minute_in_window(current_min, window)
-    ]
-    if active_candidates:
-        return active_candidates[0]
-
-    future_candidates: list[ReminderWindow] = [
-        window
-        for window in candidates
-        if current_min < window.start_min
-    ]
-    if future_candidates:
-        return future_candidates[0]
-
-    return None
-
-
-def _is_enabled_smart_reminder_preference(notification_item: dict[str, Any]) -> bool:
-    if not notification_item.get("enabled"):
-        return False
-
-    notification_type = notification_item.get("type")
-    if notification_type == "day_fill":
-        return True
-
-    if notification_type != "meal_reminder":
-        return False
-
-    meal_kind = notification_item.get("mealKind")
-    return meal_kind in {None, "breakfast", "lunch", "dinner", "snack"}
-
-
-def _matches_preferred_window_kind(
-    notification_item: dict[str, Any],
-    *,
-    kind: str,
-    now_local: datetime,
-) -> bool:
-    if not notification_item.get("enabled"):
-        return False
-
-    days = notification_item.get("days")
-    current_weekday_0_sun = (now_local.weekday() + 1) % 7
-    if isinstance(days, list) and days and current_weekday_0_sun not in days:
-        return False
-
-    notification_type = notification_item.get("type")
-    meal_kind = notification_item.get("mealKind")
-
-    if kind == "complete_day":
-        return notification_type == "day_fill"
-
-    if notification_type != "meal_reminder":
-        return False
-
-    if kind == "log_first_meal":
-        return meal_kind in {None, "breakfast"}
-
-    return meal_kind in {None, "lunch", "dinner", "snack"}
-
-
-def _window_for_notification(
-    notification_item: dict[str, Any],
-) -> ReminderWindow | None:
-    time_value = _as_object_map(notification_item.get("time"))
-    if time_value is None:
-        return None
-
-    hour = time_value.get("hour")
-    minute = time_value.get("minute")
-    if not isinstance(hour, int) or not isinstance(minute, int):
-        return None
-
-    center_min = hour * 60 + minute
-    if not 0 <= center_min <= 1439:
-        return None
-
-    return ReminderWindow(
-        start_min=max(0, center_min - PREFERRED_WINDOW_RADIUS_MIN),
-        end_min=min(1439, center_min + PREFERRED_WINDOW_RADIUS_MIN),
-    )
-
-
-def _is_minute_in_window(current_min: int, window: ReminderWindow) -> bool:
-    if window.start_min == window.end_min:
-        return True
-    if window.start_min < window.end_min:
-        return window.start_min <= current_min <= window.end_min
-    return current_min >= window.start_min or current_min <= window.end_min
 
 
 def _resolve_now_local(
