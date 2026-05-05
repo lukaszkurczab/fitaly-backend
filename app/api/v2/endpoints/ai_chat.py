@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.v2.deps import get_chat_orchestrator
 from app.core.config import settings
-from app.core.errors import DomainError
+from app.core.errors import ConsentRequiredError, DomainError
 from app.domain.chat.orchestrator import ChatOrchestrator
 from app.schemas.ai_chat.request import ChatRunRequestDto
 from app.schemas.ai_chat.response import ChatRunResponseDto
@@ -42,7 +42,13 @@ async def create_chat_run(
         )
     except DomainError as exc:
         detail_message = str(exc).strip() or exc.code
-        detail = {"code": exc.code, "message": detail_message}
+        detail: dict[str, object] = {"code": exc.code, "message": detail_message}
+        if isinstance(exc, ConsentRequiredError):
+            detail["consent"] = {
+                "required": True,
+                "granted": False,
+                "aiHealthDataConsentAt": None,
+            }
         credits_status = getattr(exc, "credits_status", None)
         if credits_status is not None:
             detail["credits"] = credits_status.model_dump(mode="json")

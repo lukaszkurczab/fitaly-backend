@@ -71,7 +71,6 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "allergiesOther",
         "lifestyle",
         "aiPersona",
-        "aiHealthDataConsentAt",
         "surveyComplited",
         "surveyCompletedAt",
         "calorieTarget",
@@ -375,6 +374,48 @@ async def upsert_user_profile_data(
     if "calorieTarget" in sanitized_patch:
         await streak_service.sync_streak_from_meals(user_id)
 
+    return merged
+
+
+async def record_ai_health_data_consent(
+    user_id: str,
+    *,
+    auth_email: str | None = None,
+) -> dict[str, Any]:
+    client: firestore.Client = get_firestore()
+    user_ref = client.collection(USERS_COLLECTION).document(user_id)
+    consent_at = _utc_timestamp()
+
+    try:
+        snapshot = user_ref.get()
+        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+
+        document: dict[str, Any] = {
+            "uid": user_id,
+            "aiHealthDataConsentAt": consent_at,
+        }
+        normalized_email = normalize_email(auth_email)
+        if normalized_email:
+            document["email"] = normalized_email
+        if "createdAt" not in existing:
+            document["createdAt"] = _utc_timestamp_ms()
+        if "plan" not in existing:
+            document["plan"] = "free"
+        if "syncState" not in existing:
+            document["syncState"] = "pending"
+        if "lastLogin" not in existing:
+            document["lastLogin"] = consent_at
+
+        user_ref.set(document, merge=True)
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to record AI health data consent.",
+            extra={"user_id": user_id},
+        )
+        raise FirestoreServiceError("Failed to record AI health data consent.") from exc
+
+    merged = dict(existing)
+    merged.update(document)
     return merged
 
 

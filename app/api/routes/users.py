@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
+from app.domain.users.services.consent_service import ConsentService
+from app.domain.users.services.user_profile_service import UserProfileService
 from app.schemas.user_account import (
+    AiHealthDataConsentRequest,
+    AiHealthDataConsentResponse,
+    AiHealthDataConsentState,
     AvatarMetadataRequest,
     AvatarMetadataResponse,
     DeleteAccountResponse,
@@ -52,6 +57,33 @@ async def upsert_user_profile_me(
         raise_bad_request(exc)
 
     return UserProfileUpdateResponse(profile=profile, updated=True)
+
+
+@router.post(
+    "/users/me/ai-health-data-consent",
+    response_model=AiHealthDataConsentResponse,
+)
+async def accept_ai_health_data_consent_me(
+    _request: AiHealthDataConsentRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> AiHealthDataConsentResponse:
+    auth_email = current_user.claims.get("email")
+    consent_service = ConsentService(UserProfileService())
+    profile = await consent_service.grant_ai_health_data_consent(
+        user_id=current_user.uid,
+        auth_email=auth_email if isinstance(auth_email, str) else None,
+    )
+    consent_at = profile.get("aiHealthDataConsentAt")
+    consent_at_text = str(consent_at).strip() if consent_at is not None else None
+
+    return AiHealthDataConsentResponse(
+        profile=profile,
+        updated=True,
+        consent=AiHealthDataConsentState(
+            granted=bool(consent_at_text),
+            aiHealthDataConsentAt=consent_at_text or None,
+        ),
+    )
 
 
 @router.post("/users/me/onboarding", response_model=UserOnboardingResponse)

@@ -100,7 +100,6 @@ class UserProfilePatchRequest(BaseModel):
     allergiesOther: str | None = Field(default=None, max_length=120)
     lifestyle: str | None = Field(default=None, max_length=160)
     aiPersona: AiPersonaValue | None = Field(default=None)
-    aiHealthDataConsentAt: str | None = Field(default=None, max_length=64)
     surveyComplited: bool | None = Field(default=None)
     surveyCompletedAt: str | None = Field(default=None, max_length=64)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)
@@ -139,3 +138,20 @@ class UserOnboardingResponse(BaseModel):
     username: str
     profile: dict[str, Any]
     updated: bool
+
+
+class AiHealthDataConsentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accepted: Literal[True] = True
+
+
+class AiHealthDataConsentState(BaseModel):
+    required: bool = True
+    granted: bool
+    aiHealthDataConsentAt: str | None = None
+
+
+class AiHealthDataConsentResponse(UserProfileResponse):
+    updated: bool
+    consent: AiHealthDataConsentState

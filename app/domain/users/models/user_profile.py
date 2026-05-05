@@ -22,3 +22,7 @@ class UserProfile:
     style_profile: dict[str, str] = field(default_factory=dict)
     ai_health_data_consent_at: str | None = None
     survey_completed: bool = False
+
+    @property
+    def has_ai_health_data_consent(self) -> bool:
+        return bool(self.ai_health_data_consent_at)

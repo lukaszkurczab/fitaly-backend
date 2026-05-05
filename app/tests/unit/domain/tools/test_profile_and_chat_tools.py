@@ -170,6 +170,17 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
     with pytest.raises(ConsentRequiredError):
         await service_without_consent.ensure_ai_health_data_consent(user_id="user-1")
 
+    service_with_survey_only = ConsentService(
+        _FakeConsentProfileService(
+            UserProfile(
+                user_id="user-1",
+                ai_health_data_consent_at=None,
+                survey_completed=True,
+            )
+        )  # type: ignore[arg-type]
+    )
+    assert await service_with_survey_only.has_ai_health_data_consent(user_id="user-1") is False
+
     service_with_consent = ConsentService(
         _FakeConsentProfileService(
             UserProfile(
