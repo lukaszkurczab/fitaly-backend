@@ -17,7 +17,7 @@ class UserProfile:
     calorie_target: int | None = None
     preferences: list[str] = field(default_factory=_empty_preferences)
     allergies: list[str] = field(default_factory=_empty_allergies)
-    language: str = "pl"
+    language: str = "en"
     ai_style: str | None = None
     ai_persona: str = "calm_guide"
     style_profile: dict[str, str] = field(default_factory=dict)

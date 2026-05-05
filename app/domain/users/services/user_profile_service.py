@@ -129,7 +129,7 @@ class UserProfileService:
                 "activityLevel": None,
                 "preferences": [],
                 "allergies": [],
-                "language": "pl",
+                "language": "en",
                 "aiStyle": None,
                 "aiPersona": "calm_guide",
                 "styleProfile": _style_profile("calm_guide"),

@@ -131,7 +131,7 @@ class UserProfilePatchRequest(BaseModel):
 
 class UserOnboardingRequest(BaseModel):
     username: str = Field(min_length=1)
-    language: str | None = Field(default=None)
+    language: LanguageValue | None = Field(default=None)
 
 
 class UserOnboardingResponse(BaseModel):
