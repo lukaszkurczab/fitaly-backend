@@ -73,7 +73,7 @@ SMART_REMINDER_DECISION_FAILURE_REASONS = frozenset(
     {"invalid_payload", "service_unavailable"}
 )
 SMART_REMINDER_SCHEDULE_FAILURE_REASONS = frozenset(
-    {"permission_unavailable", "invalid_time", "schedule_error"}
+    {"permission_unavailable", "channel_unavailable", "invalid_time", "schedule_error"}
 )
 MEAL_INPUT_METHODS = frozenset(
     {"manual", "photo", "barcode", "text", "saved", "quick_add"}

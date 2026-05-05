@@ -335,6 +335,17 @@ def test_telemetry_batch_accepts_smart_reminder_events(
                     "scheduledWindow": "evening",
                 },
             },
+            {
+                "eventId": "evt-reminder-3",
+                "name": "smart_reminder_schedule_failed",
+                "ts": "2026-03-18T12:00:20Z",
+                "props": {
+                    "reminderKind": "log_next_meal",
+                    "decision": "send",
+                    "confidenceBucket": "high",
+                    "failureReason": "channel_unavailable",
+                },
+            },
         ],
     }
 
@@ -342,7 +353,7 @@ def test_telemetry_batch_accepts_smart_reminder_events(
 
     assert response.status_code == 202
     assert response.json() == {
-        "acceptedCount": 2,
+        "acceptedCount": 3,
         "duplicateCount": 0,
         "rejectedCount": 0,
         "rejectedEvents": [],
