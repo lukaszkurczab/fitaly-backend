@@ -44,10 +44,10 @@ async def create_chat_run(
         detail_message = str(exc).strip() or exc.code
         detail: dict[str, object] = {"code": exc.code, "message": detail_message}
         if isinstance(exc, ConsentRequiredError):
-            detail["consent"] = {
-                "required": True,
-                "granted": False,
-                "aiHealthDataConsentAt": None,
+            detail["readiness"] = {
+                "status": "needs_ai_consent",
+                "onboardingCompletedAt": None,
+                "readyAt": None,
             }
         credits_status = getattr(exc, "credits_status", None)
         if credits_status is not None:

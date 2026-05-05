@@ -1,4 +1,7 @@
 from dataclasses import dataclass, field
+from typing import Literal
+
+ReadinessStatus = Literal["needs_profile", "needs_ai_consent", "ready"]
 
 
 def _empty_preferences() -> list[str]:
@@ -20,9 +23,10 @@ class UserProfile:
     language: str = "en"
     ai_persona: str = "calm_guide"
     style_profile: dict[str, str] = field(default_factory=dict)
-    ai_health_data_consent_at: str | None = None
-    survey_completed: bool = False
+    readiness_status: ReadinessStatus = "needs_profile"
+    readiness_onboarding_completed_at: str | None = None
+    readiness_ready_at: str | None = None
 
     @property
-    def has_ai_health_data_consent(self) -> bool:
-        return bool(self.ai_health_data_consent_at)
+    def is_ready(self) -> bool:
+        return self.readiness_status == "ready"

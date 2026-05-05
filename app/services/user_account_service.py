@@ -71,8 +71,7 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "allergiesOther",
         "lifestyle",
         "aiPersona",
-        "surveyComplited",
-        "surveyCompletedAt",
+        "readiness",
         "calorieTarget",
         "language",
     }
@@ -169,9 +168,14 @@ def _build_onboarding_profile_document(
     profile.setdefault("allergiesOther", "")
     profile.setdefault("lifestyle", "")
     profile.setdefault("aiPersona", "calm_guide")
-    profile.setdefault("aiHealthDataConsentAt", None)
-    profile.setdefault("surveyComplited", False)
-    profile.setdefault("surveyCompletedAt", None)
+    profile.setdefault(
+        "readiness",
+        {
+            "status": "needs_profile",
+            "onboardingCompletedAt": None,
+            "readyAt": None,
+        },
+    )
     profile.setdefault("calorieTarget", 0)
     profile.setdefault("syncState", "pending")
     profile.setdefault("lastSyncedAt", "")
@@ -390,9 +394,21 @@ async def record_ai_health_data_consent(
         snapshot = user_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
 
+        existing_readiness = existing.get("readiness")
+        existing_readiness_document = (
+            dict(existing_readiness)
+            if isinstance(existing_readiness, dict)
+            else {}
+        )
         document: dict[str, Any] = {
             "uid": user_id,
-            "aiHealthDataConsentAt": consent_at,
+            "readiness": {
+                "status": "ready",
+                "onboardingCompletedAt": existing_readiness_document.get(
+                    "onboardingCompletedAt"
+                ),
+                "readyAt": consent_at,
+            },
         }
         normalized_email = normalize_email(auth_email)
         if normalized_email:

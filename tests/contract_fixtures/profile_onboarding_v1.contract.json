@@ -29,9 +29,7 @@
       "allergiesOther",
       "lifestyle",
       "aiPersona",
-      "aiHealthDataConsentAt",
-      "surveyComplited",
-      "surveyCompletedAt",
+      "readiness",
       "calorieTarget",
       "syncState",
       "lastSyncedAt",
@@ -58,9 +56,11 @@
       "allergiesOther": "",
       "lifestyle": "",
       "aiPersona": "calm_guide",
-      "aiHealthDataConsentAt": null,
-      "surveyComplited": false,
-      "surveyCompletedAt": null,
+      "readiness": {
+        "status": "needs_profile",
+        "onboardingCompletedAt": null,
+        "readyAt": null
+      },
       "calorieTarget": 0,
       "syncState": "pending",
       "lastSyncedAt": "",
@@ -89,17 +89,14 @@
       "allergiesOther",
       "lifestyle",
       "aiPersona",
-      "aiHealthDataConsentAt",
-      "surveyComplited",
-      "surveyCompletedAt",
+      "readiness",
       "calorieTarget",
       "language"
     ]
   },
   "criticalFieldGroups": {
-    "completion": ["surveyComplited", "surveyCompletedAt"],
+    "readiness": ["readiness"],
     "language": ["language"],
-    "aiConsent": ["aiHealthDataConsentAt"],
     "aiPersona": ["aiPersona"],
     "aiStyle": ["aiPersona", "styleProfile"],
     "nutrition": [
@@ -149,15 +146,14 @@
         "de-DE": "en"
       }
     },
-    "completion": {
-      "completedFlagField": "surveyComplited",
-      "completedAtField": "surveyCompletedAt",
-      "defaultCompleted": false
-    },
-    "aiConsent": {
-      "field": "aiHealthDataConsentAt",
-      "default": null,
-      "kind": "iso8601-or-null"
+    "readiness": {
+      "field": "readiness",
+      "default": {
+        "status": "needs_profile",
+        "onboardingCompletedAt": null,
+        "readyAt": null
+      },
+      "statuses": ["needs_profile", "needs_ai_consent", "ready"]
     },
     "aiPersona": {
       "default": "calm_guide",

@@ -78,6 +78,15 @@ ActivityLevelValue = Literal["sedentary", "light", "moderate", "active", "very_a
 GoalValue = Literal["lose", "maintain", "increase", ""]
 SexValue = Literal["male", "female"]
 LanguageValue = Literal["en", "pl"]
+ReadinessStatusValue = Literal["needs_profile", "needs_ai_consent", "ready"]
+
+
+class UserReadinessRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: ReadinessStatusValue
+    onboardingCompletedAt: str | None = Field(default=None, max_length=64)
+    readyAt: str | None = Field(default=None, max_length=64)
 
 
 class UserProfilePatchRequest(BaseModel):
@@ -100,8 +109,7 @@ class UserProfilePatchRequest(BaseModel):
     allergiesOther: str | None = Field(default=None, max_length=120)
     lifestyle: str | None = Field(default=None, max_length=160)
     aiPersona: AiPersonaValue | None = Field(default=None)
-    surveyComplited: bool | None = Field(default=None)
-    surveyCompletedAt: str | None = Field(default=None, max_length=64)
+    readiness: UserReadinessRequest | None = Field(default=None)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)
     language: LanguageValue | None = Field(default=None)
 
@@ -147,9 +155,9 @@ class AiHealthDataConsentRequest(BaseModel):
 
 
 class AiHealthDataConsentState(BaseModel):
-    required: bool = True
-    granted: bool
-    aiHealthDataConsentAt: str | None = None
+    status: ReadinessStatusValue
+    onboardingCompletedAt: str | None = None
+    readyAt: str | None = None
 
 
 class AiHealthDataConsentResponse(UserProfileResponse):

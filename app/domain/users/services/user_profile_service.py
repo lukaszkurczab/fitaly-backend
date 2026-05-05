@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from app.domain.users.models.user_profile import UserProfile
+from app.domain.users.models.user_profile import ReadinessStatus, UserProfile
 from app.services import user_account_service
 
 
@@ -84,6 +84,31 @@ def _style_profile(persona: str) -> dict[str, str]:
     }
 
 
+def _normalize_readiness(raw: object) -> tuple[ReadinessStatus, str | None, str | None]:
+    if not isinstance(raw, dict):
+        return "needs_profile", None, None
+    payload = cast(dict[str, object], raw)
+    status_raw = payload.get("status")
+    status: ReadinessStatus
+    if status_raw == "needs_ai_consent" or status_raw == "ready":
+        status = status_raw
+    else:
+        status = "needs_profile"
+    onboarding_completed_at = payload.get("onboardingCompletedAt")
+    ready_at = payload.get("readyAt")
+    onboarding_completed_at_text = (
+        str(onboarding_completed_at).strip()
+        if onboarding_completed_at is not None
+        else None
+    )
+    ready_at_text = str(ready_at).strip() if ready_at is not None else None
+    return (
+        status,
+        onboarding_completed_at_text or None,
+        ready_at_text or None,
+    )
+
+
 class UserProfileService:
     async def get_profile(self, *, user_id: str) -> UserProfile | None:
         raw = await user_account_service.get_user_profile_data(user_id)
@@ -93,11 +118,10 @@ class UserProfileService:
 
     @staticmethod
     def _to_profile(*, user_id: str, raw: dict[str, Any]) -> UserProfile:
-        consent_at = raw.get("aiHealthDataConsentAt")
-        consent_at_text = str(consent_at).strip() if consent_at is not None else None
-        if consent_at_text == "":
-            consent_at_text = None
         ai_persona = _normalize_ai_persona(raw.get("aiPersona"))
+        readiness_status, onboarding_completed_at, ready_at = _normalize_readiness(
+            raw.get("readiness")
+        )
         return UserProfile(
             user_id=user_id,
             goal=str(raw.get("goal")).strip() if raw.get("goal") else None,
@@ -110,8 +134,9 @@ class UserProfileService:
             language=_normalize_language(raw.get("language")),
             ai_persona=ai_persona,
             style_profile=_style_profile(ai_persona),
-            ai_health_data_consent_at=consent_at_text,
-            survey_completed=bool(raw.get("surveyComplited")),
+            readiness_status=readiness_status,
+            readiness_onboarding_completed_at=onboarding_completed_at,
+            readiness_ready_at=ready_at,
         )
 
     async def get_profile_summary(self, *, user_id: str) -> dict[str, Any]:

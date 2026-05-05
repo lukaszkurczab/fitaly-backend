@@ -155,7 +155,7 @@ def test_critical_field_groups_cover_backend_surfaces() -> None:
     contract = _load_fixture()
     patch_fields = set(UserProfilePatchRequest.model_fields.keys())
 
-    for group_name in ("completion", "language", "aiConsent", "aiPersona", "nutrition"):
+    for group_name in ("readiness", "language", "aiPersona", "nutrition"):
         assert set(contract["criticalFieldGroups"][group_name]).issubset(patch_fields)
 
     profile = UserProfile(
@@ -168,8 +168,9 @@ def test_critical_field_groups_cover_backend_surfaces() -> None:
         language="en",
         ai_persona="focused_coach",
         style_profile={"id": "focused_coach", "label": "Focused Coach"},
-        ai_health_data_consent_at="2026-05-01T09:00:00Z",
-        survey_completed=True,
+        readiness_status="ready",
+        readiness_onboarding_completed_at="2026-05-01T09:00:00Z",
+        readiness_ready_at="2026-05-02T09:00:00Z",
     )
     summary = asyncio.run(_StubProfileService(profile).get_profile_summary(user_id="user-1"))
 

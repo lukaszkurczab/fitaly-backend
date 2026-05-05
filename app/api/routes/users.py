@@ -73,15 +73,23 @@ async def accept_ai_health_data_consent_me(
         user_id=current_user.uid,
         auth_email=auth_email if isinstance(auth_email, str) else None,
     )
-    consent_at = profile.get("aiHealthDataConsentAt")
-    consent_at_text = str(consent_at).strip() if consent_at is not None else None
+    readiness = profile.get("readiness")
+    readiness_document = dict(readiness) if isinstance(readiness, dict) else {}
+    readiness_status = readiness_document.get("status")
+    if readiness_status not in {"needs_profile", "needs_ai_consent", "ready"}:
+        readiness_status = "needs_profile"
 
     return AiHealthDataConsentResponse(
         profile=profile,
         updated=True,
         consent=AiHealthDataConsentState(
-            granted=bool(consent_at_text),
-            aiHealthDataConsentAt=consent_at_text or None,
+            status=readiness_status,
+            onboardingCompletedAt=readiness_document.get("onboardingCompletedAt")
+            if isinstance(readiness_document.get("onboardingCompletedAt"), str)
+            else None,
+            readyAt=readiness_document.get("readyAt")
+            if isinstance(readiness_document.get("readyAt"), str)
+            else None,
         ),
     )
 

@@ -161,8 +161,7 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
         _FakeConsentProfileService(
             UserProfile(
                 user_id="user-1",
-                ai_health_data_consent_at=None,
-                survey_completed=False,
+                readiness_status="needs_ai_consent",
             )
         )  # type: ignore[arg-type]
     )
@@ -170,23 +169,24 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
     with pytest.raises(ConsentRequiredError):
         await service_without_consent.ensure_ai_health_data_consent(user_id="user-1")
 
-    service_with_survey_only = ConsentService(
+    service_with_profile_only = ConsentService(
         _FakeConsentProfileService(
             UserProfile(
                 user_id="user-1",
-                ai_health_data_consent_at=None,
-                survey_completed=True,
+                readiness_status="needs_ai_consent",
+                readiness_onboarding_completed_at="2026-04-18T10:00:00Z",
             )
         )  # type: ignore[arg-type]
     )
-    assert await service_with_survey_only.has_ai_health_data_consent(user_id="user-1") is False
+    assert await service_with_profile_only.has_ai_health_data_consent(user_id="user-1") is False
 
     service_with_consent = ConsentService(
         _FakeConsentProfileService(
             UserProfile(
                 user_id="user-1",
-                ai_health_data_consent_at="2026-04-19T10:00:00Z",
-                survey_completed=False,
+                readiness_status="ready",
+                readiness_onboarding_completed_at="2026-04-18T10:00:00Z",
+                readiness_ready_at="2026-04-19T10:00:00Z",
             )
         )  # type: ignore[arg-type]
     )
@@ -206,8 +206,11 @@ async def test_user_profile_service_reuses_user_account_profile_data(
             "allergies": ["soy"],
             "language": "en-US",
             "aiPersona": "focused_coach",
-            "aiHealthDataConsentAt": "2026-04-10T11:00:00Z",
-            "surveyComplited": True,
+            "readiness": {
+                "status": "ready",
+                "onboardingCompletedAt": "2026-04-10T10:00:00Z",
+                "readyAt": "2026-04-10T11:00:00Z",
+            },
         }
 
     monkeypatch.setattr(
@@ -222,7 +225,8 @@ async def test_user_profile_service_reuses_user_account_profile_data(
     assert profile.calorie_target == 2800
     assert profile.ai_persona == "focused_coach"
     assert profile.style_profile == {"id": "focused_coach", "label": "Focused Coach"}
-    assert profile.ai_health_data_consent_at == "2026-04-10T11:00:00Z"
+    assert profile.readiness_status == "ready"
+    assert profile.readiness_ready_at == "2026-04-10T11:00:00Z"
 
     goal_context = await service.get_goal_context(user_id="user-1")
     assert goal_context["proteinStrategy"] == "higher_protein_with_calorie_surplus"
