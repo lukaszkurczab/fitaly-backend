@@ -1,0 +1,189 @@
+{
+  "contractVersion": 1,
+  "onboardingRequest": {
+    "requiredFields": ["username"],
+    "optionalFields": ["language"]
+  },
+  "onboardingProfile": {
+    "fields": [
+      "uid",
+      "email",
+      "username",
+      "plan",
+      "createdAt",
+      "lastLogin",
+      "unitsSystem",
+      "age",
+      "sex",
+      "height",
+      "heightInch",
+      "weight",
+      "preferences",
+      "activityLevel",
+      "goal",
+      "calorieDeficit",
+      "calorieSurplus",
+      "chronicDiseases",
+      "chronicDiseasesOther",
+      "allergies",
+      "allergiesOther",
+      "lifestyle",
+      "aiPersona",
+      "aiHealthDataConsentAt",
+      "surveyComplited",
+      "surveyCompletedAt",
+      "calorieTarget",
+      "syncState",
+      "lastSyncedAt",
+      "avatarUrl",
+      "avatarLocalPath",
+      "avatarlastSyncedAt",
+      "language"
+    ],
+    "defaults": {
+      "unitsSystem": "metric",
+      "age": "",
+      "sex": "female",
+      "height": "",
+      "heightInch": "",
+      "weight": "",
+      "preferences": [],
+      "activityLevel": "moderate",
+      "goal": "maintain",
+      "calorieDeficit": null,
+      "calorieSurplus": null,
+      "chronicDiseases": [],
+      "chronicDiseasesOther": "",
+      "allergies": [],
+      "allergiesOther": "",
+      "lifestyle": "",
+      "aiPersona": "calm_guide",
+      "aiHealthDataConsentAt": null,
+      "surveyComplited": false,
+      "surveyCompletedAt": null,
+      "calorieTarget": 0,
+      "syncState": "pending",
+      "lastSyncedAt": "",
+      "avatarUrl": "",
+      "avatarLocalPath": "",
+      "avatarlastSyncedAt": "",
+      "language": "en"
+    }
+  },
+  "profilePatch": {
+    "editableFields": [
+      "unitsSystem",
+      "age",
+      "sex",
+      "height",
+      "heightInch",
+      "weight",
+      "preferences",
+      "activityLevel",
+      "goal",
+      "calorieDeficit",
+      "calorieSurplus",
+      "chronicDiseases",
+      "chronicDiseasesOther",
+      "allergies",
+      "allergiesOther",
+      "lifestyle",
+      "aiPersona",
+      "aiHealthDataConsentAt",
+      "surveyComplited",
+      "surveyCompletedAt",
+      "calorieTarget",
+      "language"
+    ]
+  },
+  "criticalFieldGroups": {
+    "completion": ["surveyComplited", "surveyCompletedAt"],
+    "language": ["language"],
+    "aiConsent": ["aiHealthDataConsentAt"],
+    "aiPersona": ["aiPersona"],
+    "aiStyle": ["aiPersona", "styleProfile"],
+    "nutrition": [
+      "goal",
+      "calorieTarget",
+      "preferences",
+      "calorieDeficit",
+      "calorieSurplus"
+    ]
+  },
+  "enums": {
+    "unitsSystem": ["metric", "imperial"],
+    "sex": ["male", "female"],
+    "activityLevel": ["sedentary", "light", "moderate", "active", "very_active", ""],
+    "goal": ["lose", "maintain", "increase", ""],
+    "language": ["en", "pl"],
+    "preferences": [
+      "lowCarb",
+      "keto",
+      "highProtein",
+      "highCarb",
+      "lowFat",
+      "balanced",
+      "vegetarian",
+      "vegan",
+      "pescatarian",
+      "mediterranean",
+      "glutenFree",
+      "dairyFree",
+      "paleo"
+    ],
+    "chronicDiseases": ["none", "diabetes", "hypertension", "asthma", "other"],
+    "allergies": ["none", "peanuts", "gluten", "lactose", "other"],
+    "aiPersona": [
+      "calm_guide",
+      "cheerful_companion",
+      "focused_coach",
+      "mediterranean_friend"
+    ]
+  },
+  "semantics": {
+    "language": {
+      "default": "en",
+      "normalizedExamples": {
+        "pl-PL": "pl",
+        "en-US": "en",
+        "de-DE": "en"
+      }
+    },
+    "completion": {
+      "completedFlagField": "surveyComplited",
+      "completedAtField": "surveyCompletedAt",
+      "defaultCompleted": false
+    },
+    "aiConsent": {
+      "field": "aiHealthDataConsentAt",
+      "default": null,
+      "kind": "iso8601-or-null"
+    },
+    "aiPersona": {
+      "default": "calm_guide",
+      "styleProfileLabels": {
+        "calm_guide": "Calm Guide",
+        "cheerful_companion": "Cheerful Companion",
+        "focused_coach": "Focused Coach",
+        "mediterranean_friend": "Mediterranean Friend"
+      }
+    },
+    "nutrition": {
+      "defaultGoal": "maintain",
+      "defaultCalorieTarget": 0,
+      "goalAdjustmentFieldByGoal": {
+        "lose": "calorieDeficit",
+        "maintain": null,
+        "increase": "calorieSurplus"
+      }
+    }
+  },
+  "backendNormalizationExamples": {
+    "aiPersona": {
+      "calm guide": "calm_guide",
+      "focused-coach": "focused_coach",
+      "Mediterranean Friend": "mediterranean_friend",
+      "unknown": "calm_guide"
+    }
+  }
+}
