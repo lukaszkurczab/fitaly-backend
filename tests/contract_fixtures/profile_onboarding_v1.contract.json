@@ -21,8 +21,6 @@
       "preferences",
       "activityLevel",
       "goal",
-      "calorieDeficit",
-      "calorieSurplus",
       "chronicDiseases",
       "chronicDiseasesOther",
       "allergies",
@@ -48,8 +46,6 @@
       "preferences": [],
       "activityLevel": "moderate",
       "goal": "maintain",
-      "calorieDeficit": null,
-      "calorieSurplus": null,
       "chronicDiseases": [],
       "chronicDiseasesOther": "",
       "allergies": [],
@@ -81,8 +77,6 @@
       "preferences",
       "activityLevel",
       "goal",
-      "calorieDeficit",
-      "calorieSurplus",
       "chronicDiseases",
       "chronicDiseasesOther",
       "allergies",
@@ -102,9 +96,7 @@
     "nutrition": [
       "goal",
       "calorieTarget",
-      "preferences",
-      "calorieDeficit",
-      "calorieSurplus"
+      "preferences"
     ]
   },
   "enums": {
@@ -166,12 +158,7 @@
     },
     "nutrition": {
       "defaultGoal": "maintain",
-      "defaultCalorieTarget": 0,
-      "goalAdjustmentFieldByGoal": {
-        "lose": "calorieDeficit",
-        "maintain": null,
-        "increase": "calorieSurplus"
-      }
+      "defaultCalorieTarget": 0
     }
   },
   "backendNormalizationExamples": {

@@ -63,8 +63,6 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "preferences",
         "activityLevel",
         "goal",
-        "calorieDeficit",
-        "calorieSurplus",
         "chronicDiseases",
         "chronicDiseasesOther",
         "allergies",
@@ -160,8 +158,6 @@ def _build_onboarding_profile_document(
     profile.setdefault("preferences", [])
     profile.setdefault("activityLevel", "moderate")
     profile.setdefault("goal", "maintain")
-    profile.setdefault("calorieDeficit", None)
-    profile.setdefault("calorieSurplus", None)
     profile.setdefault("chronicDiseases", [])
     profile.setdefault("chronicDiseasesOther", "")
     profile.setdefault("allergies", [])

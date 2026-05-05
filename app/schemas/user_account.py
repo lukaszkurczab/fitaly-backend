@@ -101,8 +101,6 @@ class UserProfilePatchRequest(BaseModel):
     preferences: list[PreferenceValue] | None = Field(default=None)
     activityLevel: ActivityLevelValue | None = Field(default=None)
     goal: GoalValue | None = Field(default=None)
-    calorieDeficit: int | None = Field(default=None, ge=0, le=3000)
-    calorieSurplus: int | None = Field(default=None, ge=0, le=3000)
     chronicDiseases: list[ChronicDiseaseValue] | None = Field(default=None)
     chronicDiseasesOther: str | None = Field(default=None, max_length=120)
     allergies: list[AllergyValue] | None = Field(default=None)
