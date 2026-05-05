@@ -17,6 +17,7 @@ from app.schemas.user_account import (
     PreferenceValue,
     SexValue,
     UnitsSystemValue,
+    UserOnboardingCompleteRequest,
     UserOnboardingRequest,
     UserProfilePatchRequest,
 )
@@ -68,6 +69,40 @@ def test_profile_patch_fields_match_contract_fixture() -> None:
     assert list(UserProfilePatchRequest.model_fields.keys()) == contract["profilePatch"][
         "editableFields"
     ]
+
+
+def test_onboarding_completion_builds_canonical_ready_profile() -> None:
+    request = UserOnboardingCompleteRequest(
+        unitsSystem="metric",
+        age="30",
+        sex="female",
+        height="170",
+        heightInch="",
+        weight="70",
+        preferences=["balanced"],
+        activityLevel="moderate",
+        goal="maintain",
+        calorieAdjustment=None,
+        chronicDiseases=[],
+        chronicDiseasesOther="",
+        allergies=[],
+        allergiesOther="",
+        lifestyle="",
+        aiPersona="focused_coach",
+    )
+
+    patch = UserProfileService.build_onboarding_completion_patch(
+        payload=request.to_completion_payload(),
+        completed_at="2026-05-05T10:00:00Z",
+    )
+
+    assert patch["calorieTarget"] == 2250
+    assert patch["aiPersona"] == "focused_coach"
+    assert patch["readiness"] == {
+        "status": "ready",
+        "onboardingCompletedAt": "2026-05-05T10:00:00Z",
+        "readyAt": "2026-05-05T10:00:00Z",
+    }
 
 
 def test_profile_patch_enums_match_contract_fixture() -> None:
@@ -155,7 +190,7 @@ def test_critical_field_groups_cover_backend_surfaces() -> None:
     contract = _load_fixture()
     patch_fields = set(UserProfilePatchRequest.model_fields.keys())
 
-    for group_name in ("readiness", "language", "aiPersona", "nutrition"):
+    for group_name in ("language", "aiPersona", "nutrition"):
         assert set(contract["criticalFieldGroups"][group_name]).issubset(patch_fields)
 
     profile = UserProfile(

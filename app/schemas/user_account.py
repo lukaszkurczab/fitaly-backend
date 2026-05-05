@@ -107,7 +107,6 @@ class UserProfilePatchRequest(BaseModel):
     allergiesOther: str | None = Field(default=None, max_length=120)
     lifestyle: str | None = Field(default=None, max_length=160)
     aiPersona: AiPersonaValue | None = Field(default=None)
-    readiness: UserReadinessRequest | None = Field(default=None)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)
     language: LanguageValue | None = Field(default=None)
 
@@ -144,6 +143,76 @@ class UserOnboardingResponse(BaseModel):
     username: str
     profile: dict[str, Any]
     updated: bool
+
+
+class UserOnboardingCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unitsSystem: UnitsSystemValue = "metric"
+    age: str = Field(max_length=4)
+    sex: SexValue
+    height: str = Field(max_length=8)
+    heightInch: str | None = Field(default="", max_length=8)
+    weight: str = Field(max_length=8)
+    preferences: list[PreferenceValue] = Field(default_factory=list)
+    activityLevel: ActivityLevelValue
+    goal: GoalValue
+    calorieAdjustment: float | None = Field(default=None, ge=0.1, le=0.5)
+    chronicDiseases: list[ChronicDiseaseValue] = Field(default_factory=list)
+    chronicDiseasesOther: str = Field(default="", max_length=120)
+    allergies: list[AllergyValue] = Field(default_factory=list)
+    allergiesOther: str = Field(default="", max_length=120)
+    lifestyle: str = Field(default="", max_length=160)
+    aiPersona: AiPersonaValue = "calm_guide"
+
+    @field_validator("preferences", "chronicDiseases", "allergies")
+    @classmethod
+    def _normalize_string_lists(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        deduped = list(dict.fromkeys(value))
+        if len(deduped) > 16:
+            raise ValueError("Too many items in profile list field.")
+        return deduped
+
+    @model_validator(mode="after")
+    def _validate_final_onboarding(self) -> "UserOnboardingCompleteRequest":
+        age = self._parse_number(self.age)
+        height = self._parse_number(self.height)
+        weight = self._parse_number(self.weight)
+        if age is None or age < 16 or age > 120:
+            raise ValueError("Invalid onboarding age.")
+        if height is None or height < 90 or height > 250:
+            raise ValueError("Invalid onboarding height.")
+        if weight is None or weight < 30 or weight > 300:
+            raise ValueError("Invalid onboarding weight.")
+        if self.activityLevel == "":
+            raise ValueError("Activity level is required.")
+        if self.goal == "":
+            raise ValueError("Goal is required.")
+        if self.goal in {"lose", "increase"} and self.calorieAdjustment is None:
+            raise ValueError("Calorie adjustment is required for this goal.")
+        if self.goal == "maintain" and self.calorieAdjustment is not None:
+            raise ValueError("Calorie adjustment is only supported for adjustment goals.")
+        return self
+
+    @staticmethod
+    def _parse_number(value: str) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return int(float(text))
+        except ValueError:
+            return None
+
+    def to_completion_payload(self) -> dict[str, Any]:
+        return self.model_dump()
+
+
+class UserOnboardingCompleteResponse(UserProfileUpdateResponse):
+    pass
 
 
 class AiHealthDataConsentRequest(BaseModel):

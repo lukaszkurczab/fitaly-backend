@@ -14,6 +14,8 @@ from app.schemas.user_account import (
     EmailPendingRequest,
     EmailPendingResponse,
     UserOnboardingRequest,
+    UserOnboardingCompleteRequest,
+    UserOnboardingCompleteResponse,
     UserOnboardingResponse,
     UserExportResponse,
     UserProfilePatchRequest,
@@ -121,6 +123,35 @@ async def initialize_user_onboarding_me(
         profile=profile,
         updated=True,
     )
+
+
+@router.post(
+    "/users/me/onboarding/complete",
+    response_model=UserOnboardingCompleteResponse,
+)
+async def complete_user_onboarding_me(
+    request: UserOnboardingCompleteRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> UserOnboardingCompleteResponse:
+    auth_email = current_user.claims.get("email")
+    completed_at = user_account_service._utc_timestamp()
+
+    try:
+        profile_patch = UserProfileService.build_onboarding_completion_patch(
+            payload=request.to_completion_payload(),
+            completed_at=completed_at,
+        )
+        profile = await user_account_service.complete_onboarding_profile(
+            current_user.uid,
+            profile_patch,
+            auth_email=auth_email if isinstance(auth_email, str) else None,
+        )
+    except ValueError as exc:
+        raise_bad_request(exc)
+    except OnboardingValidationError as exc:
+        raise_bad_request(exc)
+
+    return UserOnboardingCompleteResponse(profile=profile, updated=True)
 
 
 @router.post("/users/me/email-pending", response_model=EmailPendingResponse)

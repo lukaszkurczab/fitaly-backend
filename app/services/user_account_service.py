@@ -69,7 +69,6 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "allergiesOther",
         "lifestyle",
         "aiPersona",
-        "readiness",
         "calorieTarget",
         "language",
     }
@@ -374,6 +373,66 @@ async def upsert_user_profile_data(
     if "calorieTarget" in sanitized_patch:
         await streak_service.sync_streak_from_meals(user_id)
 
+    return merged
+
+
+async def complete_onboarding_profile(
+    user_id: str,
+    profile_patch: dict[str, Any],
+    *,
+    auth_email: str | None = None,
+) -> dict[str, Any]:
+    client: firestore.Client = get_firestore()
+    user_ref = client.collection(USERS_COLLECTION).document(user_id)
+
+    try:
+        snapshot = user_ref.get()
+        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+        username = str(existing.get("username") or "").strip()
+        if not username:
+            raise OnboardingValidationError("Onboarding profile must be initialized.")
+
+        now_iso = _utc_timestamp()
+        document: dict[str, Any] = {
+            "uid": user_id,
+            "lastLogin": now_iso,
+            "calorieDeficit": firestore.DELETE_FIELD,
+            "calorieSurplus": firestore.DELETE_FIELD,
+            **profile_patch,
+        }
+        normalized_email = normalize_email(auth_email)
+        if normalized_email:
+            document["email"] = normalized_email
+        if "createdAt" not in existing:
+            document["createdAt"] = _utc_timestamp_ms()
+        if "plan" not in existing:
+            document["plan"] = "free"
+        if "syncState" not in existing:
+            document["syncState"] = "pending"
+        if "language" not in existing:
+            document["language"] = "en"
+
+        user_ref.set(document, merge=True)
+    except OnboardingValidationError:
+        raise
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to complete onboarding profile.",
+            extra={"user_id": user_id},
+        )
+        raise FirestoreServiceError("Failed to complete onboarding profile.") from exc
+
+    merged = dict(existing)
+    merged.update(
+        {
+            key: value
+            for key, value in document.items()
+            if value is not firestore.DELETE_FIELD
+        }
+    )
+    merged.pop("calorieDeficit", None)
+    merged.pop("calorieSurplus", None)
+    await streak_service.sync_streak_from_meals(user_id)
     return merged
 
 

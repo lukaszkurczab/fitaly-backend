@@ -5,6 +5,14 @@ from typing import Any, cast
 from app.domain.users.models.user_profile import ReadinessStatus, UserProfile
 from app.services import user_account_service
 
+_ACTIVITY_MULTIPLIERS = {
+    "sedentary": 1.2,
+    "light": 1.375,
+    "moderate": 1.55,
+    "active": 1.725,
+    "very_active": 1.9,
+}
+
 
 def _normalize_list(value: object) -> list[str]:
     if not isinstance(value, list):
@@ -109,6 +117,47 @@ def _normalize_readiness(raw: object) -> tuple[ReadinessStatus, str | None, str 
     )
 
 
+def _calculate_calorie_target(payload: dict[str, Any]) -> int:
+    weight_kg = _normalize_int(payload.get("weight"))
+    height_cm = _normalize_int(payload.get("height"))
+    age = _normalize_int(payload.get("age"))
+    sex = str(payload.get("sex") or "").strip().lower()
+    activity_level = str(payload.get("activityLevel") or "").strip()
+    goal = str(payload.get("goal") or "").strip()
+
+    if not weight_kg or not height_cm or not age or sex not in {"male", "female"}:
+        raise ValueError("Onboarding profile is missing required calorie inputs.")
+    if activity_level not in _ACTIVITY_MULTIPLIERS:
+        raise ValueError("Onboarding profile has invalid activity level.")
+    if goal not in {"lose", "maintain", "increase"}:
+        raise ValueError("Onboarding profile has invalid goal.")
+
+    bmr = (
+        10 * weight_kg + 6.25 * height_cm - 5 * age + 5
+        if sex == "male"
+        else 10 * weight_kg + 6.25 * height_cm - 5 * age - 161
+    )
+    tdee = bmr * _ACTIVITY_MULTIPLIERS[activity_level]
+    adjustment_raw = payload.get("calorieAdjustment")
+    adjustment = float(adjustment_raw) if adjustment_raw is not None else None
+
+    if goal == "lose":
+        if adjustment is None:
+            raise ValueError("Calorie adjustment is required for weight loss goal.")
+        target = tdee * (1 - adjustment)
+    elif goal == "increase":
+        if adjustment is None:
+            raise ValueError("Calorie adjustment is required for weight gain goal.")
+        target = tdee * (1 + adjustment)
+    else:
+        target = tdee
+
+    rounded = round(target)
+    if rounded < 1000 or rounded > 6000:
+        raise ValueError("Calculated calorie target is outside supported range.")
+    return rounded
+
+
 class UserProfileService:
     async def get_profile(self, *, user_id: str) -> UserProfile | None:
         raw = await user_account_service.get_user_profile_data(user_id)
@@ -138,6 +187,37 @@ class UserProfileService:
             readiness_onboarding_completed_at=onboarding_completed_at,
             readiness_ready_at=ready_at,
         )
+
+    @staticmethod
+    def build_onboarding_completion_patch(
+        *,
+        payload: dict[str, Any],
+        completed_at: str,
+    ) -> dict[str, Any]:
+        calorie_target = _calculate_calorie_target(payload)
+        return {
+            "unitsSystem": payload.get("unitsSystem"),
+            "age": payload.get("age"),
+            "sex": payload.get("sex"),
+            "height": payload.get("height"),
+            "heightInch": payload.get("heightInch") or "",
+            "weight": payload.get("weight"),
+            "preferences": payload.get("preferences") or [],
+            "activityLevel": payload.get("activityLevel"),
+            "goal": payload.get("goal"),
+            "chronicDiseases": payload.get("chronicDiseases") or [],
+            "chronicDiseasesOther": payload.get("chronicDiseasesOther") or "",
+            "allergies": payload.get("allergies") or [],
+            "allergiesOther": payload.get("allergiesOther") or "",
+            "lifestyle": payload.get("lifestyle") or "",
+            "aiPersona": _normalize_ai_persona(payload.get("aiPersona")),
+            "calorieTarget": calorie_target,
+            "readiness": {
+                "status": "ready",
+                "onboardingCompletedAt": completed_at,
+                "readyAt": completed_at,
+            },
+        }
 
     async def get_profile_summary(self, *, user_id: str) -> dict[str, Any]:
         profile = await self.get_profile(user_id=user_id)
