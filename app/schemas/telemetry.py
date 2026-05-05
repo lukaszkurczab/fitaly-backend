@@ -38,6 +38,10 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "restore_succeeded",
         "restore_failed",
         "weekly_report_opened",
+        "weekly_report_locked_viewed",
+        "weekly_report_access_blocked",
+        "coach_insight_viewed",
+        "coach_insight_tapped",
         "smart_reminder_suppressed",
         "smart_reminder_scheduled",
         "smart_reminder_noop",
@@ -100,6 +104,25 @@ ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
     }
 )
 WEEKLY_REPORT_STATUSES = frozenset({"ready", "insufficient_data", "unavailable"})
+WEEKLY_REPORT_SOURCES = frozenset({"remote", "fallback", "disabled"})
+WEEKLY_REPORT_ACCESS_STATES = frozenset({"premium", "locked", "degraded", "unknown"})
+COACH_INSIGHT_TYPES = frozenset(
+    {
+        "under_logging",
+        "high_unknown_meal_details",
+        "low_protein_consistency",
+        "calorie_under_target",
+        "positive_momentum",
+        "stable",
+    }
+)
+COACH_ACTION_TYPES = frozenset(
+    {"log_next_meal", "open_chat", "review_history", "none"}
+)
+COACH_TAPPABLE_ACTION_TYPES = frozenset(
+    {"log_next_meal", "open_chat", "review_history"}
+)
+COACH_INSIGHT_FRESHNESS = frozenset({"fresh", "degraded", "stale"})
 ONBOARDING_MODES = frozenset({"first", "refill"})
 NOTIFICATION_ORIGINS = frozenset(
     {"user_notifications", "system_notifications", "unknown"}
@@ -128,7 +151,26 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "restore_succeeded": frozenset({"source", "confirmed"}),
     "restore_failed": frozenset({"source", "reason"}),
     "weekly_report_opened": frozenset(
-        {"reportStatus", "insightCount", "priorityCount"}
+        {
+            "reportStatus",
+            "insightCount",
+            "priorityCount",
+            "source",
+            "accessState",
+            "accessReason",
+        }
+    ),
+    "weekly_report_locked_viewed": frozenset(
+        {"source", "accessState", "accessReason"}
+    ),
+    "weekly_report_access_blocked": frozenset(
+        {"source", "accessState", "accessReason"}
+    ),
+    "coach_insight_viewed": frozenset(
+        {"insightType", "actionType", "freshness"}
+    ),
+    "coach_insight_tapped": frozenset(
+        {"insightType", "actionType", "freshness"}
     ),
     "smart_reminder_suppressed": frozenset(
         {"decision", "suppressionReason", "confidenceBucket"}
@@ -213,6 +255,26 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
     },
     "weekly_report_opened": {
         "reportStatus": WEEKLY_REPORT_STATUSES,
+        "source": WEEKLY_REPORT_SOURCES,
+        "accessState": WEEKLY_REPORT_ACCESS_STATES,
+    },
+    "weekly_report_locked_viewed": {
+        "source": WEEKLY_REPORT_SOURCES,
+        "accessState": frozenset({"locked"}),
+    },
+    "weekly_report_access_blocked": {
+        "source": WEEKLY_REPORT_SOURCES,
+        "accessState": frozenset({"degraded", "unknown"}),
+    },
+    "coach_insight_viewed": {
+        "insightType": COACH_INSIGHT_TYPES,
+        "actionType": COACH_ACTION_TYPES,
+        "freshness": COACH_INSIGHT_FRESHNESS,
+    },
+    "coach_insight_tapped": {
+        "insightType": COACH_INSIGHT_TYPES,
+        "actionType": COACH_TAPPABLE_ACTION_TYPES,
+        "freshness": COACH_INSIGHT_FRESHNESS,
     },
 }
 
