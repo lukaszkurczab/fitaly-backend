@@ -68,14 +68,12 @@ _AI_PERSONA_ALIASES = {
 }
 
 
-def _normalize_ai_persona(*, ai_persona: object, ai_style: object) -> str:
+def _normalize_ai_persona(ai_persona: object) -> str:
     persona_text = str(ai_persona or "").strip().lower().replace("-", "_")
     persona_key = _AI_PERSONA_ALIASES.get(persona_text) if persona_text else None
     if persona_key:
         return persona_key
-
-    style_text = str(ai_style or "").strip().lower().replace("-", "_")
-    return _AI_PERSONA_ALIASES.get(style_text, "calm_guide")
+    return "calm_guide"
 
 
 def _style_profile(persona: str) -> dict[str, str]:
@@ -99,11 +97,7 @@ class UserProfileService:
         consent_at_text = str(consent_at).strip() if consent_at is not None else None
         if consent_at_text == "":
             consent_at_text = None
-        ai_style = str(raw.get("aiStyle")).strip() if raw.get("aiStyle") else None
-        ai_persona = _normalize_ai_persona(
-            ai_persona=raw.get("aiPersona"),
-            ai_style=ai_style,
-        )
+        ai_persona = _normalize_ai_persona(raw.get("aiPersona"))
         return UserProfile(
             user_id=user_id,
             goal=str(raw.get("goal")).strip() if raw.get("goal") else None,
@@ -114,7 +108,6 @@ class UserProfileService:
             preferences=_normalize_list(raw.get("preferences")),
             allergies=_normalize_list(raw.get("allergies")),
             language=_normalize_language(raw.get("language")),
-            ai_style=ai_style,
             ai_persona=ai_persona,
             style_profile=_style_profile(ai_persona),
             ai_health_data_consent_at=consent_at_text,
@@ -130,7 +123,6 @@ class UserProfileService:
                 "preferences": [],
                 "allergies": [],
                 "language": "en",
-                "aiStyle": None,
                 "aiPersona": "calm_guide",
                 "styleProfile": _style_profile("calm_guide"),
             }
@@ -141,7 +133,6 @@ class UserProfileService:
             "preferences": profile.preferences,
             "allergies": profile.allergies,
             "language": profile.language,
-            "aiStyle": profile.ai_style,
             "aiPersona": profile.ai_persona,
             "styleProfile": profile.style_profile,
         }

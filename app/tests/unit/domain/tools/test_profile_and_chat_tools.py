@@ -69,7 +69,6 @@ async def test_profile_and_goal_tools_return_structured_payloads() -> None:
                 "preferences": ["high_protein"],
                 "allergies": ["nuts"],
                 "language": "pl",
-                "aiStyle": "friendly",
                 "aiPersona": "cheerful_companion",
                 "styleProfile": {
                     "id": "cheerful_companion",
@@ -195,7 +194,7 @@ async def test_user_profile_service_reuses_user_account_profile_data(
             "preferences": ["vegan"],
             "allergies": ["soy"],
             "language": "en-US",
-            "aiStyle": "concise",
+            "aiPersona": "focused_coach",
             "aiHealthDataConsentAt": "2026-04-10T11:00:00Z",
             "surveyComplited": True,
         }
@@ -210,7 +209,6 @@ async def test_user_profile_service_reuses_user_account_profile_data(
     assert profile is not None
     assert profile.language == "en"
     assert profile.calorie_target == 2800
-    assert profile.ai_style == "concise"
     assert profile.ai_persona == "focused_coach"
     assert profile.style_profile == {"id": "focused_coach", "label": "Focused Coach"}
     assert profile.ai_health_data_consent_at == "2026-04-10T11:00:00Z"
@@ -228,7 +226,6 @@ async def test_user_profile_service_bounds_future_ai_persona_to_allowlist(
             "goal": "maintain",
             "language": "pl",
             "aiPersona": "Mediterranean Friend",
-            "aiStyle": "aggressive",
         }
 
     monkeypatch.setattr(

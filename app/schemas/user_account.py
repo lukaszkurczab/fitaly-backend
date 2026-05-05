@@ -67,8 +67,12 @@ PreferenceValue = Literal[
 
 ChronicDiseaseValue = Literal["none", "diabetes", "hypertension", "asthma", "other"]
 AllergyValue = Literal["none", "peanuts", "gluten", "lactose", "other"]
-AiStyleValue = Literal["none", "concise", "friendly", "detailed"]
-AiFocusValue = Literal["none", "mealPlanning", "analyzingMistakes", "motivation"]
+AiPersonaValue = Literal[
+    "calm_guide",
+    "cheerful_companion",
+    "focused_coach",
+    "mediterranean_friend",
+]
 UnitsSystemValue = Literal["metric", "imperial"]
 ActivityLevelValue = Literal["sedentary", "light", "moderate", "active", "very_active", ""]
 GoalValue = Literal["lose", "maintain", "increase", ""]
@@ -95,10 +99,7 @@ class UserProfilePatchRequest(BaseModel):
     allergies: list[AllergyValue] | None = Field(default=None)
     allergiesOther: str | None = Field(default=None, max_length=120)
     lifestyle: str | None = Field(default=None, max_length=160)
-    aiStyle: AiStyleValue | None = Field(default=None)
-    aiFocus: AiFocusValue | None = Field(default=None)
-    aiFocusOther: str | None = Field(default=None, max_length=120)
-    aiNote: str | None = Field(default=None, max_length=600)
+    aiPersona: AiPersonaValue | None = Field(default=None)
     aiHealthDataConsentAt: str | None = Field(default=None, max_length=64)
     surveyComplited: bool | None = Field(default=None)
     surveyCompletedAt: str | None = Field(default=None, max_length=64)

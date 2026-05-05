@@ -70,10 +70,7 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "allergies",
         "allergiesOther",
         "lifestyle",
-        "aiStyle",
-        "aiFocus",
-        "aiFocusOther",
-        "aiNote",
+        "aiPersona",
         "aiHealthDataConsentAt",
         "surveyComplited",
         "surveyCompletedAt",
@@ -172,10 +169,7 @@ def _build_onboarding_profile_document(
     profile.setdefault("allergies", [])
     profile.setdefault("allergiesOther", "")
     profile.setdefault("lifestyle", "")
-    profile.setdefault("aiStyle", "none")
-    profile.setdefault("aiFocus", "none")
-    profile.setdefault("aiFocusOther", "")
-    profile.setdefault("aiNote", "")
+    profile.setdefault("aiPersona", "calm_guide")
     profile.setdefault("aiHealthDataConsentAt", None)
     profile.setdefault("surveyComplited", False)
     profile.setdefault("surveyCompletedAt", None)

@@ -26,7 +26,6 @@ class ProfileSummaryDto(BaseModel):
     preferences: list[str] = Field(default_factory=_empty_str_list)
     allergies: list[str] = Field(default_factory=_empty_str_list)
     language: str = "pl"
-    ai_style: str | None = Field(default=None, alias="aiStyle")
     ai_persona: Literal[
         "calm_guide",
         "cheerful_companion",
