@@ -78,7 +78,6 @@ EDITABLE_PROFILE_FIELDS = frozenset(
         "surveyComplited",
         "surveyCompletedAt",
         "calorieTarget",
-        "darkTheme",
         "language",
     }
 )
@@ -186,7 +185,6 @@ def _build_onboarding_profile_document(
     profile.setdefault("avatarUrl", "")
     profile.setdefault("avatarLocalPath", "")
     profile.setdefault("avatarlastSyncedAt", "")
-    profile.setdefault("darkTheme", False)
     profile.setdefault("language", normalized_language)
 
     return profile

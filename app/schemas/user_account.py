@@ -103,7 +103,6 @@ class UserProfilePatchRequest(BaseModel):
     surveyComplited: bool | None = Field(default=None)
     surveyCompletedAt: str | None = Field(default=None, max_length=64)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)
-    darkTheme: bool | None = Field(default=None)
     language: LanguageValue | None = Field(default=None)
 
     @field_validator("preferences", "chronicDiseases", "allergies")

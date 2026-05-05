@@ -384,7 +384,7 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     profile = asyncio.run(
         user_account_service.upsert_user_profile_data(
             "user-1",
-            {"language": "pl", "darkTheme": True},
+            {"language": "pl"},
             auth_email="user-1@example.com",
         )
     )
@@ -399,7 +399,6 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
             "syncState": "pending",
             "lastLogin": ANY,
             "language": "pl",
-            "darkTheme": True,
         },
         merge=True,
     )
@@ -407,7 +406,6 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     assert profile["email"] == "user-1@example.com"
     assert profile["username"] == "neo"
     assert profile["language"] == "pl"
-    assert profile["darkTheme"] is True
     sync_streak.assert_not_called()
 
 
