@@ -47,6 +47,7 @@ def ingest_telemetry_batch(
     context = TelemetryRequestContext(
         client_host=(http_request.client.host if http_request.client else "") or "anonymous",
         user_id=current_user.uid if current_user is not None else None,
+        request_id=getattr(http_request.state, "request_id", None),
     )
 
     try:

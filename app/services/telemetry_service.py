@@ -42,6 +42,7 @@ from app.core.exceptions import (
 from app.db.firebase import get_firestore
 from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
+    CURRENT_TELEMETRY_SCHEMA_VERSION,
     SMART_REMINDER_EVENT_NAMES,
     SmartReminderDailyBucket,
     SmartReminderKindCount,
@@ -77,6 +78,7 @@ TELEMETRY_RETENTION_DAYS = 30
 class TelemetryRequestContext:
     client_host: str
     user_id: str | None
+    request_id: str | None = None
 
 
 def reset_rate_limit_state() -> None:
@@ -87,7 +89,7 @@ def reset_rate_limit_state() -> None:
 def build_bucket_key(context: TelemetryRequestContext) -> str:
     client_host = context.client_host.strip() or "anonymous"
     if context.user_id:
-        return f"user:{context.user_id}"
+        return f"user:{_build_user_hash(context.user_id)}"
     return f"ip:{client_host}"
 
 
@@ -122,31 +124,71 @@ def _serialize_timestamp(value: datetime) -> str:
     return normalized.isoformat().replace("+00:00", "Z")
 
 
+def _resolve_actor(
+    request: TelemetryBatchRequest,
+    event: "TelemetryEventInput",
+    context: TelemetryRequestContext,
+) -> tuple[str | None, str | None, str | None, str]:
+    if event.schemaVersion >= CURRENT_TELEMETRY_SCHEMA_VERSION and event.actor is not None:
+        user_id = event.actor.userId
+        anonymous_id = event.actor.anonymousId
+        user_hash = _build_user_hash(user_id) if user_id else None
+        if user_id is None:
+            return None, user_hash, anonymous_id, "anonymous"
+        if context.user_id is None:
+            return user_id, user_hash, None, "unauthenticated"
+        if context.user_id == user_id:
+            return user_id, user_hash, None, "matched"
+        return user_id, user_hash, None, "mismatched"
+
+    user_id = context.user_id
+    user_hash = _build_user_hash(user_id) if user_id else None
+    return user_id, user_hash, None, "legacy_authenticated" if user_id else "legacy_anonymous"
+
+
 def _build_document(
     request: TelemetryBatchRequest,
     event: "TelemetryEventInput",
     context: TelemetryRequestContext,
 ) -> dict[str, object]:
-    user_hash = (
-        sha256(context.user_id.encode("utf-8")).hexdigest()
-        if context.user_id
-        else None
+    user_id, user_hash, anonymous_id, actor_auth_validation = _resolve_actor(
+        request,
+        event,
+        context,
     )
+    session_id = event.sessionId or request.sessionId
+    platform = event.platform or request.app.platform
+    app_version = event.appVersion or request.app.appVersion
+    build = event.build if event.build is not None else request.app.build
+    locale = event.locale if event.locale is not None else request.device.locale
+    tz_offset_min = (
+        event.tzOffsetMin if event.tzOffsetMin is not None else request.device.tzOffsetMin
+    )
+    occurred_at = event.occurredAt or event.ts
+    now = utc_now()
     return {
         "eventId": event.eventId,
         "name": event.name,
         "ts": _serialize_timestamp(event.ts),
+        "occurredAt": _serialize_timestamp(occurred_at),
         "props": event.props or {},
-        "sessionId": request.sessionId,
-        "userId": context.user_id,
+        "sessionId": session_id,
+        "userId": user_id,
         "userHash": user_hash,
-        "platform": request.app.platform,
-        "appVersion": request.app.appVersion,
-        "build": request.app.build,
-        "locale": request.device.locale,
-        "tzOffsetMin": request.device.tzOffsetMin,
-        "ingestedAt": _serialize_timestamp(utc_now()),
-        "expiresAt": ensure_utc_datetime(utc_now() + timedelta(days=TELEMETRY_RETENTION_DAYS)),
+        "anonymousId": anonymous_id,
+        "actorType": "user" if user_id else "anonymous",
+        "actorAuthValidation": actor_auth_validation,
+        "platform": platform,
+        "appVersion": app_version,
+        "build": build,
+        "locale": locale,
+        "timezone": event.timezone,
+        "tzOffsetMin": tz_offset_min,
+        "schemaVersion": event.schemaVersion,
+        "requestId": event.requestId,
+        "ingestionRequestId": context.request_id,
+        "ingestedAt": _serialize_timestamp(now),
+        "expiresAt": ensure_utc_datetime(now + timedelta(days=TELEMETRY_RETENTION_DAYS)),
     }
 
 
@@ -175,7 +217,7 @@ def count_events_for_user(
         logger.exception(
             "telemetry.count.firestore_error",
             extra={
-                "user_id": user_id,
+                "user_hash": _build_user_hash(user_id),
                 "event_name": event_name,
                 "start_at": _serialize_timestamp(start_at),
                 "end_at": _serialize_timestamp(end_at),
@@ -214,8 +256,8 @@ def ingest_batch(
                     "event_id": event.eventId,
                     "event_name": event.name,
                     "reason": "event_not_allowed",
-                    "session_id": request.sessionId,
-                    "user_id": context.user_id,
+                    "session_id": event.sessionId or request.sessionId,
+                    "schema_version": event.schemaVersion,
                 },
             )
             continue
@@ -241,7 +283,7 @@ def ingest_batch(
         "telemetry.ingest.ok",
         extra={
             "session_id": request.sessionId,
-            "user_id": context.user_id,
+            "auth_user_hash": _build_user_hash(context.user_id) if context.user_id else None,
             "platform": request.app.platform,
             "app_version": request.app.appVersion,
             "events_total": len(request.events),
@@ -283,7 +325,7 @@ def get_daily_summary(
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "telemetry.summary.firestore_error",
-            extra={"user_id": user_id, "days": days},
+            extra={"user_hash": _build_user_hash(user_id), "days": days},
         )
         raise FirestoreServiceError("Failed to read telemetry summary.") from exc
 
@@ -356,7 +398,7 @@ def get_smart_reminder_summary(
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "telemetry.smart_reminder_summary.firestore_error",
-            extra={"user_id": user_id, "days": days},
+            extra={"user_hash": _build_user_hash(user_id), "days": days},
         )
         raise FirestoreServiceError("Failed to read smart reminder summary.") from exc
 

@@ -12,14 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MAX_SESSION_ID_LENGTH = 128
 MAX_EVENT_ID_LENGTH = 128
 MAX_EVENT_NAME_LENGTH = 64
+MAX_ACTOR_ID_LENGTH = 128
 MAX_PLATFORM_LENGTH = 32
 MAX_APP_VERSION_LENGTH = 40
 MAX_BUILD_LENGTH = 40
 MAX_LOCALE_LENGTH = 35
+MAX_TIMEZONE_LENGTH = 64
+MAX_REQUEST_ID_LENGTH = 128
 MAX_PROP_KEY_LENGTH = 40
 MAX_PROP_STRING_LENGTH = 200
 MAX_PROPS_JSON_LENGTH = 2_048
 MAX_BATCH_SIZE = 50
+CURRENT_TELEMETRY_SCHEMA_VERSION = 2
 
 ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
     {
@@ -354,17 +358,63 @@ class TelemetryDeviceContext(BaseModel):
         return value.strip()
 
 
+class TelemetryActorContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    userId: str | None = Field(default=None, min_length=1, max_length=MAX_ACTOR_ID_LENGTH)
+    anonymousId: str | None = Field(
+        default=None, min_length=1, max_length=MAX_ACTOR_ID_LENGTH
+    )
+
+    @field_validator("userId", "anonymousId", mode="before")
+    @classmethod
+    def normalize_actor_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_exactly_one_actor(self) -> "TelemetryActorContext":
+        if bool(self.userId) == bool(self.anonymousId):
+            raise ValueError("Telemetry actor requires exactly one identity")
+        return self
+
+
 class TelemetryEventInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     eventId: str = Field(min_length=1, max_length=MAX_EVENT_ID_LENGTH)
     name: str = Field(min_length=1, max_length=MAX_EVENT_NAME_LENGTH)
     ts: datetime
+    occurredAt: datetime | None = None
+    sessionId: str | None = Field(default=None, min_length=1, max_length=MAX_SESSION_ID_LENGTH)
+    actor: TelemetryActorContext | None = None
+    platform: str | None = Field(default=None, min_length=1, max_length=MAX_PLATFORM_LENGTH)
+    appVersion: str | None = Field(default=None, min_length=1, max_length=MAX_APP_VERSION_LENGTH)
+    build: str | None = Field(default=None, max_length=MAX_BUILD_LENGTH)
+    locale: str | None = Field(default=None, max_length=MAX_LOCALE_LENGTH)
+    timezone: str | None = Field(default=None, min_length=1, max_length=MAX_TIMEZONE_LENGTH)
+    tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
+    schemaVersion: int = Field(default=1, ge=1, le=CURRENT_TELEMETRY_SCHEMA_VERSION)
+    requestId: str | None = Field(default=None, max_length=MAX_REQUEST_ID_LENGTH)
     props: dict[str, Any] | None = None
 
-    @field_validator("eventId", "name", mode="before")
+    @field_validator(
+        "eventId",
+        "name",
+        "sessionId",
+        "platform",
+        "appVersion",
+        "build",
+        "locale",
+        "timezone",
+        "requestId",
+        mode="before",
+    )
     @classmethod
-    def normalize_required_strings(cls, value: str) -> str:
+    def normalize_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return value.strip()
 
     @field_validator("props")
@@ -415,6 +465,32 @@ class TelemetryEventInput(BaseModel):
             if not isinstance(value, str) or value not in allowed_values:
                 raise ValueError(
                     f"Telemetry property '{key}' has invalid value for event '{self.name}'"
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_identity_contract(self) -> "TelemetryEventInput":
+        if self.occurredAt is None:
+            self.occurredAt = self.ts
+
+        if self.schemaVersion >= CURRENT_TELEMETRY_SCHEMA_VERSION:
+            missing_fields = [
+                field_name
+                for field_name, value in (
+                    ("sessionId", self.sessionId),
+                    ("actor", self.actor),
+                    ("platform", self.platform),
+                    ("appVersion", self.appVersion),
+                    ("locale", self.locale),
+                    ("timezone", self.timezone),
+                )
+                if value is None
+            ]
+            if missing_fields:
+                raise ValueError(
+                    "Telemetry v2 event is missing required correlation fields: "
+                    + ", ".join(missing_fields)
                 )
 
         return self
