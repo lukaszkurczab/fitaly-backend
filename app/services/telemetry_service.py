@@ -44,6 +44,9 @@ from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
     CURRENT_TELEMETRY_SCHEMA_VERSION,
     SMART_REMINDER_EVENT_NAMES,
+    TELEMETRY_REJECTION_ACTOR_AUTH_MISMATCH,
+    TELEMETRY_REJECTION_EVENT_NOT_ALLOWED,
+    TELEMETRY_REJECTION_UNAUTHENTICATED_USER_ACTOR,
     SmartReminderDailyBucket,
     SmartReminderKindCount,
     SmartReminderOutcomeTotals,
@@ -144,6 +147,26 @@ def _resolve_actor(
     user_id = context.user_id
     user_hash = _build_user_hash(user_id) if user_id else None
     return user_id, user_hash, None, "legacy_authenticated" if user_id else "legacy_anonymous"
+
+
+def _get_actor_rejection_reason(
+    event: "TelemetryEventInput",
+    context: TelemetryRequestContext,
+) -> str | None:
+    if event.schemaVersion < CURRENT_TELEMETRY_SCHEMA_VERSION or event.actor is None:
+        return None
+
+    actor_user_id = event.actor.userId
+    if actor_user_id is None:
+        return None
+
+    if context.user_id is None:
+        return TELEMETRY_REJECTION_UNAUTHENTICATED_USER_ACTOR
+
+    if context.user_id != actor_user_id:
+        return TELEMETRY_REJECTION_ACTOR_AUTH_MISMATCH
+
+    return None
 
 
 def _build_document(
@@ -247,7 +270,7 @@ def ingest_batch(
                 RejectedTelemetryEvent(
                     eventId=event.eventId,
                     name=event.name,
-                    reason="event_not_allowed",
+                    reason=TELEMETRY_REJECTION_EVENT_NOT_ALLOWED,
                 )
             )
             logger.warning(
@@ -255,7 +278,28 @@ def ingest_batch(
                 extra={
                     "event_id": event.eventId,
                     "event_name": event.name,
-                    "reason": "event_not_allowed",
+                    "reason": TELEMETRY_REJECTION_EVENT_NOT_ALLOWED,
+                    "session_id": event.sessionId or request.sessionId,
+                    "schema_version": event.schemaVersion,
+                },
+            )
+            continue
+
+        actor_rejection_reason = _get_actor_rejection_reason(event, context)
+        if actor_rejection_reason is not None:
+            rejected_events.append(
+                RejectedTelemetryEvent(
+                    eventId=event.eventId,
+                    name=event.name,
+                    reason=actor_rejection_reason,
+                )
+            )
+            logger.warning(
+                "telemetry.ingest.rejected",
+                extra={
+                    "event_id": event.eventId,
+                    "event_name": event.name,
+                    "reason": actor_rejection_reason,
                     "session_id": event.sessionId or request.sessionId,
                     "schema_version": event.schemaVersion,
                 },

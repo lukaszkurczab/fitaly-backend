@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -270,7 +270,31 @@ def test_telemetry_batch_keeps_anonymous_events_distinct_after_login(
     assert stored_event["actorAuthValidation"] == "anonymous"
 
 
-def test_telemetry_batch_preserves_mixed_batch_event_actors_after_account_switch(
+def test_telemetry_batch_accepts_anonymous_event_without_auth(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload({"actor": {"anonymousId": "anon-1"}}),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 1
+    stored_event = firestore_client.storage["evt-1"]
+    assert stored_event["userId"] is None
+    assert stored_event["userHash"] is None
+    assert stored_event["anonymousId"] == "anon-1"
+    assert stored_event["actorType"] == "anonymous"
+    assert stored_event["actorAuthValidation"] == "anonymous"
+
+
+def test_telemetry_batch_rejects_mismatched_authenticated_actor(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
 ) -> None:
@@ -308,15 +332,53 @@ def test_telemetry_batch_preserves_mixed_batch_event_actors_after_account_switch
     )
 
     assert response.status_code == 202
-    assert response.json()["acceptedCount"] == 2
-    user_a_event = firestore_client.storage["evt-user-a"]
+    assert response.json() == {
+        "acceptedCount": 1,
+        "duplicateCount": 0,
+        "rejectedCount": 1,
+        "rejectedEvents": [
+            {
+                "eventId": "evt-user-a",
+                "name": "meal_logged",
+                "reason": "actor_auth_mismatch",
+            }
+        ],
+    }
+    assert "evt-user-a" not in firestore_client.storage
     user_b_event = firestore_client.storage["evt-user-b"]
-    assert user_a_event["userId"] == "user-a"
-    assert user_a_event["userHash"] == telemetry_service._build_user_hash("user-a")
-    assert user_a_event["actorAuthValidation"] == "mismatched"
     assert user_b_event["userId"] == "user-b"
     assert user_b_event["userHash"] == telemetry_service._build_user_hash("user-b")
     assert user_b_event["actorAuthValidation"] == "matched"
+
+
+def test_telemetry_batch_rejects_unauthenticated_user_actor(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload({"actor": {"userId": "user-123"}}),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 0,
+        "duplicateCount": 0,
+        "rejectedCount": 1,
+        "rejectedEvents": [
+            {
+                "eventId": "evt-1",
+                "name": "meal_logged",
+                "reason": "unauthenticated_user_actor",
+            }
+        ],
+    }
+    assert firestore_client.storage == {}
 
 
 def test_telemetry_batch_accepts_v1_payload_with_legacy_auth_ownership(
@@ -328,7 +390,7 @@ def test_telemetry_batch_accepts_v1_payload_with_legacy_auth_ownership(
     firestore_client = FakeFirestoreClient()
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
     client = create_test_client()
-    legacy_payload = {
+    legacy_payload: dict[str, Any] = {
         "sessionId": "sess-legacy",
         "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
         "device": {"locale": "pl-PL", "tzOffsetMin": 60},
@@ -437,11 +499,15 @@ def test_telemetry_batch_accepts_launch_kpi_events(mocker: MockerFixture) -> Non
             },
         ],
     }
-    for event in payload["events"]:
-        request_id = None
+    events = cast(list[dict[str, Any]], payload["events"])
+    for event in events:
+        request_id: str | None = None
         props = event.get("props")
-        if isinstance(props, dict) and isinstance(props.get("requestId"), str):
-            request_id = props["requestId"]
+        if isinstance(props, dict):
+            props_map = cast(dict[str, object], props)
+            request_id_value = props_map.get("requestId")
+            if isinstance(request_id_value, str):
+                request_id = request_id_value
         event.update(
             build_event_context(
                 event_id=str(event["eventId"]),

@@ -24,6 +24,16 @@ MAX_PROP_STRING_LENGTH = 200
 MAX_PROPS_JSON_LENGTH = 2_048
 MAX_BATCH_SIZE = 50
 CURRENT_TELEMETRY_SCHEMA_VERSION = 2
+TELEMETRY_REJECTION_EVENT_NOT_ALLOWED = "event_not_allowed"
+TELEMETRY_REJECTION_ACTOR_AUTH_MISMATCH = "actor_auth_mismatch"
+TELEMETRY_REJECTION_UNAUTHENTICATED_USER_ACTOR = "unauthenticated_user_actor"
+TELEMETRY_REJECTION_REASONS = frozenset(
+    {
+        TELEMETRY_REJECTION_EVENT_NOT_ALLOWED,
+        TELEMETRY_REJECTION_ACTOR_AUTH_MISMATCH,
+        TELEMETRY_REJECTION_UNAUTHENTICATED_USER_ACTOR,
+    }
+)
 
 ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
     {
@@ -516,6 +526,13 @@ class RejectedTelemetryEvent(BaseModel):
     eventId: str
     name: str
     reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        if value not in TELEMETRY_REJECTION_REASONS:
+            raise ValueError("Telemetry rejection reason is not allowed")
+        return value
 
 
 class TelemetryBatchIngestResponse(BaseModel):
