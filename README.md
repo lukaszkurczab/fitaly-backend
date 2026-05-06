@@ -42,9 +42,11 @@ README.md
 
 ## API Versioning Strategy
 
-- Keep existing contracts in `v1` stable (`/api/v1/...`).
-- Introduce breaking changes only in `v2` (`/api/v2/...`).
-- Add new `v2` endpoints in `app/api/v2/endpoints/*` and register them in `app/api/v2/router.py` without modifying `v1` handlers.
+- `v1` (`/api/v1/...`) is the current canonical public API surface while mobile uses it.
+- `v2` (`/api/v2/...`) is the next foundation/extension surface for new or breaking work.
+- Pre-launch, do not treat hidden fallbacks or compatibility layers as the launch strategy.
+- Add new `v2` endpoints in `app/api/v2/endpoints/*` and register them in `app/api/v2/router.py`.
+- Remove unused endpoints/routes before launch after confirming mobile does not use them.
 
 ## AI Architecture Boundary (v1 vs v2)
 
@@ -57,13 +59,13 @@ README.md
   - Thread projection reads: `GET /api/v2/users/me/chat/threads`, `GET /api/v2/users/me/chat/threads/{threadId}/messages`
   - Chat writes are only through `POST /api/v2/ai/chat/runs`.
   - Bounded persona/style profile is backend-owned from user profile `aiStyle`/`aiPersona` and normalized into `styleProfile`.
-- **Legacy AI v1 analysis (kept for compatibility)**
+- **Current canonical v1 analysis surface**
   - Route: `app/api/routes/ai.py` (photo/text meal analysis only)
   - Supporting services: `ai_gateway_service`, `ai_gateway_logger`, `openai_service`, `text_meal_service`
   - `openai_service` remains only for meal photo/text analysis helpers, not AI Chat runtime.
 - **Removed legacy chat v1**
   - Legacy v1 ask endpoint and its chat-only helper modules were removed.
-  - Reintroduction of chat compatibility aliases/patch points is disallowed.
+  - Reintroduction of chat aliases, hidden fallbacks, or compatibility patch points is disallowed.
 - Detailed v2 architecture note: [AI Chat v2 Architecture](./docs/ai-chat-v2-architecture.md)
 
 ## AI Chat v2 (Ready For Simulator)
@@ -161,7 +163,7 @@ Run type checking:
 
 The backend exposes two API versions:
 
-**v1 (stable)** — original endpoints, no feature flags:
+**v1 (current canonical public surface)**:
 
 - `GET /api/v1/health`
 - `GET /api/v1/version`
@@ -174,7 +176,7 @@ The backend exposes two API versions:
 - `GET /api/v1/users/me/meals/changes` — meal sync (paginated)
 - `POST /api/v1/logs/error` — client error forwarding
 
-**v2 (Foundation Sprint)**:
+**v2 (next foundation/extension surface)**:
 
 - `POST /api/v2/telemetry/events/batch` — telemetry ingest (requires `TELEMETRY_ENABLED=true`)
 - `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state
@@ -187,9 +189,9 @@ The backend exposes two API versions:
 
 - `GET /api/v2/users/me/coach?day=YYYY-MM-DD` — Coach Insights technical surface built on top of nutrition state + habit signals. No separate coach feature flag is planned.
 - `GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD` — Smart Reminders v1 decision surface. It returns backend reminder decision semantics (`send`, `suppress`, `noop`) for a local day. This is a decision API, not reminder delivery orchestration.
-- `GET/POST /api/v1/users/me/notifications/preferences` — active notification settings surface used by mobile canonical flow.
+- `GET/POST /api/v1/users/me/notifications/preferences` — active notification settings surface in the current mobile flow.
 
-Compatibility-only legacy notification endpoints remain under `/api/v1/users/me/notifications*` (`list/upsert/delete/reconcile-plan`) for older clients. They are deprecated and not part of the canonical Smart Reminders production path.
+The legacy `/api/v1/users/me/notifications*` routes (`list/upsert/delete/reconcile-plan`) are not part of the launch strategy and should stay removed unless mobile usage is explicitly confirmed.
 
 **Narrow telemetry allowlists**:
 
@@ -245,6 +247,8 @@ Every HTTP response includes `X-Request-ID`. Use it to correlate client failures
 ## Required Environment Variables
 
 Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. In `ENVIRONMENT=production`, startup now fails fast when critical integrations are missing or misconfigured (`CORS_ORIGINS`, `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, Firebase credentials).
+
+The canonical mobile to backend matrix for prod, smoke, and dev/local is [docs/runtime-config.md](./docs/runtime-config.md).
 
 | Variable                         | Required                      | Default                   | Purpose                                                        |
 | -------------------------------- | ----------------------------- | ------------------------- | -------------------------------------------------------------- |
@@ -376,7 +380,7 @@ Railway prod variable checklist:
 - `SENTRY_ENVIRONMENT=production`
 - `SENTRY_TRACES_SAMPLE_RATE=0.01`
 - Railway Health Check Path: `/api/v1/health`
-- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`, `TELEMETRY_ENABLED=true`
+- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_GATEWAY_ENABLED=true`, `TELEMETRY_ENABLED=true`
 
 Railway smoke variable checklist:
 
@@ -395,8 +399,8 @@ Railway smoke variable checklist:
 - `SENTRY_TRACES_SAMPLE_RATE=0`
 - Railway Health Check Path: `/api/v1/health`
 - For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
-- Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
-- Set `TELEMETRY_ENABLED=true` when smoke validates telemetry ingestion; otherwise it may stay `false` to keep the runtime quieter.
+- Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+- Keep `TELEMETRY_ENABLED=true` for launch-like smoke. If a smoke run intentionally disables telemetry, record it as rollback coverage and do not count it as production readiness evidence.
 
 Railway dashboard checklist:
 

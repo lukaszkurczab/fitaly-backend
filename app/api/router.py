@@ -6,11 +6,12 @@ from app.core.api_version import CURRENT_API_PREFIX, NEXT_API_PREFIX
 
 api_router = APIRouter()
 
-# Compatibility rule:
-# - Existing clients keep using CURRENT_API_PREFIX without behavior changes.
-# - Breaking response/path changes must go to NEXT_API_PREFIX.
+# Public API ownership rule:
+# - CURRENT_API_PREFIX is the current canonical public API surface while mobile uses it.
+# - NEXT_API_PREFIX is the next foundation/extension surface for new or breaking work.
+# - Pre-launch we do not ship hidden fallbacks or a compatibility layer as launch strategy.
 api_router.include_router(v1_router, prefix=CURRENT_API_PREFIX)
 
-# v2 router is mounted now as an extension point.
+# Remove unused routes before launch once mobile confirms they are not used.
 # Add new/changed endpoints in app/api/v2/endpoints/* and include them in v2/router.py.
 api_router.include_router(v2_router, prefix=NEXT_API_PREFIX)

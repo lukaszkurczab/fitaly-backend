@@ -1,9 +1,10 @@
 """Central registry for public API versioning.
 
-Migration plan to v2:
-- keep `v1` routes stable for existing clients;
-- introduce breaking changes only in `v2`;
-- run `v1` and `v2` in parallel until all clients migrate.
+Public ownership:
+- `v1` is the current canonical public API surface while mobile uses it;
+- `v2` is the next foundation/extension surface for new or breaking work;
+- pre-launch we do not rely on hidden fallbacks or compatibility layers as a launch strategy;
+- unused endpoints/routes should be removed before launch after confirming mobile does not use them.
 """
 
 from app.core.config import settings
