@@ -12,6 +12,10 @@ def _empty_allergies() -> list[str]:
     return []
 
 
+def _empty_style_profile() -> dict[str, str]:
+    return {}
+
+
 @dataclass(slots=True)
 class UserProfile:
     user_id: str
@@ -23,7 +27,7 @@ class UserProfile:
     language: str = "en"
     ai_persona: str = "calm_guide"
     ai_health_data_consent_at: str | None = None
-    style_profile: dict[str, str] = field(default_factory=dict)
+    style_profile: dict[str, str] = field(default_factory=_empty_style_profile)
     readiness_status: ReadinessStatus = "needs_profile"
     readiness_onboarding_completed_at: str | None = None
     readiness_ready_at: str | None = None

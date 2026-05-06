@@ -172,7 +172,10 @@ def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, A
     for key, value in patch.items():
         existing = merged.get(key)
         if isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge_dict(existing, cast(dict[str, Any], value))
+            merged[key] = _deep_merge_dict(
+                cast(dict[str, Any], existing),
+                cast(dict[str, Any], value),
+            )
         else:
             merged[key] = value
     return merged
@@ -529,7 +532,7 @@ async def record_ai_health_data_consent(
         )
         existing_readiness = canonical_profile.get("readiness")
         existing_readiness_document = (
-            dict(existing_readiness)
+            cast(dict[str, Any], existing_readiness)
             if isinstance(existing_readiness, dict)
             else {}
         )
@@ -539,7 +542,7 @@ async def record_ai_health_data_consent(
         has_completed_profile = isinstance(onboarding_completed_at, str) and bool(
             onboarding_completed_at.strip()
         )
-        next_readiness = {
+        next_readiness: dict[str, Any] = {
             "status": "ready" if has_completed_profile else "needs_profile",
             "onboardingCompletedAt": onboarding_completed_at
             if isinstance(onboarding_completed_at, str)

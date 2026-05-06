@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import cast
 
 
 def parse_target_kcal(raw_user: Mapping[str, object] | None) -> float:
@@ -8,10 +9,12 @@ def parse_target_kcal(raw_user: Mapping[str, object] | None) -> float:
     profile = raw_user.get("profile")
     if not isinstance(profile, Mapping):
         return 0.0
-    nutrition_profile = profile.get("nutritionProfile")
+    profile_document = cast(Mapping[str, object], profile)
+    nutrition_profile = profile_document.get("nutritionProfile")
     if not isinstance(nutrition_profile, Mapping):
         return 0.0
-    value = nutrition_profile.get("calorieTarget")
+    nutrition_profile_document = cast(Mapping[str, object], nutrition_profile)
+    value = nutrition_profile_document.get("calorieTarget")
     if isinstance(value, (int, float)):
         return float(value)
     return 0.0

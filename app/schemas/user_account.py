@@ -81,6 +81,18 @@ LanguageValue = Literal["en", "pl"]
 ReadinessStatusValue = Literal["needs_profile", "needs_ai_consent", "ready"]
 
 
+def _empty_preferences() -> list[PreferenceValue]:
+    return []
+
+
+def _empty_chronic_diseases() -> list[ChronicDiseaseValue]:
+    return []
+
+
+def _empty_allergies() -> list[AllergyValue]:
+    return []
+
+
 class UserReadinessRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -173,6 +185,7 @@ class UserProfilePatchRequest(BaseModel):
         return self
 
     def to_patch(self) -> dict[str, Any]:
+        assert self.profile is not None
         profile_patch = self.profile.to_editable_patch()
         return {"profile": profile_patch}
 
@@ -197,13 +210,13 @@ class UserOnboardingCompleteRequest(BaseModel):
     height: str = Field(max_length=8)
     heightInch: str | None = Field(default="", max_length=8)
     weight: str = Field(max_length=8)
-    preferences: list[PreferenceValue] = Field(default_factory=list)
+    preferences: list[PreferenceValue] = Field(default_factory=_empty_preferences)
     activityLevel: ActivityLevelValue
     goal: GoalValue
     calorieAdjustment: float | None = Field(default=None, ge=0.1, le=0.5)
-    chronicDiseases: list[ChronicDiseaseValue] = Field(default_factory=list)
+    chronicDiseases: list[ChronicDiseaseValue] = Field(default_factory=_empty_chronic_diseases)
     chronicDiseasesOther: str = Field(default="", max_length=120)
-    allergies: list[AllergyValue] = Field(default_factory=list)
+    allergies: list[AllergyValue] = Field(default_factory=_empty_allergies)
     allergiesOther: str = Field(default="", max_length=120)
     lifestyle: str = Field(default="", max_length=160)
     aiPersona: AiPersonaValue = "calm_guide"

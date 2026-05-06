@@ -99,7 +99,7 @@ def _normalize_readiness(raw: object) -> tuple[ReadinessStatus, str | None, str 
     status_raw = payload.get("status")
     status: ReadinessStatus
     if status_raw == "needs_ai_consent" or status_raw == "ready":
-        status = status_raw
+        status = cast(ReadinessStatus, status_raw)
     else:
         status = "needs_profile"
     onboarding_completed_at = payload.get("onboardingCompletedAt")

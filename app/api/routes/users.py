@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
@@ -21,6 +23,8 @@ from app.schemas.user_account import (
     UserProfilePatchRequest,
     UserProfileResponse,
     UserProfileUpdateResponse,
+    UserReadinessRequest,
+    ReadinessStatusValue,
 )
 from app.services import user_account_service
 from app.services.user_account_service import (
@@ -76,30 +80,35 @@ async def accept_ai_health_data_consent_me(
         auth_email=auth_email if isinstance(auth_email, str) else None,
     )
     canonical_profile = profile.get("profile")
-    profile_document = dict(canonical_profile) if isinstance(canonical_profile, dict) else {}
+    profile_document = (
+        cast(dict[str, Any], canonical_profile) if isinstance(canonical_profile, dict) else {}
+    )
     readiness = profile_document.get("readiness")
-    readiness_document = dict(readiness) if isinstance(readiness, dict) else {}
+    readiness_document = (
+        cast(dict[str, Any], readiness) if isinstance(readiness, dict) else {}
+    )
     readiness_status = readiness_document.get("status")
     if readiness_status not in {"needs_profile", "needs_ai_consent", "ready"}:
         readiness_status = "needs_profile"
+    readiness_status_text = cast(ReadinessStatusValue, readiness_status)
     consents = profile_document.get("consents")
-    consents_document = dict(consents) if isinstance(consents, dict) else {}
+    consents_document = cast(dict[str, Any], consents) if isinstance(consents, dict) else {}
     ai_consent_at = consents_document.get("aiHealthDataConsentAt")
+    onboarding_completed_at = readiness_document.get("onboardingCompletedAt")
+    ready_at = readiness_document.get("readyAt")
 
     return AiHealthDataConsentResponse(
         profile=profile,
         updated=True,
         consent=AiHealthDataConsentState(
             aiHealthDataConsentAt=ai_consent_at if isinstance(ai_consent_at, str) else None,
-            readiness={
-                "status": readiness_status,
-                "onboardingCompletedAt": readiness_document.get("onboardingCompletedAt")
-                if isinstance(readiness_document.get("onboardingCompletedAt"), str)
+            readiness=UserReadinessRequest(
+                status=readiness_status_text,
+                onboardingCompletedAt=onboarding_completed_at
+                if isinstance(onboarding_completed_at, str)
                 else None,
-                "readyAt": readiness_document.get("readyAt")
-                if isinstance(readiness_document.get("readyAt"), str)
-                else None,
-            },
+                readyAt=ready_at if isinstance(ready_at, str) else None,
+            ),
         ),
     )
 
