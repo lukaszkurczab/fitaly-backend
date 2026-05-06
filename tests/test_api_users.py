@@ -66,16 +66,17 @@ def test_get_user_profile_returns_backend_payload(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
 ) -> None:
+    canonical_profile = {"language": "pl"}
     get_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.get_user_profile_data",
-        return_value={"uid": "user-1", "username": "neo", "language": "pl"},
+        return_value={"uid": "user-1", "username": "neo", "profile": canonical_profile},
     )
 
     response = client.get("/api/v1/users/me/profile", headers=auth_headers("user-1"))
 
     assert response.status_code == 200
     assert response.json() == {
-        "profile": {"uid": "user-1", "username": "neo", "language": "pl"},
+        "profile": {"uid": "user-1", "username": "neo", "profile": canonical_profile},
     }
     get_user_profile_data.assert_called_once_with("user-1")
 
@@ -105,25 +106,26 @@ def test_post_user_profile_returns_updated_payload(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
 ) -> None:
+    canonical_profile = {"language": "pl"}
     upsert_user_profile_data = mocker.patch(
         "app.api.routes.users.user_account_service.upsert_user_profile_data",
-        return_value={"uid": "user-1", "username": "neo", "language": "pl"},
+        return_value={"uid": "user-1", "username": "neo", "profile": canonical_profile},
     )
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={"language": "pl"},
+        json={"profile": {"language": "pl"}},
         headers=auth_headers("user-1"),
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "profile": {"uid": "user-1", "username": "neo", "language": "pl"},
+        "profile": {"uid": "user-1", "username": "neo", "profile": canonical_profile},
         "updated": True,
     }
     upsert_user_profile_data.assert_called_once_with(
         "user-1",
-        {"language": "pl"},
+        {"profile": {"language": "pl"}},
         auth_email=None,
     )
 
@@ -179,7 +181,7 @@ def test_post_user_profile_returns_422_for_invalid_enum_value(
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={"unitsSystem": "si"},
+        json={"profile": {"nutritionProfile": {"unitsSystem": "si"}}},
         headers=auth_headers("user-1"),
     )
 

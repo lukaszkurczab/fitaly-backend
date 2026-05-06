@@ -179,7 +179,13 @@ def test_sync_streak_from_meals_rebuilds_streak_from_daily_meals(
     ]
     user_snapshot = mocker.Mock()
     user_snapshot.exists = True
-    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+    user_snapshot.to_dict.return_value = {
+        "profile": {
+            "nutritionProfile": {
+                "calorieTarget": 2000,
+            },
+        },
+    }
     user_ref.get.return_value = user_snapshot
     award_badges = mocker.patch(
         "app.services.streak_service._award_streak_badges",

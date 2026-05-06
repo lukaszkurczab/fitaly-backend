@@ -187,6 +187,7 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
                 readiness_status="ready",
                 readiness_onboarding_completed_at="2026-04-18T10:00:00Z",
                 readiness_ready_at="2026-04-19T10:00:00Z",
+                ai_health_data_consent_at="2026-04-19T10:00:00Z",
             )
         )  # type: ignore[arg-type]
     )
@@ -199,17 +200,26 @@ async def test_user_profile_service_reuses_user_account_profile_data(
     async def _fake_get_user_profile_data(user_id: str) -> dict[str, Any]:
         assert user_id == "user-1"
         return {
-            "goal": "gain",
-            "activityLevel": "high",
-            "calorieTarget": 2800,
-            "preferences": ["vegan"],
-            "allergies": ["soy"],
-            "language": "en-US",
-            "aiPersona": "focused_coach",
-            "readiness": {
-                "status": "ready",
-                "onboardingCompletedAt": "2026-04-10T10:00:00Z",
-                "readyAt": "2026-04-10T11:00:00Z",
+            "profile": {
+                "language": "en-US",
+                "nutritionProfile": {
+                    "goal": "gain",
+                    "activityLevel": "high",
+                    "calorieTarget": 2800,
+                    "preferences": ["vegan"],
+                    "allergies": ["soy"],
+                },
+                "aiPreferences": {
+                    "stylePersona": "focused_coach",
+                },
+                "consents": {
+                    "aiHealthDataConsentAt": "2026-04-10T11:00:00Z",
+                },
+                "readiness": {
+                    "status": "ready",
+                    "onboardingCompletedAt": "2026-04-10T10:00:00Z",
+                    "readyAt": "2026-04-10T11:00:00Z",
+                },
             },
         }
 
@@ -238,9 +248,15 @@ async def test_user_profile_service_bounds_future_ai_persona_to_allowlist(
     async def _fake_get_user_profile_data(user_id: str) -> dict[str, Any]:
         del user_id
         return {
-            "goal": "maintain",
-            "language": "pl",
-            "aiPersona": "Mediterranean Friend",
+            "profile": {
+                "language": "pl",
+                "nutritionProfile": {
+                    "goal": "maintain",
+                },
+                "aiPreferences": {
+                    "stylePersona": "Mediterranean Friend",
+                },
+            },
         }
 
     monkeypatch.setattr(

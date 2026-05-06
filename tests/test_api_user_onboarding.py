@@ -11,6 +11,10 @@ from app.services.user_account_service import (
 client = TestClient(app)
 
 
+def _canonical_profile(language: str = "pl") -> dict[str, object]:
+    return {"language": language}
+
+
 def test_post_user_onboarding_returns_backend_payload(
     mocker: MockerFixture,
 ) -> None:
@@ -26,7 +30,7 @@ def test_post_user_onboarding_returns_backend_payload(
                 "uid": "user-1",
                 "email": "user@example.com",
                 "username": "neo",
-                "language": "pl",
+                "profile": _canonical_profile("pl"),
                 "plan": "free",
             },
         ),
@@ -45,7 +49,7 @@ def test_post_user_onboarding_returns_backend_payload(
             "uid": "user-1",
             "email": "user@example.com",
             "username": "neo",
-            "language": "pl",
+            "profile": _canonical_profile("pl"),
             "plan": "free",
         },
         "updated": True,
@@ -73,7 +77,7 @@ def test_post_user_onboarding_repeated_same_uid_username_succeeds(
                 "uid": "user-1",
                 "email": "user@example.com",
                 "username": "neo",
-                "language": "pl",
+                "profile": _canonical_profile("pl"),
                 "plan": "free",
             },
         ),
@@ -122,7 +126,7 @@ def test_post_user_onboarding_same_username_other_uid_returns_409(
                 "uid": user_id,
                 "email": auth_email,
                 "username": username.strip().lower(),
-                "language": language or "en",
+                "profile": _canonical_profile(language or "en"),
                 "plan": "free",
             },
         )
@@ -164,7 +168,7 @@ def test_post_user_onboarding_same_uid_different_username_succeeds(
                     "uid": "user-1",
                     "email": "user@example.com",
                     "username": "neo",
-                    "language": "pl",
+                    "profile": _canonical_profile("pl"),
                     "plan": "free",
                 },
             ),
@@ -174,7 +178,7 @@ def test_post_user_onboarding_same_uid_different_username_succeeds(
                     "uid": "user-1",
                     "email": "user@example.com",
                     "username": "trinity",
-                    "language": "pl",
+                    "profile": _canonical_profile("pl"),
                     "plan": "free",
                 },
             ),

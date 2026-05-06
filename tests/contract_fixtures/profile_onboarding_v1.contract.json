@@ -12,90 +12,64 @@
       "plan",
       "createdAt",
       "lastLogin",
-      "unitsSystem",
-      "age",
-      "sex",
-      "height",
-      "heightInch",
-      "weight",
-      "preferences",
-      "activityLevel",
-      "goal",
-      "chronicDiseases",
-      "chronicDiseasesOther",
-      "allergies",
-      "allergiesOther",
-      "lifestyle",
-      "aiPersona",
-      "readiness",
-      "calorieTarget",
+      "profile",
       "syncState",
       "lastSyncedAt",
       "avatarUrl",
       "avatarLocalPath",
-      "avatarlastSyncedAt",
-      "language"
+      "avatarlastSyncedAt"
     ],
     "defaults": {
-      "unitsSystem": "metric",
-      "age": "",
-      "sex": "female",
-      "height": "",
-      "heightInch": "",
-      "weight": "",
-      "preferences": [],
-      "activityLevel": "moderate",
-      "goal": "maintain",
-      "chronicDiseases": [],
-      "chronicDiseasesOther": "",
-      "allergies": [],
-      "allergiesOther": "",
-      "lifestyle": "",
-      "aiPersona": "calm_guide",
-      "readiness": {
-        "status": "needs_profile",
-        "onboardingCompletedAt": null,
-        "readyAt": null
+      "profile": {
+        "language": "en",
+        "nutritionProfile": {
+          "unitsSystem": "metric",
+          "age": "",
+          "sex": "female",
+          "height": "",
+          "heightInch": "",
+          "weight": "",
+          "preferences": [],
+          "activityLevel": "moderate",
+          "goal": "maintain",
+          "chronicDiseases": [],
+          "chronicDiseasesOther": "",
+          "allergies": [],
+          "allergiesOther": "",
+          "lifestyle": "",
+          "calorieTarget": 0
+        },
+        "aiPreferences": {
+          "stylePersona": "calm_guide"
+        },
+        "consents": {
+          "aiHealthDataConsentAt": null
+        },
+        "readiness": {
+          "status": "needs_profile",
+          "onboardingCompletedAt": null,
+          "readyAt": null
+        }
       },
-      "calorieTarget": 0,
       "syncState": "pending",
       "lastSyncedAt": "",
       "avatarUrl": "",
       "avatarLocalPath": "",
-      "avatarlastSyncedAt": "",
-      "language": "en"
+      "avatarlastSyncedAt": ""
     }
   },
   "profilePatch": {
-    "editableFields": [
-      "unitsSystem",
-      "age",
-      "sex",
-      "height",
-      "heightInch",
-      "weight",
-      "preferences",
-      "activityLevel",
-      "goal",
-      "chronicDiseases",
-      "chronicDiseasesOther",
-      "allergies",
-      "allergiesOther",
-      "lifestyle",
-      "aiPersona",
-      "calorieTarget",
-      "language"
-    ]
+    "editableFields": ["profile"]
   },
   "criticalFieldGroups": {
-    "readiness": ["readiness"],
-    "language": ["language"],
-    "aiPersona": ["aiPersona"],
-    "aiStyle": ["aiPersona", "styleProfile"],
+    "readiness": ["profile.readiness"],
+    "language": ["profile.language"],
+    "aiPersona": ["profile.aiPreferences.stylePersona"],
+    "aiStyle": ["profile.aiPreferences.stylePersona", "styleProfile"],
     "nutrition": [
-      "goal",
-      "calorieTarget",
-      "preferences"
+      "profile.nutritionProfile.goal",
+      "profile.nutritionProfile.calorieTarget",
+      "profile.nutritionProfile.preferences"
     ]
   },
   "enums": {
@@ -138,7 +112,7 @@
       }
     },
     "readiness": {
-      "field": "readiness",
+      "field": "profile.readiness",
       "default": {
         "status": "needs_profile",
         "onboardingCompletedAt": null,

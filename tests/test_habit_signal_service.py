@@ -227,7 +227,7 @@ def test_meals_older_than_consistency_window_are_excluded() -> None:
 
 def test_kcal_adherence_and_under_target_ratio_use_valid_target() -> None:
     response = habit_signal_service.compute_habit_signals(
-        profile={"calorieTarget": 2000},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -281,7 +281,13 @@ def test_protein_hit_logic_marks_days_unknown_when_target_is_missing() -> None:
 
 def test_protein_hit_logic_uses_90_percent_of_target() -> None:
     response = habit_signal_service.compute_habit_signals(
-        profile={"macroTargets": {"proteinGrams": 100}},
+        profile={
+            "profile": {
+                "nutritionProfile": {
+                    "macroTargets": {"proteinGrams": 100},
+                },
+            },
+        },
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -340,7 +346,7 @@ def test_unknown_meal_details_counts_low_detail_and_low_confidence_days() -> Non
 
 def test_structurally_weak_meals_do_not_count_as_valid_logging_foundation() -> None:
     response = habit_signal_service.compute_habit_signals(
-        profile={"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -458,7 +464,7 @@ def test_timing_patterns_prefer_logged_at_local_min_when_present() -> None:
 
 def test_top_risk_and_coach_priority_prioritize_under_logging() -> None:
     response = habit_signal_service.compute_habit_signals(
-        profile={"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -495,7 +501,7 @@ def test_top_risk_and_coach_priority_detect_low_protein_consistency() -> None:
     ]
 
     response = habit_signal_service.compute_habit_signals(
-        profile={"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000, "macroTargets": {"proteinGrams": 100}}}},
         meals=meals,
         computed_at=COMPUTED_AT,
     )
@@ -507,7 +513,7 @@ def test_top_risk_and_coach_priority_detect_low_protein_consistency() -> None:
 def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFixture) -> None:
     user_snapshot = mocker.Mock()
     user_snapshot.exists = True
-    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+    user_snapshot.to_dict.return_value = {"profile": {"nutritionProfile": {"calorieTarget": 2000}}}
 
     meal_snapshot = mocker.Mock()
     meal_snapshot.to_dict.return_value = _meal(
@@ -547,7 +553,7 @@ def test_get_habit_signals_falls_back_when_index_is_missing(
 ) -> None:
     user_snapshot = mocker.Mock()
     user_snapshot.exists = True
-    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+    user_snapshot.to_dict.return_value = {"profile": {"nutritionProfile": {"calorieTarget": 2000}}}
 
     meal_snapshot = mocker.Mock()
     meal_snapshot.to_dict.return_value = _meal(
@@ -589,7 +595,7 @@ def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
 ) -> None:
     user_snapshot = mocker.Mock()
     user_snapshot.exists = True
-    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+    user_snapshot.to_dict.return_value = {"profile": {"nutritionProfile": {"calorieTarget": 2000}}}
 
     meal_snapshot = mocker.Mock()
     meal_snapshot.to_dict.return_value = _meal(

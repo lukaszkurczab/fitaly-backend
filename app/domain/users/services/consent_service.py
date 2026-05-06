@@ -11,7 +11,7 @@ class ConsentService:
         profile = await self.user_profile_service.get_profile(user_id=user_id)
         if profile is None:
             return False
-        return profile.is_ready
+        return profile.is_ready and profile.has_ai_health_data_consent
 
     async def ensure_ai_health_data_consent(self, *, user_id: str) -> None:
         has_consent = await self.has_ai_health_data_consent(user_id=user_id)

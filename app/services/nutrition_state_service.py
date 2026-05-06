@@ -202,15 +202,13 @@ def _load_bounded_meals(
 
 def _extract_macro_targets(profile: dict[str, Any] | None) -> dict[str, float | None]:
     profile_map = _as_object_map(profile) or {}
-    macro_map = _as_object_map(profile_map.get("macroTargets")) or {}
+    canonical_profile = _as_object_map(profile_map.get("profile")) or {}
+    nutrition_profile = _as_object_map(canonical_profile.get("nutritionProfile")) or {}
+    macro_map = _as_object_map(nutrition_profile.get("macroTargets")) or {}
 
     return {
-        "kcal": _coerce_target(profile_map.get("calorieTarget"))
-        or _coerce_target(profile_map.get("targetKcal")),
-        "protein": _coerce_target(profile_map.get("proteinTarget"))
-        or _coerce_target(profile_map.get("targetProtein"))
-        or _coerce_target(profile_map.get("proteinGoal"))
-        or _coerce_target(macro_map.get("proteinGrams"))
+        "kcal": _coerce_target(nutrition_profile.get("calorieTarget")),
+        "protein": _coerce_target(macro_map.get("proteinGrams"))
         or _coerce_target(macro_map.get("protein")),
         "carbs": _coerce_target(macro_map.get("carbsGrams"))
         or _coerce_target(macro_map.get("carbs")),

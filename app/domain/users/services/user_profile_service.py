@@ -26,9 +26,9 @@ def _normalize_list(value: object) -> list[str]:
 
 def _normalize_language(value: object) -> str:
     text = str(value or "").strip().lower()
-    if text.startswith("en"):
-        return "en"
-    return "pl"
+    if text == "pl" or text.startswith("pl-"):
+        return "pl"
+    return "en"
 
 
 def _normalize_int(value: object) -> int | None:
@@ -167,21 +167,44 @@ class UserProfileService:
 
     @staticmethod
     def _to_profile(*, user_id: str, raw: dict[str, Any]) -> UserProfile:
-        ai_persona = _normalize_ai_persona(raw.get("aiPersona"))
+        profile_raw = raw.get("profile")
+        profile = cast(dict[str, Any], profile_raw) if isinstance(profile_raw, dict) else {}
+        nutrition_raw = profile.get("nutritionProfile")
+        nutrition = (
+            cast(dict[str, Any], nutrition_raw) if isinstance(nutrition_raw, dict) else {}
+        )
+        ai_preferences_raw = profile.get("aiPreferences")
+        ai_preferences = (
+            cast(dict[str, Any], ai_preferences_raw)
+            if isinstance(ai_preferences_raw, dict)
+            else {}
+        )
+        consents_raw = profile.get("consents")
+        consents = (
+            cast(dict[str, Any], consents_raw) if isinstance(consents_raw, dict) else {}
+        )
+        ai_persona = _normalize_ai_persona(ai_preferences.get("stylePersona"))
         readiness_status, onboarding_completed_at, ready_at = _normalize_readiness(
-            raw.get("readiness")
+            profile.get("readiness")
+        )
+        ai_health_data_consent_at_raw = consents.get("aiHealthDataConsentAt")
+        ai_health_data_consent_at = (
+            str(ai_health_data_consent_at_raw).strip()
+            if ai_health_data_consent_at_raw is not None
+            else None
         )
         return UserProfile(
             user_id=user_id,
-            goal=str(raw.get("goal")).strip() if raw.get("goal") else None,
-            activity_level=str(raw.get("activityLevel")).strip()
-            if raw.get("activityLevel")
+            goal=str(nutrition.get("goal")).strip() if nutrition.get("goal") else None,
+            activity_level=str(nutrition.get("activityLevel")).strip()
+            if nutrition.get("activityLevel")
             else None,
-            calorie_target=_normalize_int(raw.get("calorieTarget")),
-            preferences=_normalize_list(raw.get("preferences")),
-            allergies=_normalize_list(raw.get("allergies")),
-            language=_normalize_language(raw.get("language")),
+            calorie_target=_normalize_int(nutrition.get("calorieTarget")),
+            preferences=_normalize_list(nutrition.get("preferences")),
+            allergies=_normalize_list(nutrition.get("allergies")),
+            language=_normalize_language(profile.get("language")),
             ai_persona=ai_persona,
+            ai_health_data_consent_at=ai_health_data_consent_at or None,
             style_profile=_style_profile(ai_persona),
             readiness_status=readiness_status,
             readiness_onboarding_completed_at=onboarding_completed_at,
@@ -196,26 +219,32 @@ class UserProfileService:
     ) -> dict[str, Any]:
         calorie_target = _calculate_calorie_target(payload)
         return {
-            "unitsSystem": payload.get("unitsSystem"),
-            "age": payload.get("age"),
-            "sex": payload.get("sex"),
-            "height": payload.get("height"),
-            "heightInch": payload.get("heightInch") or "",
-            "weight": payload.get("weight"),
-            "preferences": payload.get("preferences") or [],
-            "activityLevel": payload.get("activityLevel"),
-            "goal": payload.get("goal"),
-            "chronicDiseases": payload.get("chronicDiseases") or [],
-            "chronicDiseasesOther": payload.get("chronicDiseasesOther") or "",
-            "allergies": payload.get("allergies") or [],
-            "allergiesOther": payload.get("allergiesOther") or "",
-            "lifestyle": payload.get("lifestyle") or "",
-            "aiPersona": _normalize_ai_persona(payload.get("aiPersona")),
-            "calorieTarget": calorie_target,
-            "readiness": {
-                "status": "ready",
-                "onboardingCompletedAt": completed_at,
-                "readyAt": completed_at,
+            "profile": {
+                "nutritionProfile": {
+                    "unitsSystem": payload.get("unitsSystem"),
+                    "age": payload.get("age"),
+                    "sex": payload.get("sex"),
+                    "height": payload.get("height"),
+                    "heightInch": payload.get("heightInch") or "",
+                    "weight": payload.get("weight"),
+                    "preferences": payload.get("preferences") or [],
+                    "activityLevel": payload.get("activityLevel"),
+                    "goal": payload.get("goal"),
+                    "chronicDiseases": payload.get("chronicDiseases") or [],
+                    "chronicDiseasesOther": payload.get("chronicDiseasesOther") or "",
+                    "allergies": payload.get("allergies") or [],
+                    "allergiesOther": payload.get("allergiesOther") or "",
+                    "lifestyle": payload.get("lifestyle") or "",
+                    "calorieTarget": calorie_target,
+                },
+                "aiPreferences": {
+                    "stylePersona": _normalize_ai_persona(payload.get("aiPersona")),
+                },
+                "readiness": {
+                    "status": "needs_ai_consent",
+                    "onboardingCompletedAt": completed_at,
+                    "readyAt": None,
+                },
             },
         }
 

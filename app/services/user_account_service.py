@@ -54,24 +54,29 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
 MIN_USERNAME_LENGTH = 3
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
-        "unitsSystem",
-        "age",
-        "sex",
-        "height",
-        "heightInch",
-        "weight",
-        "preferences",
-        "activityLevel",
-        "goal",
-        "chronicDiseases",
-        "chronicDiseasesOther",
-        "allergies",
-        "allergiesOther",
-        "lifestyle",
-        "aiPersona",
-        "calorieTarget",
-        "language",
+        "profile",
     }
+)
+
+LEGACY_PROFILE_FIELDS = (
+    "unitsSystem",
+    "age",
+    "sex",
+    "height",
+    "heightInch",
+    "weight",
+    "preferences",
+    "activityLevel",
+    "goal",
+    "chronicDiseases",
+    "chronicDiseasesOther",
+    "allergies",
+    "allergiesOther",
+    "lifestyle",
+    "aiPersona",
+    "readiness",
+    "calorieTarget",
+    "language",
 )
 
 
@@ -128,6 +133,62 @@ def _utc_timestamp_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
+def _default_nutrition_profile() -> dict[str, Any]:
+    return {
+        "unitsSystem": "metric",
+        "age": "",
+        "sex": "female",
+        "height": "",
+        "heightInch": "",
+        "weight": "",
+        "preferences": [],
+        "activityLevel": "moderate",
+        "goal": "maintain",
+        "chronicDiseases": [],
+        "chronicDiseasesOther": "",
+        "allergies": [],
+        "allergiesOther": "",
+        "lifestyle": "",
+        "calorieTarget": 0,
+    }
+
+
+def _default_profile(normalized_language: str = "en") -> dict[str, Any]:
+    return {
+        "language": normalized_language,
+        "nutritionProfile": _default_nutrition_profile(),
+        "aiPreferences": {"stylePersona": "calm_guide"},
+        "consents": {"aiHealthDataConsentAt": None},
+        "readiness": {
+            "status": "needs_profile",
+            "onboardingCompletedAt": None,
+            "readyAt": None,
+        },
+    }
+
+
+def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dict(existing, cast(dict[str, Any], value))
+        else:
+            merged[key] = value
+    return merged
+
+
+def _legacy_delete_document() -> dict[str, Any]:
+    return {field: firestore.DELETE_FIELD for field in LEGACY_PROFILE_FIELDS}
+
+
+def _remove_legacy_fields(document: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(document)
+    for field in LEGACY_PROFILE_FIELDS:
+        cleaned.pop(field, None)
+    return cleaned
+
+
 def _build_onboarding_profile_document(
     *,
     user_id: str,
@@ -148,38 +209,18 @@ def _build_onboarding_profile_document(
     profile.setdefault("createdAt", now_ms)
     profile.setdefault("lastLogin", now_iso)
     profile.setdefault("plan", "free")
-    profile.setdefault("unitsSystem", "metric")
-    profile.setdefault("age", "")
-    profile.setdefault("sex", "female")
-    profile.setdefault("height", "")
-    profile.setdefault("heightInch", "")
-    profile.setdefault("weight", "")
-    profile.setdefault("preferences", [])
-    profile.setdefault("activityLevel", "moderate")
-    profile.setdefault("goal", "maintain")
-    profile.setdefault("chronicDiseases", [])
-    profile.setdefault("chronicDiseasesOther", "")
-    profile.setdefault("allergies", [])
-    profile.setdefault("allergiesOther", "")
-    profile.setdefault("lifestyle", "")
-    profile.setdefault("aiPersona", "calm_guide")
-    profile.setdefault(
-        "readiness",
-        {
-            "status": "needs_profile",
-            "onboardingCompletedAt": None,
-            "readyAt": None,
-        },
+    existing_profile = profile.get("profile")
+    profile["profile"] = _deep_merge_dict(
+        _default_profile(normalized_language),
+        cast(dict[str, Any], existing_profile) if isinstance(existing_profile, dict) else {},
     )
-    profile.setdefault("calorieTarget", 0)
     profile.setdefault("syncState", "pending")
     profile.setdefault("lastSyncedAt", "")
     profile.setdefault("avatarUrl", "")
     profile.setdefault("avatarLocalPath", "")
     profile.setdefault("avatarlastSyncedAt", "")
-    profile.setdefault("language", normalized_language)
 
-    return profile
+    return _remove_legacy_fields(profile)
 
 
 @firestore.transactional
@@ -218,7 +259,11 @@ def _initialize_onboarding_profile_transaction(
     )
 
     transaction.set(username_ref, {"uid": user_id}, merge=True)
-    transaction.set(user_ref, profile_document, merge=True)
+    transaction.set(
+        user_ref,
+        {**_legacy_delete_document(), **profile_document},
+        merge=True,
+    )
 
     if previous_username and previous_username != normalized_username:
         transaction.delete(usernames_collection.document(previous_username))
@@ -232,7 +277,11 @@ def _sanitize_profile_patch(payload: dict[str, Any]) -> dict[str, Any]:
         joined = ", ".join(invalid_keys)
         raise UserProfileValidationError(f"Forbidden profile fields: {joined}")
 
-    return dict(payload)
+    patch = dict(payload)
+    profile = patch.get("profile")
+    if profile is not None and not isinstance(profile, dict):
+        raise UserProfileValidationError("Profile payload must be an object.")
+    return patch
 
 
 async def set_email_pending(user_id: str, email: str) -> str:
@@ -343,7 +392,7 @@ async def upsert_user_profile_data(
         snapshot = user_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
 
-        document: dict[str, Any] = {"uid": user_id}
+        document: dict[str, Any] = {**_legacy_delete_document(), "uid": user_id}
         normalized_email = normalize_email(auth_email)
         if normalized_email:
             document["email"] = normalized_email
@@ -356,7 +405,16 @@ async def upsert_user_profile_data(
         if "lastLogin" not in existing:
             document["lastLogin"] = _utc_timestamp()
 
-        document.update(sanitized_patch)
+        if sanitized_patch:
+            existing_profile = existing.get("profile")
+            patch_profile = sanitized_patch.get("profile")
+            if isinstance(patch_profile, dict):
+                document["profile"] = _deep_merge_dict(
+                    cast(dict[str, Any], existing_profile)
+                    if isinstance(existing_profile, dict)
+                    else _default_profile(),
+                    cast(dict[str, Any], patch_profile),
+                )
         user_ref.set(document, merge=True)
     except UserProfileValidationError:
         raise
@@ -367,10 +425,21 @@ async def upsert_user_profile_data(
         )
         raise FirestoreServiceError("Failed to upsert user profile data.") from exc
 
-    merged = dict(existing)
-    merged.update(document)
+    merged = _remove_legacy_fields(dict(existing))
+    merged.update(
+        {
+            key: value
+            for key, value in document.items()
+            if value is not firestore.DELETE_FIELD
+        }
+    )
 
-    if "calorieTarget" in sanitized_patch:
+    nutrition_patch = (
+        sanitized_patch.get("profile", {}).get("nutritionProfile")
+        if isinstance(sanitized_patch.get("profile"), dict)
+        else None
+    )
+    if isinstance(nutrition_patch, dict) and "calorieTarget" in nutrition_patch:
         await streak_service.sync_streak_from_meals(user_id)
 
     return merged
@@ -393,12 +462,19 @@ async def complete_onboarding_profile(
             raise OnboardingValidationError("Onboarding profile must be initialized.")
 
         now_iso = _utc_timestamp()
+        existing_profile = existing.get("profile")
+        patch_profile = profile_patch.get("profile")
+        canonical_profile = _deep_merge_dict(
+            cast(dict[str, Any], existing_profile)
+            if isinstance(existing_profile, dict)
+            else _default_profile(),
+            cast(dict[str, Any], patch_profile) if isinstance(patch_profile, dict) else {},
+        )
         document: dict[str, Any] = {
+            **_legacy_delete_document(),
             "uid": user_id,
             "lastLogin": now_iso,
-            "calorieDeficit": firestore.DELETE_FIELD,
-            "calorieSurplus": firestore.DELETE_FIELD,
-            **profile_patch,
+            "profile": canonical_profile,
         }
         normalized_email = normalize_email(auth_email)
         if normalized_email:
@@ -409,8 +485,6 @@ async def complete_onboarding_profile(
             document["plan"] = "free"
         if "syncState" not in existing:
             document["syncState"] = "pending"
-        if "language" not in existing:
-            document["language"] = "en"
 
         user_ref.set(document, merge=True)
     except OnboardingValidationError:
@@ -422,7 +496,7 @@ async def complete_onboarding_profile(
         )
         raise FirestoreServiceError("Failed to complete onboarding profile.") from exc
 
-    merged = dict(existing)
+    merged = _remove_legacy_fields(dict(existing))
     merged.update(
         {
             key: value
@@ -430,8 +504,6 @@ async def complete_onboarding_profile(
             if value is not firestore.DELETE_FIELD
         }
     )
-    merged.pop("calorieDeficit", None)
-    merged.pop("calorieSurplus", None)
     await streak_service.sync_streak_from_meals(user_id)
     return merged
 
@@ -449,21 +521,46 @@ async def record_ai_health_data_consent(
         snapshot = user_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
 
-        existing_readiness = existing.get("readiness")
+        existing_profile = existing.get("profile")
+        canonical_profile = (
+            cast(dict[str, Any], existing_profile)
+            if isinstance(existing_profile, dict)
+            else _default_profile()
+        )
+        existing_readiness = canonical_profile.get("readiness")
         existing_readiness_document = (
             dict(existing_readiness)
             if isinstance(existing_readiness, dict)
             else {}
         )
-        document: dict[str, Any] = {
-            "uid": user_id,
-            "readiness": {
-                "status": "ready",
-                "onboardingCompletedAt": existing_readiness_document.get(
-                    "onboardingCompletedAt"
-                ),
-                "readyAt": consent_at,
+        onboarding_completed_at = existing_readiness_document.get(
+            "onboardingCompletedAt"
+        )
+        has_completed_profile = isinstance(onboarding_completed_at, str) and bool(
+            onboarding_completed_at.strip()
+        )
+        next_readiness = {
+            "status": "ready" if has_completed_profile else "needs_profile",
+            "onboardingCompletedAt": onboarding_completed_at
+            if isinstance(onboarding_completed_at, str)
+            else None,
+            "readyAt": consent_at if has_completed_profile else None,
+        }
+        canonical_profile = _deep_merge_dict(
+            _default_profile(),
+            canonical_profile,
+        )
+        canonical_profile = _deep_merge_dict(
+            canonical_profile,
+            {
+                "consents": {"aiHealthDataConsentAt": consent_at},
+                "readiness": next_readiness,
             },
+        )
+        document: dict[str, Any] = {
+            **_legacy_delete_document(),
+            "uid": user_id,
+            "profile": canonical_profile,
         }
         normalized_email = normalize_email(auth_email)
         if normalized_email:
@@ -485,8 +582,14 @@ async def record_ai_health_data_consent(
         )
         raise FirestoreServiceError("Failed to record AI health data consent.") from exc
 
-    merged = dict(existing)
-    merged.update(document)
+    merged = _remove_legacy_fields(dict(existing))
+    merged.update(
+        {
+            key: value
+            for key, value in document.items()
+            if value is not firestore.DELETE_FIELD
+        }
+    )
     return merged
 
 

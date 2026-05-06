@@ -278,12 +278,13 @@ def _extract_protein_target(raw_user: dict[str, Any] | None) -> float | None:
     if not isinstance(raw_user, dict):
         return None
 
-    for key in ("proteinTarget", "targetProtein", "proteinGoal"):
-        value = raw_user.get(key)
-        if isinstance(value, (int, float)) and float(value) > 0:
-            return float(value)
-
-    macro_targets = _as_object_map(raw_user.get("macroTargets"))
+    profile = _as_object_map(raw_user.get("profile"))
+    nutrition_profile = _as_object_map(profile.get("nutritionProfile")) if profile else None
+    macro_targets = (
+        _as_object_map(nutrition_profile.get("macroTargets"))
+        if nutrition_profile
+        else None
+    )
     if macro_targets is not None:
         for key in ("proteinGrams", "protein"):
             value = macro_targets.get(key)

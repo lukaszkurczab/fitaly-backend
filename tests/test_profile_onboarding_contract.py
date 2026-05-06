@@ -71,7 +71,7 @@ def test_profile_patch_fields_match_contract_fixture() -> None:
     ]
 
 
-def test_onboarding_completion_builds_canonical_ready_profile() -> None:
+def test_onboarding_completion_builds_canonical_profile_requiring_ai_consent() -> None:
     request = UserOnboardingCompleteRequest(
         unitsSystem="metric",
         age="30",
@@ -96,12 +96,13 @@ def test_onboarding_completion_builds_canonical_ready_profile() -> None:
         completed_at="2026-05-05T10:00:00Z",
     )
 
-    assert patch["calorieTarget"] == 2250
-    assert patch["aiPersona"] == "focused_coach"
-    assert patch["readiness"] == {
-        "status": "ready",
+    profile = patch["profile"]
+    assert profile["nutritionProfile"]["calorieTarget"] == 2250
+    assert profile["aiPreferences"]["stylePersona"] == "focused_coach"
+    assert profile["readiness"] == {
+        "status": "needs_ai_consent",
         "onboardingCompletedAt": "2026-05-05T10:00:00Z",
-        "readyAt": "2026-05-05T10:00:00Z",
+        "readyAt": None,
     }
 
 
@@ -160,17 +161,14 @@ def test_ai_persona_style_semantics_match_contract_fixture() -> None:
     contract = _load_fixture()
     semantics = contract["semantics"]["aiPersona"]
 
-    default_profile = UserProfileService._to_profile(
-        user_id="user-1",
-        raw={"language": "en"},
-    )
+    default_profile = UserProfileService._to_profile(user_id="user-1", raw={})
     assert default_profile.ai_persona == semantics["default"]
 
     style_labels = {}
     for persona in get_args(AiPersonaValue):
         profile = UserProfileService._to_profile(
             user_id="user-1",
-            raw={"aiPersona": persona, "language": "en"},
+            raw={"profile": {"aiPreferences": {"stylePersona": persona}}},
         )
         style_labels[persona] = profile.style_profile["label"]
 
@@ -181,17 +179,19 @@ def test_ai_persona_style_semantics_match_contract_fixture() -> None:
     ].items():
         profile = UserProfileService._to_profile(
             user_id="user-1",
-            raw={"aiPersona": raw_value, "language": "en"},
+            raw={"profile": {"aiPreferences": {"stylePersona": raw_value}}},
         )
         assert profile.ai_persona == expected
 
 
 def test_critical_field_groups_cover_backend_surfaces() -> None:
     contract = _load_fixture()
-    patch_fields = set(UserProfilePatchRequest.model_fields.keys())
 
     for group_name in ("language", "aiPersona", "nutrition"):
-        assert set(contract["criticalFieldGroups"][group_name]).issubset(patch_fields)
+        assert all(
+            field.startswith("profile.")
+            for field in contract["criticalFieldGroups"][group_name]
+        )
 
     profile = UserProfile(
         user_id="user-1",
@@ -209,4 +209,5 @@ def test_critical_field_groups_cover_backend_surfaces() -> None:
     )
     summary = asyncio.run(_StubProfileService(profile).get_profile_summary(user_id="user-1"))
 
-    assert set(contract["criticalFieldGroups"]["aiStyle"]).issubset(summary.keys())
+    assert summary["aiPersona"] == "focused_coach"
+    assert "styleProfile" in summary

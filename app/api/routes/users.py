@@ -75,23 +75,31 @@ async def accept_ai_health_data_consent_me(
         user_id=current_user.uid,
         auth_email=auth_email if isinstance(auth_email, str) else None,
     )
-    readiness = profile.get("readiness")
+    canonical_profile = profile.get("profile")
+    profile_document = dict(canonical_profile) if isinstance(canonical_profile, dict) else {}
+    readiness = profile_document.get("readiness")
     readiness_document = dict(readiness) if isinstance(readiness, dict) else {}
     readiness_status = readiness_document.get("status")
     if readiness_status not in {"needs_profile", "needs_ai_consent", "ready"}:
         readiness_status = "needs_profile"
+    consents = profile_document.get("consents")
+    consents_document = dict(consents) if isinstance(consents, dict) else {}
+    ai_consent_at = consents_document.get("aiHealthDataConsentAt")
 
     return AiHealthDataConsentResponse(
         profile=profile,
         updated=True,
         consent=AiHealthDataConsentState(
-            status=readiness_status,
-            onboardingCompletedAt=readiness_document.get("onboardingCompletedAt")
-            if isinstance(readiness_document.get("onboardingCompletedAt"), str)
-            else None,
-            readyAt=readiness_document.get("readyAt")
-            if isinstance(readiness_document.get("readyAt"), str)
-            else None,
+            aiHealthDataConsentAt=ai_consent_at if isinstance(ai_consent_at, str) else None,
+            readiness={
+                "status": readiness_status,
+                "onboardingCompletedAt": readiness_document.get("onboardingCompletedAt")
+                if isinstance(readiness_document.get("onboardingCompletedAt"), str)
+                else None,
+                "readyAt": readiness_document.get("readyAt")
+                if isinstance(readiness_document.get("readyAt"), str)
+                else None,
+            },
         ),
     )
 

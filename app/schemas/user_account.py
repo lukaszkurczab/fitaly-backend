@@ -89,7 +89,7 @@ class UserReadinessRequest(BaseModel):
     readyAt: str | None = Field(default=None, max_length=64)
 
 
-class UserProfilePatchRequest(BaseModel):
+class UserNutritionProfileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     unitsSystem: UnitsSystemValue | None = Field(default=None)
@@ -106,9 +106,7 @@ class UserProfilePatchRequest(BaseModel):
     allergies: list[AllergyValue] | None = Field(default=None)
     allergiesOther: str | None = Field(default=None, max_length=120)
     lifestyle: str | None = Field(default=None, max_length=160)
-    aiPersona: AiPersonaValue | None = Field(default=None)
     calorieTarget: int | None = Field(default=None, ge=0, le=10000)
-    language: LanguageValue | None = Field(default=None)
 
     @field_validator("preferences", "chronicDiseases", "allergies")
     @classmethod
@@ -124,14 +122,59 @@ class UserProfilePatchRequest(BaseModel):
             raise ValueError("Too many items in profile list field.")
         return deduped
 
+
+class UserAiPreferencesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stylePersona: AiPersonaValue | None = Field(default=None)
+
+
+class UserConsentsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aiHealthDataConsentAt: str | None = Field(default=None, max_length=64)
+
+
+class UserCanonicalProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: LanguageValue | None = Field(default=None)
+    nutritionProfile: UserNutritionProfileRequest | None = Field(default=None)
+    aiPreferences: UserAiPreferencesRequest | None = Field(default=None)
+    consents: UserConsentsRequest | None = Field(default=None)
+    readiness: UserReadinessRequest | None = Field(default=None)
+
+    def to_editable_patch(self) -> dict[str, Any]:
+        profile: dict[str, Any] = {}
+        if self.language is not None:
+            profile["language"] = self.language
+        if self.nutritionProfile is not None:
+            nutrition_patch = self.nutritionProfile.model_dump(exclude_unset=True)
+            if nutrition_patch:
+                profile["nutritionProfile"] = nutrition_patch
+        if self.aiPreferences is not None:
+            ai_preferences_patch = self.aiPreferences.model_dump(exclude_unset=True)
+            if ai_preferences_patch:
+                profile["aiPreferences"] = ai_preferences_patch
+        return profile
+
+
+class UserProfilePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile: UserCanonicalProfileRequest | None = Field(default=None)
+
     @model_validator(mode="after")
     def _ensure_non_empty_patch(self) -> "UserProfilePatchRequest":
         if not self.model_fields_set:
             raise ValueError("Profile patch payload must not be empty.")
+        if self.profile is None or not self.profile.to_editable_patch():
+            raise ValueError("Profile patch payload has no editable canonical fields.")
         return self
 
     def to_patch(self) -> dict[str, Any]:
-        return self.model_dump(exclude_unset=True)
+        profile_patch = self.profile.to_editable_patch()
+        return {"profile": profile_patch}
 
 
 class UserOnboardingRequest(BaseModel):
@@ -222,9 +265,8 @@ class AiHealthDataConsentRequest(BaseModel):
 
 
 class AiHealthDataConsentState(BaseModel):
-    status: ReadinessStatusValue
-    onboardingCompletedAt: str | None = None
-    readyAt: str | None = None
+    aiHealthDataConsentAt: str | None = None
+    readiness: UserReadinessRequest
 
 
 class AiHealthDataConsentResponse(UserProfileResponse):

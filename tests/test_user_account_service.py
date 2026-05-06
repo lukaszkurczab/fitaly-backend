@@ -384,28 +384,25 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     profile = asyncio.run(
         user_account_service.upsert_user_profile_data(
             "user-1",
-            {"language": "pl"},
+            {"profile": {"language": "pl"}},
             auth_email="user-1@example.com",
         )
     )
 
     users_collection_ref.document.assert_called_once_with("user-1")
-    user_ref.set.assert_called_once_with(
-        {
-            "uid": "user-1",
-            "email": "user-1@example.com",
-            "createdAt": ANY,
-            "plan": "free",
-            "syncState": "pending",
-            "lastLogin": ANY,
-            "language": "pl",
-        },
-        merge=True,
-    )
+    document = user_ref.set.call_args.args[0]
+    assert user_ref.set.call_args.kwargs == {"merge": True}
+    assert document["uid"] == "user-1"
+    assert document["email"] == "user-1@example.com"
+    assert document["createdAt"] == ANY
+    assert document["plan"] == "free"
+    assert document["syncState"] == "pending"
+    assert document["lastLogin"] == ANY
+    assert document["profile"]["language"] == "pl"
     assert profile["uid"] == "user-1"
     assert profile["email"] == "user-1@example.com"
     assert profile["username"] == "neo"
-    assert profile["language"] == "pl"
+    assert profile["profile"]["language"] == "pl"
     sync_streak.assert_not_called()
 
 
@@ -418,7 +415,14 @@ def test_upsert_user_profile_data_recomputes_streak_when_calorie_target_changes(
     user_ref.get.return_value = _build_snapshot(
         mocker,
         exists=True,
-        data={"username": "neo", "calorieTarget": 2000},
+        data={
+            "username": "neo",
+            "profile": {
+                "nutritionProfile": {
+                    "calorieTarget": 2000,
+                },
+            },
+        },
     )
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.user_account_service.streak_service.sync_streak_from_meals")
@@ -426,12 +430,12 @@ def test_upsert_user_profile_data_recomputes_streak_when_calorie_target_changes(
     profile = asyncio.run(
         user_account_service.upsert_user_profile_data(
             "user-1",
-            {"calorieTarget": 1800},
+            {"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
             auth_email="user-1@example.com",
         )
     )
 
-    assert profile["calorieTarget"] == 1800
+    assert profile["profile"]["nutritionProfile"]["calorieTarget"] == 1800
     sync_streak.assert_called_once_with("user-1")
 
 
@@ -487,7 +491,7 @@ def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
     assert profile["uid"] == "user-1"
     assert profile["username"] == "neo"
     assert profile["email"] == "user@example.com"
-    assert profile["language"] == "pl"
+    assert profile["profile"]["language"] == "pl"
     assert any(
         call[0] is username_ref and call[1] == {"uid": "user-1"} and call[2] is True
         for call in transaction.set_calls

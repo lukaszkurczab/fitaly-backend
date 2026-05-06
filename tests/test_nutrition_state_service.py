@@ -185,8 +185,16 @@ def _mock_firestore(
 
 def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
     profile: dict[str, Any] = {
-        "calorieTarget": 2000,
-        "macroTargets": {"proteinGrams": 120, "carbsGrams": 220, "fatGrams": 70},
+        "profile": {
+            "nutritionProfile": {
+                "calorieTarget": 2000,
+                "macroTargets": {
+                    "proteinGrams": 120,
+                    "carbsGrams": 220,
+                    "fatGrams": 70,
+                },
+            },
+        },
     }
     meals = [
         _meal(
@@ -293,7 +301,7 @@ def test_get_nutrition_state_happy_path(mocker: MockerFixture) -> None:
 def test_get_nutrition_state_returns_empty_day_defaults(mocker: MockerFixture) -> None:
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="old-1",
@@ -388,7 +396,7 @@ def test_get_nutrition_state_degrades_gracefully_for_subservices(
 ) -> None:
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -456,7 +464,7 @@ def test_get_nutrition_state_marks_habits_disabled_when_feature_is_disabled(
 ) -> None:
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -503,7 +511,7 @@ def test_get_nutrition_state_uses_deterministic_default_day_handling(
     Meals without dayKey fall back to timestamp-based day derivation."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -542,7 +550,7 @@ def test_get_nutrition_state_excludes_deleted_meals(mocker: MockerFixture) -> No
     """Deleted meals should not contribute to consumed macros or quality."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 2000},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000}}},
         meals=[
             _meal(
                 meal_id="active-1",
@@ -591,7 +599,7 @@ def test_get_nutrition_state_uses_bounded_queries(mocker: MockerFixture) -> None
     instead of unbounded .stream()."""
     client, meals_collection = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -649,7 +657,7 @@ def test_get_nutrition_state_falls_back_when_index_is_missing(
 ) -> None:
     client, meals_collection = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -693,7 +701,7 @@ def test_get_nutrition_state_falls_back_when_index_fails_during_iteration(
 ) -> None:
     client, meals_collection = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1800},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
         meals=[
             _meal(
                 meal_id="meal-1",
@@ -734,7 +742,7 @@ def test_only_requested_day_contributes_to_consumed(mocker: MockerFixture) -> No
     the consumed/remaining/quality for the requested day."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 2000},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000}}},
         meals=[
             _meal(
                 meal_id="today-1",
@@ -790,7 +798,7 @@ def test_streak_reads_from_document(mocker: MockerFixture) -> None:
     from meal history."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 2000},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000}}},
         meals=[],
         streak={"current": 42, "lastDate": "2026-03-17"},
     )
@@ -822,7 +830,7 @@ def test_remaining_clamps_overshoot_to_zero(mocker: MockerFixture) -> None:
     """When consumed > target, remaining should be clamped to 0, not negative."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 1500, "macroTargets": {"proteinGrams": 80}},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 1500, "macroTargets": {"proteinGrams": 80}}}},
         meals=[
             _meal(
                 meal_id="big-meal",
@@ -883,7 +891,7 @@ def test_response_contains_all_top_level_fields(mocker: MockerFixture) -> None:
     """Verify the response shape has not regressed — all canonical top-level fields present."""
     client, _ = _mock_firestore(
         mocker,
-        profile={"calorieTarget": 2000},
+        profile={"profile": {"nutritionProfile": {"calorieTarget": 2000}}},
         meals=[],
     )
     mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
