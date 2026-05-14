@@ -105,6 +105,8 @@ ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
     {
         "billing_unavailable",
         "billing_not_initialized",
+        "rc_not_configured",
+        "no_active_entitlement",
         "entitlement_inactive",
         "login_failed",
         "network",
@@ -113,6 +115,9 @@ ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
         "sign_in_required",
         "store_problem",
         "sync_tier_failed",
+        "access_unknown_degraded",
+        "credits_missing",
+        "uid_mismatch",
         "credits_not_premium",
         "unknown",
     }

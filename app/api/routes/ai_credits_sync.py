@@ -128,6 +128,10 @@ def _build_sync_event_id(
 async def _fetch_revenuecat_subscriber(user_id: str) -> dict[str, object]:
     api_key = settings.REVENUECAT_API_KEY.strip()
     if not api_key:
+        logger.warning(
+            "revenuecat_sync_tier_failed",
+            extra={"user_id": user_id, "reason": "rc_not_configured"},
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="RevenueCat API key is not configured",
@@ -141,6 +145,10 @@ async def _fetch_revenuecat_subscriber(user_id: str) -> dict[str, object]:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
+        logger.warning(
+            "revenuecat_sync_tier_failed",
+            extra={"user_id": user_id, "reason": "sync_tier_failed"},
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="RevenueCat sync unavailable",
@@ -149,6 +157,14 @@ async def _fetch_revenuecat_subscriber(user_id: str) -> dict[str, object]:
     if response.status_code == status.HTTP_404_NOT_FOUND:
         return {"subscriber": {"entitlements": {}}}
     if response.status_code >= status.HTTP_400_BAD_REQUEST:
+        logger.warning(
+            "revenuecat_sync_tier_failed",
+            extra={
+                "user_id": user_id,
+                "reason": "sync_tier_failed",
+                "status_code": response.status_code,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="RevenueCat sync unavailable",
@@ -157,12 +173,20 @@ async def _fetch_revenuecat_subscriber(user_id: str) -> dict[str, object]:
     try:
         payload_raw = response.json()
     except ValueError as exc:
+        logger.warning(
+            "revenuecat_sync_tier_failed",
+            extra={"user_id": user_id, "reason": "invalid_revenuecat_response"},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Invalid RevenueCat response",
         ) from exc
     payload = _as_object_map(payload_raw)
     if payload is None:
+        logger.warning(
+            "revenuecat_sync_tier_failed",
+            extra={"user_id": user_id, "reason": "invalid_revenuecat_response"},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Invalid RevenueCat response",
