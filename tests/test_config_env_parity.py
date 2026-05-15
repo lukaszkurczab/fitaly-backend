@@ -35,10 +35,14 @@ def test_all_settings_are_documented_in_env_example() -> None:
     assert settings_vars - env_vars == set()
 
 
+def _settings_from_runtime_env_label(environment: str) -> Settings:
+    return Settings.model_validate({"ENVIRONMENT": environment})
+
+
 def test_environment_accepts_railway_environment_labels() -> None:
-    assert Settings(ENVIRONMENT="prod").ENVIRONMENT == "production"
-    assert Settings(ENVIRONMENT="smoke").ENVIRONMENT == "production"
+    assert _settings_from_runtime_env_label("prod").ENVIRONMENT == "production"
+    assert _settings_from_runtime_env_label("smoke").ENVIRONMENT == "production"
 
 
 def test_environment_accepts_dev_alias() -> None:
-    assert Settings(ENVIRONMENT="dev").ENVIRONMENT == "development"
+    assert _settings_from_runtime_env_label("dev").ENVIRONMENT == "development"
