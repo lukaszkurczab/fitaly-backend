@@ -47,6 +47,10 @@ def test_sync_tier_repairs_to_premium_when_entitlement_is_active(
 ) -> None:
     logger_info = mocker.patch("app.api.routes.ai_credits_sync.logger.info")
     mocker.patch(
+        "app.api.routes.ai_credits_sync.utc_now",
+        return_value=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    mocker.patch(
         "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
         return_value={
             "subscriber": {
