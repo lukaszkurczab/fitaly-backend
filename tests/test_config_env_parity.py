@@ -33,3 +33,12 @@ def test_all_settings_are_documented_in_env_example() -> None:
     settings_vars = set(Settings.model_fields)
 
     assert settings_vars - env_vars == set()
+
+
+def test_environment_accepts_railway_environment_labels() -> None:
+    assert Settings(ENVIRONMENT="prod").ENVIRONMENT == "production"
+    assert Settings(ENVIRONMENT="smoke").ENVIRONMENT == "production"
+
+
+def test_environment_accepts_dev_alias() -> None:
+    assert Settings(ENVIRONMENT="dev").ENVIRONMENT == "development"

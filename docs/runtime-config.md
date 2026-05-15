@@ -14,7 +14,7 @@ Do not commit secrets. Values such as Firebase private keys, OpenAI keys, Revenu
 
 Notes:
 
-- Railway `smoke` is an environment label. Backend `ENVIRONMENT=smoke` is not currently supported by `app.core.config.Settings`; use `ENVIRONMENT=production` plus `SENTRY_ENVIRONMENT=smoke` for launch-like smoke.
+- Railway `smoke` is an environment label. Backend `ENVIRONMENT=smoke` is accepted as a deployment-label alias and normalized to `production`; use `SENTRY_ENVIRONMENT=smoke` to keep Sentry streams separate.
 - `SENTRY_ENVIRONMENT` should be `production` in prod and `smoke` in smoke.
 - Smoke should use separate or scoped Firebase, OpenAI, RevenueCat, and Sentry secrets where possible. The contract requires launch-like behavior, not shared secrets.
 - Local/dev fallbacks must not be used as production readiness evidence.

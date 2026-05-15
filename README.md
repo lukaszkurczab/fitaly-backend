@@ -257,7 +257,7 @@ The canonical mobile to backend matrix for prod, smoke, and dev/local is [docs/r
 | `DEBUG`                          | No                            | `false`                   | FastAPI debug mode                                             |
 | `API_V1_PREFIX`                  | No                            | `/api/v1`                 | Current stable API prefix                                      |
 | `API_V2_PREFIX`                  | No                            | `/api/v2`                 | Canonical v2 API prefix                                        |
-| `ENVIRONMENT`                    | No                            | `local`                   | `local`, `development`, `staging`, `production`                |
+| `ENVIRONMENT`                    | No                            | `local`                   | `local`, `development`, `staging`, `production`; Railway labels `prod` and `smoke` normalize to `production` |
 | `WEB_CONCURRENCY`                | Runtime only                  | `2`                       | Gunicorn worker count; read by `Procfile`, not app settings    |
 | `OPENAI_API_KEY`                 | Yes in production             | -                         | Auth for OpenAI API calls                                      |
 | `CORS_ORIGINS`                   | Yes in production             | -                         | Comma-separated frontend origins (`*` forbidden in production) |
@@ -335,7 +335,7 @@ gunicorn -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} -b 0.0.0.0:$P
 ```
 
 7. Do not set `PORT` manually. Railway injects it automatically for the running container.
-8. Keep `DEBUG=false` in production and set `ENVIRONMENT=production` plus `SENTRY_ENVIRONMENT=production` for live deployments.
+8. Keep `DEBUG=false` in production and set `ENVIRONMENT=production` plus `SENTRY_ENVIRONMENT=production` for live deployments. Railway environment labels `prod` and `smoke` are accepted as aliases and normalize to production-mode startup validation.
 9. Deploy the service and wait for Railway to generate the public domain.
 10. Verify the live service on the generated domain:
 
