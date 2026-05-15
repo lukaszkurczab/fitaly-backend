@@ -750,7 +750,7 @@ def test_telemetry_batch_returns_413_when_serialized_batch_payload_is_too_large(
     assert response.json() == {"detail": "Telemetry payload is too large"}
 
 
-def test_telemetry_batch_returns_503_when_feature_flag_is_disabled(
+def test_telemetry_batch_is_noop_when_feature_flag_is_disabled(
     mocker: MockerFixture,
 ) -> None:
     reset_telemetry_state()
@@ -760,8 +760,13 @@ def test_telemetry_batch_returns_503_when_feature_flag_is_disabled(
 
     response = client.post("/api/v2/telemetry/events/batch", json=build_payload())
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Telemetry ingestion is disabled"}
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 0,
+        "duplicateCount": 0,
+        "rejectedCount": 0,
+        "rejectedEvents": [],
+    }
     get_firestore.assert_not_called()
 
 

@@ -254,7 +254,20 @@ def ingest_batch(
     context: TelemetryRequestContext,
 ) -> TelemetryBatchIngestResponse:
     if not settings.TELEMETRY_ENABLED:
-        raise TelemetryDisabledError("Telemetry ingestion is disabled")
+        logger.info(
+            "telemetry.ingest.disabled",
+            extra={
+                "event_count": len(request.events),
+                "session_id": request.sessionId,
+                "request_id": context.request_id,
+            },
+        )
+        return TelemetryBatchIngestResponse(
+            acceptedCount=0,
+            duplicateCount=0,
+            rejectedCount=0,
+            rejectedEvents=[],
+        )
 
     _check_rate_limit(build_bucket_key(context))
     _validate_payload_size(request)

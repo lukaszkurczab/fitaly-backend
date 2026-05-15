@@ -178,7 +178,7 @@ The backend exposes two API versions:
 
 **v2 (next foundation/extension surface)**:
 
-- `POST /api/v2/telemetry/events/batch` — telemetry ingest (requires `TELEMETRY_ENABLED=true`)
+- `POST /api/v2/telemetry/events/batch` — telemetry ingest (`TELEMETRY_ENABLED=false` makes ingestion a 202 no-op)
 - `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state
 - `GET /api/v2/users/me/habits` — habit signals
 - `POST /api/v2/ai/chat/runs` — canonical AI Chat v2 run lifecycle
@@ -206,7 +206,7 @@ These flags are runtime kill switches for live surfaces. A disabled surface retu
 
 | Flag                      | Default | What it controls                                                                                                                       | Disabled behavior |
 | ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `TELEMETRY_ENABLED`       | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`.                                            | `503 Telemetry ingestion is disabled` |
+| `TELEMETRY_ENABLED`       | `false` | Persist v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true` for mobile emission.                       | `202` no-op; batch is not persisted |
 | `STATE_ENABLED`           | `true`  | Serve canonical v2 nutrition state. Coach and Smart Reminders require this foundation.                                                  | `503 Nutrition state is disabled` |
 | `HABITS_ENABLED`          | `true`  | Serve v2 habit signals and include habit summaries in nutrition state. Coach and Smart Reminders require this foundation.               | `503 Habit signals are disabled`; nutrition state marks habits as `disabled` |
 | `SMART_REMINDERS_ENABLED` | `true`  | Serve v2 Smart Reminders decision endpoint.                                                                                            | `503 Smart reminders are unavailable` |
