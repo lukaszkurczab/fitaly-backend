@@ -635,6 +635,33 @@ def test_list_changes_returns_deleted_tombstones(
     assert next_cursor is None
 
 
+def test_list_changes_derives_day_key_when_stored_day_key_is_invalid(
+    mocker: MockerFixture,
+) -> None:
+    query = _FakeChangesQuery(
+        [
+            _FakeChangesSnapshot(
+                "meal-legacy",
+                {
+                    **_changes_doc(
+                        timestamp="2026-04-20T09:15:00.000Z",
+                        updated_at="2026-04-20T10:00:00.000Z",
+                    ),
+                    "dayKey": "2026-04-20T09:15:00.000Z",
+                },
+            ),
+        ]
+    )
+    _wire_changes_collection(mocker, query)
+
+    items, next_cursor = asyncio.run(meal_service.list_changes("user-1", limit_count=10))
+
+    assert [item["cloudId"] for item in items] == ["meal-legacy"]
+    assert items[0]["dayKey"] == "2026-04-20"
+    assert items[0]["_hasCanonicalDayKey"] is False
+    assert next_cursor is None
+
+
 def test_list_changes_rejects_invalid_cursor_without_fallback(
     mocker: MockerFixture,
 ) -> None:

@@ -436,6 +436,18 @@ def _normalize_meal_snapshot(
     snapshot: firestore.DocumentSnapshot,
 ) -> dict[str, Any]:
     data = dict(snapshot.to_dict() or {})
+    raw_day_key = coerce_optional_str(data.get("dayKey"))
+    has_canonical_day_key = False
+    if raw_day_key:
+        try:
+            data["dayKey"] = validate_day_key_format(raw_day_key)
+            has_canonical_day_key = True
+        except ValueError:
+            logger.warning(
+                "Meal document has invalid dayKey; deriving read-model dayKey from loggedAt.",
+                extra={"user_id": user_id, "meal_id": snapshot.id},
+            )
+            data.pop("dayKey", None)
     normalized = normalize_meal_payload(
         user_id,
         data,
@@ -443,7 +455,7 @@ def _normalize_meal_snapshot(
         fallback_updated_at=coerce_optional_str(data.get("updatedAt")) or _now_iso(),
         fallback_day_key=coerce_optional_str(data.get("dayKey")),
     )
-    normalized["_hasCanonicalDayKey"] = bool(coerce_optional_str(data.get("dayKey")))
+    normalized["_hasCanonicalDayKey"] = has_canonical_day_key
     return normalized
 
 
