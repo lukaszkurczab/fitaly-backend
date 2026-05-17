@@ -76,6 +76,52 @@ def test_logs_error_endpoint_allows_anonymous_logs(mocker: MockerFixture) -> Non
     )
 
 
+def test_logs_error_endpoint_accepts_frontend_bootstrap_context(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v1/logs/error",
+        json={
+            "source": "mobile",
+            "message": "user_profile_bootstrap_failed",
+            "context": {
+                "uid": "user-1",
+                "endpoint": "/users/me/profile",
+                "source": "ApiClient",
+                "code": "auth/no-current-user",
+                "status": 401,
+                "retryable": False,
+                "requestId": "req-123",
+                "buildProfile": "development",
+                "environment": "development",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    log_error.assert_called_once_with(
+        "user_profile_bootstrap_failed",
+        source="mobile",
+        stack=None,
+        context={
+            "uid": "user-1",
+            "endpoint": "/users/me/profile",
+            "source": "ApiClient",
+            "code": "auth/no-current-user",
+            "status": 401,
+            "retryable": False,
+            "requestId": "req-123",
+            "buildProfile": "development",
+            "environment": "development",
+        },
+        userId=None,
+    )
+
+
 def test_logs_error_endpoint_rejects_oversized_context(mocker: MockerFixture) -> None:
     reset_rate_limit_state()
     log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")

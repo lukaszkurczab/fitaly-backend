@@ -14,7 +14,9 @@ _SAFE_CONTEXT_KEYS = frozenset(
     {
         "action",
         "beforeCreatedAt",
+        "buildProfile",
         "code",
+        "endpoint",
         "environment",
         "feature",
         "lang",
@@ -25,6 +27,7 @@ _SAFE_CONTEXT_KEYS = frozenset(
         "phase",
         "platform",
         "reason",
+        "requestId",
         "retryable",
         "screen",
         "source",
