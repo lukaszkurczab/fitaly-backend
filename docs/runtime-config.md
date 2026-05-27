@@ -1,6 +1,6 @@
 # Runtime Config Contract
 
-This is the backend side of the mobile to backend runtime contract for Fitaly prod, smoke, and dev/local environments. It mirrors the mobile contract in `fitaly/docs/runtime-config.md`.
+This is the backend side of the mobile to backend runtime contract for Fitaly prod, smoke, and dev/local environments. It mirrors the workspace runtime contract in `../../docs/runbooks/runtime-config.md`.
 
 Do not commit secrets. Values such as Firebase private keys, OpenAI keys, RevenueCat secrets, and Sentry DSNs stay in Railway/EAS secret stores.
 

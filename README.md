@@ -234,21 +234,19 @@ Every HTTP response includes `X-Request-ID`. Use it to correlate client failures
 
 ## Operator docs
 
-- Launch Runbook (mobile repo): `../fitaly/docs/launch-runbook.md` — Go/No-Go, rollback matrix, kill-switch strategy
+- Launch Runbook: `../docs/runbooks/launch.md` — Go/No-Go, rollback matrix, kill-switch strategy
 - [Firestore Backup and Restore Runbook](./docs/firestore-backup-restore.md) — backup cadence, export/import commands, and restore drill checklist
 - [Ops Monitoring Runbook](./docs/ops-monitoring-runbook.md) — health/latency thresholds, alerting and incident triage
 - [Compliance Ops Runbook](./docs/compliance-ops-runbook.md) — data export/delete flow, retention cadence and privacy incident handling
 - [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
 - [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
-- [Smart Reminders v1 Rollout](./docs/smart-reminders-v1-rollout.md) — rollout preconditions, verification, rollback path
-- [Notifications Legacy Sunset Note](./docs/notifications-legacy-sunset-note.md) — compatibility-only residue status and removal criteria
 
 ## Required Environment Variables
 
 Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. In `ENVIRONMENT=production`, startup now fails fast when critical integrations are missing or misconfigured (`CORS_ORIGINS`, `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, Firebase credentials).
 
-The canonical mobile to backend matrix for prod, smoke, and dev/local is [docs/runtime-config.md](./docs/runtime-config.md).
+The canonical mobile to backend matrix for prod, smoke, and dev/local is [../docs/runbooks/runtime-config.md](../docs/runbooks/runtime-config.md). Backend-specific notes remain in [docs/runtime-config.md](./docs/runtime-config.md).
 
 | Variable                         | Required                      | Default                   | Purpose                                                        |
 | -------------------------------- | ----------------------------- | ------------------------- | -------------------------------------------------------------- |
