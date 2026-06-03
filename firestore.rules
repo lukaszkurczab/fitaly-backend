@@ -1,0 +1,104 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /usernames/{username} {
+      allow get: if true;
+
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+
+      allow update: if request.auth != null
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+
+      allow delete: if request.auth != null
+                    && resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow read, update, delete: if request.auth != null
+                                  && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/history/{mealId} {
+      allow create, read, update, delete: if request.auth != null
+                                          && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/meals/{mealId} {
+      allow create, read, update, delete: if request.auth != null
+                                          && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/myMeals/{mealId} {
+      allow create, read, update, delete: if request.auth != null
+                                          && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/chat_threads/{threadId} {
+      allow read, create, update, delete: if request.auth != null
+                                          && request.auth.uid == userId;
+
+      match /messages/{messageId} {
+        allow read, create, update, delete: if request.auth != null
+                                            && request.auth.uid == userId;
+      }
+    }
+
+    match /users/{userId}/streak/{docId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+                            && request.auth.uid == userId
+                            && isValidStreak();
+
+      function isValidStreak() {
+        return request.resource.data.keys().hasOnly(['current', 'lastDate'])
+            && request.resource.data.current is int
+            && request.resource.data.current >= 0
+            && (
+                 request.resource.data.lastDate == null ||
+                 (request.resource.data.lastDate is string &&
+                  request.resource.data.lastDate.matches('^\\d{4}-\\d{2}-\\d{2}$'))
+               );
+      }
+    }
+
+    match /users/{userId}/notifications/{notifId} {
+      allow read, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/prefs/{docId} {
+      allow read, create, update, delete: if request.auth != null
+                                          && request.auth.uid == userId;
+    }
+
+    match /feedbacks/{feedbackId} {
+      allow create: if request.auth != null && isValidFeedback();
+      allow read, update, delete: if request.auth != null
+                                  && request.auth.token.admin == true;
+
+      function isValidFeedback() {
+        let d = request.resource.data;
+        return d.userId == request.auth.uid
+            && d.message is string
+            && d.message.size() > 0
+            && d.message.size() <= 2000;
+      }
+    }
+
+    match /ai_credits/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /ai_credit_transactions/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /rate_limits/{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
