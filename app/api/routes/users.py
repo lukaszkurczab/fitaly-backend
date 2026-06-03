@@ -241,15 +241,25 @@ async def delete_account_me(
 async def get_user_export_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> UserExportResponse:
-    profile, meals, my_meals, chat_messages, notifications, notification_prefs, feedback = (
-        await user_account_service.get_user_export_data(current_user.uid)
-    )
+    (
+        profile,
+        meals,
+        my_meals,
+        chat_messages,
+        chat_memory,
+        ai_runs,
+        notifications,
+        notification_prefs,
+        feedback,
+    ) = await user_account_service.get_user_export_data(current_user.uid)
 
     return UserExportResponse(
         profile=profile,
         meals=meals,
         myMeals=my_meals,
         chatMessages=chat_messages,
+        chatMemory=chat_memory,
+        aiRuns=ai_runs,
         notifications=notifications,
         notificationPrefs=notification_prefs,
         feedback=feedback,

@@ -10,6 +10,7 @@ from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
 from app.db.firebase import (
@@ -24,12 +25,16 @@ from app.services.username_service import normalize_username
 
 from app.core.firestore_constants import (
     AI_CREDITS_SUBCOLLECTION,
+    AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION,
     AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
+    AI_RUNS_COLLECTION,
     BADGES_SUBCOLLECTION,
+    BILLING_DOCUMENT_ID,
     BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
+    MEMORY_SUBCOLLECTION,
     MY_MEALS_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     USERNAMES_COLLECTION,
@@ -715,6 +720,12 @@ def _delete_chat_threads(
 ) -> None:
     thread_documents = list(user_ref.collection(CHAT_THREADS_SUBCOLLECTION).stream())
     for thread_document in thread_documents:
+        memory_documents = list(
+            thread_document.reference.collection(MEMORY_SUBCOLLECTION).stream()
+        )
+        if memory_documents:
+            _delete_documents_in_batches(client, memory_documents)
+
         message_documents = list(
             thread_document.reference.collection(MESSAGES_SUBCOLLECTION).stream()
         )
@@ -744,6 +755,37 @@ def _read_chat_thread_messages(
     return messages
 
 
+def _read_chat_thread_memory(
+    user_ref: firestore.DocumentReference,
+) -> list[dict[str, Any]]:
+    memory_entries: list[dict[str, Any]] = []
+    for thread_document in user_ref.collection(CHAT_THREADS_SUBCOLLECTION).stream():
+        thread_id = thread_document.id
+        for memory_document in thread_document.reference.collection(
+            MEMORY_SUBCOLLECTION
+        ).stream():
+            payload = dict(memory_document.to_dict() or {})
+            payload.setdefault("id", memory_document.id)
+            payload.setdefault("threadId", thread_id)
+            memory_entries.append(payload)
+    return memory_entries
+
+
+def _read_ai_runs(
+    client: firestore.Client,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    query = client.collection(AI_RUNS_COLLECTION).where(
+        filter=FieldFilter("userId", "==", user_id)
+    )
+    runs: list[dict[str, Any]] = []
+    for document in query.stream():
+        payload = dict(document.to_dict() or {})
+        payload.setdefault("id", document.id)
+        runs.append(payload)
+    return runs
+
+
 def _delete_feedback_attachments(feedback_documents: list[firestore.DocumentSnapshot]) -> None:
     if not feedback_documents:
         return
@@ -767,20 +809,43 @@ def _delete_billing_data(
     client: firestore.Client,
     user_ref: firestore.DocumentReference,
 ) -> None:
+    def delete_billing_document_tree(
+        billing_document_ref: firestore.DocumentReference,
+    ) -> None:
+        for subcollection_name in (
+            AI_CREDITS_SUBCOLLECTION,
+            AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
+            AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION,
+        ):
+            documents = list(billing_document_ref.collection(subcollection_name).stream())
+            if documents:
+                _delete_documents_in_batches(client, documents)
+
+        snapshot = billing_document_ref.get()
+        if snapshot.exists:
+            billing_document_ref.delete()
+
+    billing_collection = user_ref.collection(BILLING_SUBCOLLECTION)
+    main_billing_ref = billing_collection.document(BILLING_DOCUMENT_ID)
+    delete_billing_document_tree(main_billing_ref)
+
     billing_documents = list(user_ref.collection(BILLING_SUBCOLLECTION).stream())
     for billing_document in billing_documents:
-        credits_documents = list(
-            billing_document.reference.collection(AI_CREDITS_SUBCOLLECTION).stream()
-        )
-        if credits_documents:
-            _delete_documents_in_batches(client, credits_documents)
-        transactions_documents = list(
-            billing_document.reference.collection(AI_CREDIT_TRANSACTIONS_SUBCOLLECTION).stream()
-        )
-        if transactions_documents:
-            _delete_documents_in_batches(client, transactions_documents)
-    if billing_documents:
-        _delete_documents_in_batches(client, billing_documents)
+        if billing_document.id == BILLING_DOCUMENT_ID:
+            continue
+        delete_billing_document_tree(billing_document.reference)
+
+
+def _delete_ai_runs(
+    client: firestore.Client,
+    user_id: str,
+) -> None:
+    query = client.collection(AI_RUNS_COLLECTION).where(
+        filter=FieldFilter("userId", "==", user_id)
+    )
+    documents = list(query.stream())
+    if documents:
+        _delete_documents_in_batches(client, documents)
 
 
 def _delete_storage_prefix(bucket: Any, prefix: str) -> None:
@@ -814,6 +879,7 @@ async def delete_account_data(user_id: str) -> None:
         _delete_feedback_attachments(feedback_documents)
         _delete_user_storage_assets(user_id)
         _delete_billing_data(client, user_ref)
+        _delete_ai_runs(client, user_id)
 
         for subcollection_name in DELETE_SUBCOLLECTIONS:
             documents = (
@@ -846,6 +912,8 @@ async def get_user_export_data(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
     dict[str, Any],
     list[dict[str, Any]],
 ]:
@@ -858,6 +926,8 @@ async def get_user_export_data(
         meals = _read_subcollection_documents(user_ref, "meals")
         my_meals = _read_subcollection_documents(user_ref, MY_MEALS_SUBCOLLECTION)
         chat_messages = _read_chat_thread_messages(user_ref)
+        chat_memory = _read_chat_thread_memory(user_ref)
+        ai_runs = _read_ai_runs(client, user_id)
         notifications = _read_subcollection_documents(user_ref, "notifications")
         prefs_documents = _read_subcollection_documents(user_ref, "prefs")
         feedback = _read_subcollection_documents(user_ref, FEEDBACK_SUBCOLLECTION)
@@ -874,4 +944,14 @@ async def get_user_export_data(
         )
         raise FirestoreServiceError("Failed to build user export payload.") from exc
 
-    return profile, meals, my_meals, chat_messages, notifications, notification_prefs, feedback
+    return (
+        profile,
+        meals,
+        my_meals,
+        chat_messages,
+        chat_memory,
+        ai_runs,
+        notifications,
+        notification_prefs,
+        feedback,
+    )

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from typing import Any
 
 from fastapi import Depends, HTTPException, status
@@ -27,7 +28,15 @@ def _unauthorized(detail: str) -> HTTPException:
 
 def _looks_like_jwt(value: str) -> bool:
     parts = value.split(".")
-    return len(parts) == 3 and all(part.strip() for part in parts)
+    if len(parts) != 3:
+        return False
+
+    header, payload, signature = parts
+    if not header.strip() or not payload.strip():
+        return False
+    if signature.strip():
+        return True
+    return bool(os.getenv("FIREBASE_AUTH_EMULATOR_HOST", "").strip())
 
 
 def decode_firebase_token(id_token: str) -> dict[str, Any]:

@@ -36,6 +36,8 @@ class UserExportResponse(BaseModel):
     meals: list[dict[str, Any]]
     myMeals: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     chatMessages: list[dict[str, Any]]
+    chatMemory: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    aiRuns: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     notifications: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
     feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)

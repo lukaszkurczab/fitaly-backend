@@ -49,6 +49,18 @@ class FakeTransaction:
         self.delete_calls.append(document_ref)
 
 
+class FakeBatch:
+    def __init__(self) -> None:
+        self.deleted_refs: list[object] = []
+        self.commit_count = 0
+
+    def delete(self, document_ref: object) -> None:
+        self.deleted_refs.append(document_ref)
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+
 def _build_client(mocker: MockerFixture):
     client = mocker.Mock()
     users_collection_ref = mocker.Mock()
@@ -117,7 +129,7 @@ def test_set_email_pending_wraps_firestore_errors(mocker: MockerFixture) -> None
 def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     mocker: MockerFixture,
 ) -> None:
-    client, _users_collection_ref, usernames_collection_ref, user_ref, username_ref = (
+    client, users_collection_ref, usernames_collection_ref, user_ref, username_ref = (
         _build_client(mocker)
     )
     meals_collection_ref = mocker.Mock()
@@ -131,6 +143,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     streak_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
+    ai_runs_collection_ref = mocker.Mock()
+    ai_runs_query = mocker.Mock()
     meals_doc_1 = mocker.Mock()
     meals_doc_2 = mocker.Mock()
     my_meal_doc = mocker.Mock()
@@ -142,9 +156,33 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_doc.to_dict.return_value = {}
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
+    billing_doc = mocker.Mock()
+    billing_doc.id = "main"
+    main_billing_ref = mocker.Mock()
+    billing_doc.reference = main_billing_ref
+    ai_credits_collection_ref = mocker.Mock()
+    ai_credit_transactions_collection_ref = mocker.Mock()
+    ai_credit_idempotency_collection_ref = mocker.Mock()
+    ai_credit_doc = mocker.Mock()
+    ai_credit_transaction_doc = mocker.Mock()
+    ai_credit_idempotency_doc = mocker.Mock()
     chat_thread_doc = mocker.Mock()
+    chat_thread_memory_collection_ref = mocker.Mock()
+    chat_thread_memory_doc = mocker.Mock()
     chat_thread_messages_collection_ref = mocker.Mock()
     chat_thread_message_doc = mocker.Mock()
+    ai_run_doc = mocker.Mock()
+
+    def top_level_collection_side_effect(name: str):
+        if name == "users":
+            return users_collection_ref
+        if name == "usernames":
+            return usernames_collection_ref
+        if name == "ai_runs":
+            return ai_runs_collection_ref
+        raise AssertionError(f"Unexpected collection {name}")
+
+    client.collection.side_effect = top_level_collection_side_effect
 
     def collection_side_effect(name: str):
         if name == "meals":
@@ -181,39 +219,50 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_collection_ref.stream.return_value = [feedback_doc]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
-    billing_collection_ref.stream.return_value = []
+    billing_collection_ref.stream.return_value = [billing_doc]
+    billing_collection_ref.document.return_value = main_billing_ref
+    main_billing_ref.get.return_value = _build_snapshot(mocker, exists=True)
     chat_threads_collection_ref.stream.return_value = [chat_thread_doc]
-    chat_thread_doc.reference.collection.return_value = chat_thread_messages_collection_ref
+    ai_runs_collection_ref.where.return_value = ai_runs_query
+    ai_runs_query.stream.return_value = [ai_run_doc]
+
+    def billing_child_collection_side_effect(name: str):
+        if name == "aiCredits":
+            return ai_credits_collection_ref
+        if name == "aiCreditTransactions":
+            return ai_credit_transactions_collection_ref
+        if name == "aiCreditIdempotency":
+            return ai_credit_idempotency_collection_ref
+        raise AssertionError(f"Unexpected billing subcollection {name}")
+
+    main_billing_ref.collection.side_effect = billing_child_collection_side_effect
+    ai_credits_collection_ref.stream.return_value = [ai_credit_doc]
+    ai_credit_transactions_collection_ref.stream.return_value = [ai_credit_transaction_doc]
+    ai_credit_idempotency_collection_ref.stream.return_value = [ai_credit_idempotency_doc]
+
+    def chat_thread_child_collection_side_effect(name: str):
+        if name == "memory":
+            return chat_thread_memory_collection_ref
+        if name == "messages":
+            return chat_thread_messages_collection_ref
+        raise AssertionError(f"Unexpected chat thread subcollection {name}")
+
+    chat_thread_doc.reference.collection.side_effect = chat_thread_child_collection_side_effect
+    chat_thread_memory_collection_ref.stream.return_value = [chat_thread_memory_doc]
     chat_thread_messages_collection_ref.stream.return_value = [chat_thread_message_doc]
     user_ref.get.return_value = _build_snapshot(
         mocker,
         exists=True,
         data={"username": "neo"},
     )
-    batch_1 = mocker.Mock()
-    batch_2 = mocker.Mock()
-    batch_3 = mocker.Mock()
-    batch_4 = mocker.Mock()
-    batch_5 = mocker.Mock()
-    batch_6 = mocker.Mock()
-    batch_7 = mocker.Mock()
-    batch_8 = mocker.Mock()
-    batch_9 = mocker.Mock()
-    batch_10 = mocker.Mock()
-    batch_11 = mocker.Mock()
-    client.batch.side_effect = [
-        batch_1,
-        batch_2,
-        batch_3,
-        batch_4,
-        batch_5,
-        batch_6,
-        batch_7,
-        batch_8,
-        batch_9,
-        batch_10,
-        batch_11,
-    ]
+    batches: list[FakeBatch] = []
+
+    def batch_factory() -> FakeBatch:
+        batch = FakeBatch()
+        batches.append(batch)
+        return batch
+
+    client.batch.side_effect = batch_factory
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     bucket = mocker.Mock()
     avatar_blob = mocker.Mock()
@@ -228,29 +277,32 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
 
     asyncio.run(user_account_service.delete_account_data("user-1"))
 
-    batch_1.delete.assert_any_call(meals_doc_1.reference)
-    batch_1.delete.assert_any_call(meals_doc_2.reference)
-    batch_1.commit.assert_called_once_with()
-    batch_2.delete.assert_called_once_with(my_meal_doc.reference)
-    batch_2.commit.assert_called_once_with()
-    batch_3.delete.assert_called_once_with(legacy_chat_doc.reference)
-    batch_3.commit.assert_called_once_with()
-    batch_4.delete.assert_called_once_with(notification_doc.reference)
-    batch_4.commit.assert_called_once_with()
-    batch_5.delete.assert_called_once_with(prefs_doc.reference)
-    batch_5.commit.assert_called_once_with()
-    batch_6.delete.assert_called_once_with(notif_meta_doc.reference)
-    batch_6.commit.assert_called_once_with()
-    batch_7.delete.assert_called_once_with(feedback_doc.reference)
-    batch_7.commit.assert_called_once_with()
-    batch_8.delete.assert_called_once_with(badge_doc.reference)
-    batch_8.commit.assert_called_once_with()
-    batch_9.delete.assert_called_once_with(streak_doc.reference)
-    batch_9.commit.assert_called_once_with()
-    batch_10.delete.assert_called_once_with(chat_thread_message_doc.reference)
-    batch_10.commit.assert_called_once_with()
-    batch_11.delete.assert_called_once_with(chat_thread_doc.reference)
-    batch_11.commit.assert_called_once_with()
+    deleted_refs = [ref for batch in batches for ref in batch.deleted_refs]
+    assert meals_doc_1.reference in deleted_refs
+    assert meals_doc_2.reference in deleted_refs
+    assert my_meal_doc.reference in deleted_refs
+    assert legacy_chat_doc.reference in deleted_refs
+    assert notification_doc.reference in deleted_refs
+    assert prefs_doc.reference in deleted_refs
+    assert notif_meta_doc.reference in deleted_refs
+    assert feedback_doc.reference in deleted_refs
+    assert badge_doc.reference in deleted_refs
+    assert streak_doc.reference in deleted_refs
+    assert ai_credit_doc.reference in deleted_refs
+    assert ai_credit_transaction_doc.reference in deleted_refs
+    assert ai_credit_idempotency_doc.reference in deleted_refs
+    billing_collection_ref.document.assert_called_once_with("main")
+    main_billing_ref.delete.assert_called_once_with()
+    assert ai_run_doc.reference in deleted_refs
+    assert chat_thread_memory_doc.reference in deleted_refs
+    assert chat_thread_message_doc.reference in deleted_refs
+    assert chat_thread_doc.reference in deleted_refs
+    assert all(batch.commit_count == 1 for batch in batches)
+    ai_runs_collection_ref.where.assert_called_once()
+    ai_runs_filter = ai_runs_collection_ref.where.call_args.kwargs["filter"]
+    assert ai_runs_filter.field_path == "userId"
+    assert ai_runs_filter.op_string == "=="
+    assert ai_runs_filter.value == "user-1"
     usernames_collection_ref.document.assert_called_once_with("neo")
     username_ref.delete.assert_called_once_with()
     user_ref.delete.assert_called_once_with()
@@ -260,6 +312,61 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     avatar_blob.delete.assert_called_once_with()
     meal_blob.delete.assert_called_once_with()
     my_meal_blob.delete.assert_called_once_with()
+
+
+def test_delete_billing_data_deletes_main_children_when_parent_doc_is_missing(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    user_ref = mocker.Mock()
+    billing_collection_ref = mocker.Mock()
+    main_billing_ref = mocker.Mock()
+    ai_credits_collection_ref = mocker.Mock()
+    ai_credit_transactions_collection_ref = mocker.Mock()
+    ai_credit_idempotency_collection_ref = mocker.Mock()
+    ai_credit_doc = mocker.Mock()
+    ai_credit_transaction_doc = mocker.Mock()
+    ai_credit_idempotency_doc = mocker.Mock()
+    batches: list[FakeBatch] = []
+
+    def batch_factory() -> FakeBatch:
+        batch = FakeBatch()
+        batches.append(batch)
+        return batch
+
+    def user_collection_side_effect(name: str):
+        if name == "billing":
+            return billing_collection_ref
+        raise AssertionError(f"Unexpected subcollection {name}")
+
+    def billing_child_collection_side_effect(name: str):
+        if name == "aiCredits":
+            return ai_credits_collection_ref
+        if name == "aiCreditTransactions":
+            return ai_credit_transactions_collection_ref
+        if name == "aiCreditIdempotency":
+            return ai_credit_idempotency_collection_ref
+        raise AssertionError(f"Unexpected billing subcollection {name}")
+
+    client.batch.side_effect = batch_factory
+    user_ref.collection.side_effect = user_collection_side_effect
+    billing_collection_ref.document.return_value = main_billing_ref
+    billing_collection_ref.stream.return_value = []
+    main_billing_ref.collection.side_effect = billing_child_collection_side_effect
+    main_billing_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    ai_credits_collection_ref.stream.return_value = [ai_credit_doc]
+    ai_credit_transactions_collection_ref.stream.return_value = [ai_credit_transaction_doc]
+    ai_credit_idempotency_collection_ref.stream.return_value = [ai_credit_idempotency_doc]
+
+    user_account_service._delete_billing_data(client, user_ref)
+
+    deleted_refs = [ref for batch in batches for ref in batch.deleted_refs]
+    assert ai_credit_doc.reference in deleted_refs
+    assert ai_credit_transaction_doc.reference in deleted_refs
+    assert ai_credit_idempotency_doc.reference in deleted_refs
+    assert all(batch.commit_count == 1 for batch in batches)
+    billing_collection_ref.document.assert_called_once_with("main")
+    main_billing_ref.delete.assert_not_called()
 
 
 def test_delete_account_data_wraps_firestore_errors(mocker: MockerFixture) -> None:
@@ -793,7 +900,7 @@ def test_initialize_onboarding_profile_rejects_short_username() -> None:
 def test_get_user_export_data_returns_profile_and_subcollections(
     mocker: MockerFixture,
 ) -> None:
-    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+    client, users_collection_ref, usernames_collection_ref, user_ref, _username_ref = (
         _build_client(mocker)
     )
     meals_collection_ref = mocker.Mock()
@@ -802,6 +909,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     prefs_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
+    ai_runs_collection_ref = mocker.Mock()
+    ai_runs_query = mocker.Mock()
     meal_document = mocker.Mock()
     meal_document.to_dict.return_value = {"id": "meal-1"}
     my_meal_document = mocker.Mock()
@@ -818,9 +927,27 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     chat_thread_document.id = "thread-1"
     chat_thread_document.to_dict.return_value = {"title": "First chat"}
     chat_messages_collection_ref = mocker.Mock()
+    chat_memory_collection_ref = mocker.Mock()
     chat_document = mocker.Mock()
     chat_document.id = "chat-1"
     chat_document.to_dict.return_value = {"role": "assistant", "content": "hello"}
+    memory_document = mocker.Mock()
+    memory_document.id = "current"
+    memory_document.to_dict.return_value = {"summary": "likes breakfast"}
+    ai_run_document = mocker.Mock()
+    ai_run_document.id = "run-1"
+    ai_run_document.to_dict.return_value = {"userId": "user-1", "status": "completed"}
+
+    def top_level_collection_side_effect(name: str):
+        if name == "users":
+            return users_collection_ref
+        if name == "usernames":
+            return usernames_collection_ref
+        if name == "ai_runs":
+            return ai_runs_collection_ref
+        raise AssertionError(f"Unexpected collection {name}")
+
+    client.collection.side_effect = top_level_collection_side_effect
 
     def collection_side_effect(name: str):
         if name == "meals":
@@ -844,8 +971,21 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     prefs_collection_ref.stream.return_value = [prefs_document]
     feedback_collection_ref.stream.return_value = [feedback_document]
     chat_threads_collection_ref.stream.return_value = [chat_thread_document]
-    chat_thread_document.reference.collection.return_value = chat_messages_collection_ref
+    ai_runs_collection_ref.where.return_value = ai_runs_query
+    ai_runs_query.stream.return_value = [ai_run_document]
+
+    def chat_thread_child_collection_side_effect(name: str):
+        if name == "messages":
+            return chat_messages_collection_ref
+        if name == "memory":
+            return chat_memory_collection_ref
+        raise AssertionError(f"Unexpected chat thread subcollection {name}")
+
+    chat_thread_document.reference.collection.side_effect = (
+        chat_thread_child_collection_side_effect
+    )
     chat_messages_collection_ref.stream.return_value = [chat_document]
+    chat_memory_collection_ref.stream.return_value = [memory_document]
     user_ref.get.return_value = _build_snapshot(
         mocker,
         exists=True,
@@ -853,7 +993,17 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     )
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
 
-    profile, meals, my_meals, chat_messages, notifications, notification_prefs, feedback = asyncio.run(
+    (
+        profile,
+        meals,
+        my_meals,
+        chat_messages,
+        chat_memory,
+        ai_runs,
+        notifications,
+        notification_prefs,
+        feedback,
+    ) = asyncio.run(
         user_account_service.get_user_export_data("user-1")
     )
 
@@ -869,9 +1019,20 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             "threadTitle": "First chat",
         }
     ]
+    assert chat_memory == [
+        {"id": "current", "summary": "likes breakfast", "threadId": "thread-1"}
+    ]
+    assert ai_runs == [
+        {"id": "run-1", "userId": "user-1", "status": "completed"}
+    ]
     assert notifications == [{"id": "notif-1", "enabled": True}]
     assert notification_prefs == {"motivationEnabled": True, "daysAhead": 7}
     assert feedback == [{"id": "feedback-1", "message": "hello"}]
+    ai_runs_collection_ref.where.assert_called_once()
+    ai_runs_filter = ai_runs_collection_ref.where.call_args.kwargs["filter"]
+    assert ai_runs_filter.field_path == "userId"
+    assert ai_runs_filter.op_string == "=="
+    assert ai_runs_filter.value == "user-1"
 
 
 def test_get_user_export_data_wraps_firestore_errors(mocker: MockerFixture) -> None:

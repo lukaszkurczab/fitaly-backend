@@ -11,7 +11,9 @@ This runbook is implementation-focused and complements external legal documents 
 - Account/profile data (`/users/me/profile`)
 - Meal history and saved meals
 - Chat messages
+- Chat memory summaries and AI run telemetry
 - Notifications and reminder preferences
+- Billing credit state and idempotency metadata
 - Feedback and attachments
 - Telemetry events (if `TELEMETRY_ENABLED=true`)
 
@@ -28,7 +30,8 @@ This runbook is implementation-focused and complements external legal documents 
 1. User confirms account deletion in authenticated session.
 2. Backend endpoint:
    - `POST /api/v1/users/me/delete`
-3. Backend removes user-owned records from primary collections/subcollections.
+3. Backend removes user-owned records from primary collections/subcollections,
+   user-filtered AI run telemetry, and user-owned storage prefixes.
 4. If deletion fails, retry once and escalate in Discord `launch-ops`.
 
 ## Retention & Review Cadence

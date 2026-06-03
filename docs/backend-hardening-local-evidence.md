@@ -92,7 +92,7 @@ Maestro, or smoke/Railway until PR0 evidence is green.
 | --- | --- | --- | --- |
 | PR0 - Documentation And Inventory Baseline | Done | Source docs and manual requests are aligned; latest local evidence run `evidence/runs/local-public-20260603T200120Z` captured 54 endpoints and 7/7 default checks passed; `pytest -q`, compileall, Ruff, and Pyright passed. | None. |
 | PR1 - Auth Boundary And Replay Privacy | Done | Missing-auth and malformed-token evidence is covered; AI idempotency-key auth checks are covered; same-key cross-bearer replay is blocked by bearer-token digest namespacing; latest local evidence run `evidence/runs/local-public-20260603T201127Z` passed 12/12 checks; `pytest -q`, compileall, Ruff, and Pyright passed. | None. |
-| PR2 - Identity, Export, Delete | Next | None. | Start with emulator seed for User A/User B before export/delete cleanup evidence. |
+| PR2 - Identity, Export, Delete | Done | Backend export/delete service coverage now includes chat memory, AI run telemetry, billing credit idempotency state, storage cleanup, Auth emulator JWT handling, Firebase emulator evidence run `evidence/runs/pr2-emulator-20260603T212805Z` passed 4/4 checks, and local iOS Maestro account-delete evidence passed 1/1 against `http://localhost:8000`. | None. |
 | PR3 - Core Meal Loop And Sync | Not started | None. | Start only after PR2 is Go. |
 | PR4 - Billing, Credits, RevenueCat | Not started | None. | Start only after PR3 is Go or if explicitly reprioritized as release-critical. |
 | PR5 - AI Cost And Privacy Surfaces | Not started | None. | Start only after PR4 is Go or if explicitly reprioritized as release-critical. |
@@ -307,11 +307,14 @@ Scope:
 - Export includes only current user data.
 - Delete removes backend-owned state intentionally and does not delete other users.
 - Storage/avatar/photo cleanup evidence.
+- Export/delete must include backend-owned chat memory summaries, top-level AI run telemetry filtered by `userId`, and billing credit idempotency documents.
 
 Verification:
 
-- Firebase emulator run.
-- Account-delete local Maestro only after backend evidence is green.
+- Firebase emulator run: latest passing artifact `evidence/runs/pr2-emulator-20260603T212805Z`.
+- Local iOS Maestro account-delete run against local backend:
+  `e2e/artifacts/pr2-account-delete-20260603T233756Z/junit.xml`
+  (`account-delete-disposable-user`, 1/1 passed, device `Fitaly-MJ050 - iOS 18.6`).
 
 ### PR3 - Core Meal Loop And Sync
 
