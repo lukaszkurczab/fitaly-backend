@@ -32,6 +32,7 @@ class EvidenceCheck:
     expected_app_behavior: str
     body: dict[str, Any] | None = None
     headers: dict[str, str] | None = None
+    forbidden_response_headers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,17 @@ DEFAULT_CHECKS: tuple[EvidenceCheck, ...] = (
         ),
     ),
     EvidenceCheck(
+        name="profile_rejects_malformed_bearer_without_firebase",
+        method="GET",
+        path="/api/v1/users/me/profile",
+        expected_statuses=(401,),
+        expected_app_behavior=(
+            "Profile rejects a malformed bearer token as invalid credentials "
+            "before attempting Firebase verification."
+        ),
+        headers={"Authorization": "Bearer not-a-jwt"},
+    ),
+    EvidenceCheck(
         name="ai_credits_requires_auth",
         method="GET",
         path="/api/v1/ai/credits",
@@ -92,6 +104,68 @@ DEFAULT_CHECKS: tuple[EvidenceCheck, ...] = (
             "AI credits are protected: missing bearer token is rejected before "
             "any user billing or credits state can be read."
         ),
+    ),
+    EvidenceCheck(
+        name="ai_chat_requires_auth_with_idempotency_key",
+        method="POST",
+        path="/api/v2/ai/chat/runs",
+        expected_statuses=(401,),
+        expected_app_behavior=(
+            "AI Chat v2 remains auth-protected when an idempotency key is "
+            "present; unauthorized requests must not be replayed from cache."
+        ),
+        headers={"X-Idempotency-Key": "local-evidence-ai-auth"},
+        forbidden_response_headers=("X-Idempotency-Replayed",),
+        body={
+            "threadId": "evidence-thread",
+            "clientMessageId": "evidence-client-message",
+            "message": "Summarize today's macros.",
+            "language": "en",
+        },
+    ),
+    EvidenceCheck(
+        name="ai_chat_repeated_unauthenticated_idempotency_key_not_replayed",
+        method="POST",
+        path="/api/v2/ai/chat/runs",
+        expected_statuses=(401,),
+        expected_app_behavior=(
+            "A repeated unauthenticated AI Chat request with the same "
+            "idempotency key is rejected again, not served as a replay."
+        ),
+        headers={"X-Idempotency-Key": "local-evidence-ai-auth"},
+        forbidden_response_headers=("X-Idempotency-Replayed",),
+        body={
+            "threadId": "evidence-thread",
+            "clientMessageId": "evidence-client-message",
+            "message": "Summarize today's macros.",
+            "language": "en",
+        },
+    ),
+    EvidenceCheck(
+        name="ai_photo_requires_auth_with_idempotency_key",
+        method="POST",
+        path="/api/v1/ai/photo/analyze",
+        expected_statuses=(401,),
+        expected_app_behavior=(
+            "AI photo analysis remains auth-protected when an idempotency key "
+            "is present."
+        ),
+        headers={"X-Idempotency-Key": "local-evidence-photo-auth"},
+        forbidden_response_headers=("X-Idempotency-Replayed",),
+        body={"imageBase64": "local-evidence-image", "lang": "en"},
+    ),
+    EvidenceCheck(
+        name="ai_text_meal_requires_auth_with_idempotency_key",
+        method="POST",
+        path="/api/v1/ai/text-meal/analyze",
+        expected_statuses=(401,),
+        expected_app_behavior=(
+            "AI text meal analysis remains auth-protected when an idempotency "
+            "key is present."
+        ),
+        headers={"X-Idempotency-Key": "local-evidence-text-auth"},
+        forbidden_response_headers=("X-Idempotency-Replayed",),
+        body={"payload": {"name": "local evidence meal"}, "lang": "en"},
     ),
     EvidenceCheck(
         name="nutrition_state_requires_auth",
@@ -433,6 +507,12 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _contract_compatibility(check: EvidenceCheck, result: HttpResult) -> dict[str, Any]:
     status_matches = result.status in check.expected_statuses
+    response_header_names = {key.lower() for key in result.headers}
+    forbidden_headers_present = [
+        header
+        for header in check.forbidden_response_headers
+        if header.lower() in response_header_names
+    ]
     reasons: list[str] = []
 
     if status_matches:
@@ -440,14 +520,24 @@ def _contract_compatibility(check: EvidenceCheck, result: HttpResult) -> dict[st
     else:
         reasons.append("actual_status_outside_expected_statuses")
 
+    if forbidden_headers_present:
+        reasons.append("forbidden_response_header_present")
+    elif check.forbidden_response_headers:
+        reasons.append("forbidden_response_headers_absent")
+
     if result.payload is None:
         reasons.append("empty_response_payload")
     else:
         reasons.append("response_payload_captured")
 
     return {
-        "verdict": "compatible" if status_matches else "incompatible",
+        "verdict": (
+            "compatible"
+            if status_matches and not forbidden_headers_present
+            else "incompatible"
+        ),
         "statusMatchesExpected": status_matches,
+        "forbiddenHeadersPresent": forbidden_headers_present,
         "expectedAppBehavior": check.expected_app_behavior,
         "reasons": reasons,
     }
@@ -477,6 +567,7 @@ def _write_check_artifact(
             "expected": {
                 "statuses": list(check.expected_statuses),
                 "appFacingBehavior": check.expected_app_behavior,
+                "forbiddenResponseHeaders": list(check.forbidden_response_headers),
             },
             "expectedStatuses": list(check.expected_statuses),
             "response": {
@@ -529,7 +620,8 @@ def run_checks(
             check=check,
             timeout_seconds=timeout_seconds,
         )
-        passed = result.status in check.expected_statuses
+        contract_compatibility = _contract_compatibility(check, result)
+        passed = contract_compatibility["verdict"] == "compatible"
         if not passed:
             failed += 1
         artifact_path = _write_check_artifact(
@@ -546,7 +638,7 @@ def run_checks(
                 "status": result.status,
                 "expectedStatuses": list(check.expected_statuses),
                 "expectedAppBehavior": check.expected_app_behavior,
-                "contractCompatibility": _contract_compatibility(check, result),
+                "contractCompatibility": contract_compatibility,
                 "latencyMs": result.latency_ms,
                 "artifact": str(artifact_path),
             }

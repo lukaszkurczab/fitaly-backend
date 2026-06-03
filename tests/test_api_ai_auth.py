@@ -1,5 +1,8 @@
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
+from pytest_mock import MockerFixture
 
 from app.main import app
 
@@ -26,4 +29,20 @@ def test_ai_endpoints_require_authentication(path: str, payload: dict[str, objec
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Authentication required"}
+    assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+
+def test_malformed_bearer_token_is_rejected_without_firebase(
+    mock_auth_token_decoder: MagicMock,
+    mocker: MockerFixture,
+) -> None:
+    mocker.stop(mock_auth_token_decoder)
+
+    response = client.get(
+        "/api/v1/users/me/profile",
+        headers={"Authorization": "Bearer not-a-jwt"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication credentials"}
     assert response.headers.get("WWW-Authenticate") == "Bearer"

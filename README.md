@@ -196,7 +196,7 @@ The legacy `/api/v1/users/me/notifications*` routes (`list/upsert/delete/reconci
 **Narrow telemetry allowlists**:
 
 - Coach Insights telemetry allowlist is documented in [Coach Insights v1 Semantics](./docs/coach-insights-v1.md).
-- Smart Reminders telemetry allowlist is documented in [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md).
+- Smart Reminders telemetry allowlist is documented in [Notification and Reminder Contract](./docs/notifications-reminders-contract.md).
 
 Telemetry props must stay categorical and bounded. Do not send copy, raw reason text, user-authored content, or sensitive profile data.
 
@@ -240,7 +240,7 @@ Every HTTP response includes `X-Request-ID`. Use it to correlate client failures
 - [Compliance Ops Runbook](./docs/compliance-ops-runbook.md) — data export/delete flow, retention cadence and privacy incident handling
 - [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
-- [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
+- [Notification and Reminder Contract](./docs/notifications-reminders-contract.md) — Smart Reminder decision contract, suppression semantics, telemetry allowlist
 
 ## Required Environment Variables
 

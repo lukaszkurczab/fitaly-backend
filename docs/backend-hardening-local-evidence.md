@@ -1,6 +1,6 @@
 # Backend Hardening Local Evidence Plan
 
-Status: PR0 local evidence baseline
+Status: PR1 complete; PR2 next
 Last updated: 2026-06-03
 
 ## Objective
@@ -85,6 +85,81 @@ Current PR0 coverage is intentionally limited to L0/L1:
 
 Do not expand to Firebase emulator state, OpenAI provider behavior, mobile
 Maestro, or smoke/Railway until PR0 evidence is green.
+
+## Stage Status
+
+| Stage | Status | Done | Next gate |
+| --- | --- | --- | --- |
+| PR0 - Documentation And Inventory Baseline | Done | Source docs and manual requests are aligned; latest local evidence run `evidence/runs/local-public-20260603T200120Z` captured 54 endpoints and 7/7 default checks passed; `pytest -q`, compileall, Ruff, and Pyright passed. | None. |
+| PR1 - Auth Boundary And Replay Privacy | Done | Missing-auth and malformed-token evidence is covered; AI idempotency-key auth checks are covered; same-key cross-bearer replay is blocked by bearer-token digest namespacing; latest local evidence run `evidence/runs/local-public-20260603T201127Z` passed 12/12 checks; `pytest -q`, compileall, Ruff, and Pyright passed. | None. |
+| PR2 - Identity, Export, Delete | Next | None. | Start with emulator seed for User A/User B before export/delete cleanup evidence. |
+| PR3 - Core Meal Loop And Sync | Not started | None. | Start only after PR2 is Go. |
+| PR4 - Billing, Credits, RevenueCat | Not started | None. | Start only after PR3 is Go or if explicitly reprioritized as release-critical. |
+| PR5 - AI Cost And Privacy Surfaces | Not started | None. | Start only after PR4 is Go or if explicitly reprioritized as release-critical. |
+| PR6 - Retention Surfaces | Not started | None. | Start only after PR5 is Go or if explicitly reprioritized as release-critical. |
+
+## PR0 Go/No-Go Criteria
+
+PR0 is **Go** only when all of these are true:
+
+- This document is current with the FastAPI route inventory and risk lanes.
+- `requests/local.http` matches the default local evidence runner scenarios.
+- `python scripts/run-backend-evidence.py --base-url http://127.0.0.1:8000`
+  writes sanitized artifacts with `failed: 0`.
+- Generated `endpoint-inventory.json` includes every FastAPI route and assigns
+  each route a risk surface and evidence lane.
+- Generated `hardening-matrix.json` has no unclassified endpoint.
+- Documentation links in `README.md`, `evidence/README.md`, and this document do
+  not point to removed or missing hardening docs.
+- PR0 does not require Railway, live Firebase, live OpenAI, live RevenueCat, or
+  mobile Maestro to pass.
+- PR0 does not change backend runtime behavior.
+- `pytest -q`, `python -m compileall app`, `ruff check .`, and
+  `./.venv/bin/pyright` pass from the backend repo.
+
+PR0 is **No-Go** when any of these are true:
+
+- A real route is missing from inventory or cannot be classified.
+- Any evidence artifact exposes secrets, bearer tokens, private keys, emails, or
+  user-authored private content outside explicit test fixture payloads.
+- The runner needs live Railway/Firebase/OpenAI/RevenueCat to pass.
+- Manual requests and automated evidence disagree about expected app behavior.
+- Any required verification command fails or is not run.
+- Source-of-truth docs still contradict current code, tests, or generated
+  artifacts.
+
+Final backend release Go/No-Go is stricter than PR0. PR0 only decides whether it
+is safe to continue to PR1 local auth/replay hardening; it is not production
+readiness approval.
+
+## PR1 Go/No-Go Criteria
+
+PR1 is **Go** only when all of these are true:
+
+- Missing-auth evidence covers representative protected groups, including
+  profile, credits, nutrition state, and AI endpoints.
+- Malformed bearer tokens return `401 Invalid authentication credentials`
+  without requiring Firebase verification.
+- AI endpoints remain auth-protected when `X-Idempotency-Key` is present.
+- Repeated unauthenticated AI requests with the same idempotency key are not
+  replayed from cache.
+- AI idempotency cache entries are namespaced by bearer-token digest, so the
+  same idempotency key cannot replay a response across different bearer tokens.
+- Raw bearer tokens are not stored in idempotency cache keys or evidence
+  artifacts.
+- CORS allows `X-Idempotency-Key`.
+- Local HTTP evidence, focused auth/idempotency tests, and the full backend
+  quality gate pass without live Firebase/OpenAI/RevenueCat.
+
+PR1 is **No-Go** when any of these are true:
+
+- An idempotency key can bypass auth or convert an unauthenticated request into
+  a replay.
+- The same idempotency key can replay a cached AI response across different
+  bearer tokens.
+- Malformed bearer-token handling depends on live Firebase availability.
+- Raw bearer tokens appear in cache keys or evidence artifacts.
+- Any required verification command fails or is not run.
 
 ## Current Endpoint Inventory
 

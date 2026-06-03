@@ -25,7 +25,15 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
+def _looks_like_jwt(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) == 3 and all(part.strip() for part in parts)
+
+
 def decode_firebase_token(id_token: str) -> dict[str, Any]:
+    if not _looks_like_jwt(id_token.strip()):
+        raise _unauthorized("Invalid authentication credentials")
+
     try:
         firebase_app = init_firebase()
     except Exception as exc:
