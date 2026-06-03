@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 import re
 from typing import Any, Callable
 from unittest.mock import Mock
@@ -34,6 +35,10 @@ _IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
     (b"GIF89a", "image/gif"),
 ]
 _ALLOWED_IMAGE_CONTENT_TYPES = {mime for _, mime in _IMAGE_SIGNATURES}
+
+
+def _storage_emulator_configured() -> bool:
+    return bool(os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "").strip())
 
 
 def _detect_image_content_type(header: bytes) -> str | None:
@@ -193,7 +198,8 @@ async def upload_photo_to_storage(
         blob.metadata = {"firebaseStorageDownloadTokens": token}
         safe_content_type = _validate_upload(upload)
         blob.upload_from_file(upload.file, content_type=safe_content_type)
-        blob.patch()
+        if not _storage_emulator_configured():
+            blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(error_message, extra={"user_id": user_id, "object_path": object_path})
         raise FirestoreServiceError(error_message) from exc

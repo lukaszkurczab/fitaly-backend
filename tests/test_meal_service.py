@@ -339,6 +339,34 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     )
 
 
+def test_upload_photo_skips_metadata_patch_in_storage_emulator(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FIREBASE_STORAGE_EMULATOR_HOST", "127.0.0.1:9199")
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    upload = mocker.Mock()
+    upload.filename = "meal.jpg"
+    upload.content_type = "image/jpeg"
+    upload.file = mocker.Mock()
+    mocker.patch("app.services.meal_storage.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(meal_service.upload_photo("user-1", upload))
+
+    blob.upload_from_file.assert_called_once_with(
+        upload.file,
+        content_type="image/jpeg",
+    )
+    blob.patch.assert_not_called()
+    assert blob.metadata["firebaseStorageDownloadTokens"]
+    assert payload["photoUrl"].startswith(
+        "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/meals%2Fuser-1%2F"
+    )
+
+
 def test_resolve_photo_uses_meal_document_photo_url(mocker: MockerFixture) -> None:
     client = mocker.Mock()
     users_collection = mocker.Mock()

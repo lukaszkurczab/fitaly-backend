@@ -44,9 +44,14 @@ After installing dev tools:
 npm run firebase:emulators
 ```
 
-Use the emulator baseline for stateful Firestore/Auth/Storage evidence such as
-account export/delete, meal sync, avatar/photo storage, credits, and billing.
+Use the emulator baseline for targeted Firestore/Auth/Storage evidence when a
+specific risk requires stateful proof.
 
 Backend Admin SDK access bypasses Firestore rules. Emulator runs prove backend
 behavior and document shapes. Client-side Firestore rules still need their own
 rules-focused checks when mobile writes directly to Firebase.
+
+One-off broad PR runners and PR-specific commands should stay out of committed
+scripts and `package.json`. Keep their sanitized outputs in `evidence/runs/`
+when they are useful for local review, but do not turn them into a standing
+repo workflow unless the check becomes recurring product infrastructure.

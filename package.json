@@ -8,8 +8,7 @@
   "scripts": {
     "firebase:emulators": "firebase emulators:start --project demo-fitaly-local",
     "firebase:emulators:export": "firebase emulators:export ./firebase-emulator-export --project demo-fitaly-local",
-    "evidence:local": "python scripts/run-backend-evidence.py --base-url http://127.0.0.1:8000",
-    "evidence:pr2:emulator": "firebase emulators:exec --project demo-fitaly-local --only auth,firestore,storage \"./.venv/bin/python scripts/run-pr2-emulator-evidence.py\""
+    "evidence:local": "python scripts/run-backend-evidence.py --base-url http://127.0.0.1:8000"
   },
   "devDependencies": {
     "firebase-tools": "15.19.0"
