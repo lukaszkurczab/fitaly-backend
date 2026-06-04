@@ -42,6 +42,22 @@ def _validate_day_key_range(
     return normalized_start, normalized_end
 
 
+def _reject_legacy_history_range_params(
+    *,
+    logged_at_start: str | None,
+    logged_at_end: str | None,
+    timestamp_start: str | None,
+    timestamp_end: str | None,
+) -> None:
+    if (
+        logged_at_start is not None
+        or logged_at_end is not None
+        or timestamp_start is not None
+        or timestamp_end is not None
+    ):
+        raise ValueError("Use dayKeyStart/dayKeyEnd for meal history ranges")
+
+
 def _raise_meal_upsert_validation_error(exc: ValidationError) -> NoReturn:
     for error in exc.errors(include_context=False):
         if tuple(error.get("loc", ())) == ("dayKey",):
@@ -75,6 +91,12 @@ async def get_meals_history_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealsHistoryPageResponse:
     try:
+        _reject_legacy_history_range_params(
+            logged_at_start=loggedAtStart,
+            logged_at_end=loggedAtEnd,
+            timestamp_start=timestampStart,
+            timestamp_end=timestampEnd,
+        )
         day_key_start, day_key_end = _validate_day_key_range(dayKeyStart, dayKeyEnd)
         items, next_cursor = await meal_service.list_history(
             current_user.uid,
@@ -87,7 +109,6 @@ async def get_meals_history_me(
             day_key_start=day_key_start,
             day_key_end=day_key_end,
         )
-        del loggedAtStart, loggedAtEnd, timestampStart, timestampEnd
     except ValueError as exc:
         raise_bad_request(exc)
 

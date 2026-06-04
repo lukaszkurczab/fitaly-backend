@@ -76,6 +76,42 @@ def test_get_meals_history_rejects_invalid_day_key(
     list_history.assert_not_called()
 
 
+def test_get_meals_history_rejects_invalid_day_key_range(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    list_history = mocker.patch("app.api.routes.meals.meal_service.list_history")
+
+    response = client.get(
+        "/api/v1/users/me/meals/history?dayKeyStart=2026-03-31&dayKeyEnd=2026-03-01",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid dayKey range"}
+    list_history.assert_not_called()
+
+
+def test_get_meals_history_rejects_legacy_timestamp_range_params(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    list_history = mocker.patch("app.api.routes.meals.meal_service.list_history")
+
+    response = client.get(
+        "/api/v1/users/me/meals/history"
+        "?loggedAtStart=2026-03-01T00:00:00.000Z"
+        "&loggedAtEnd=2026-03-31T23:59:59.999Z",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Use dayKeyStart/dayKeyEnd for meal history ranges"
+    }
+    list_history.assert_not_called()
+
+
 def test_get_meal_changes_returns_backend_payload(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
