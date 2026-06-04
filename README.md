@@ -273,6 +273,9 @@ The canonical mobile to backend matrix for prod, smoke, and dev/local is [../doc
 | `AI_CREDIT_COST_CHAT`            | No                            | `1`                       | Credits per chat request                                       |
 | `AI_CREDIT_COST_PHOTO`           | No                            | `5`                       | Credits per photo analysis                                     |
 | `AI_CREDIT_COST_TEXT_MEAL`       | No                            | `1`                       | Credits per text meal analysis                                 |
+| `REVENUECAT_WEBHOOK_SECRET`      | Yes when webhooks are active  | empty                     | RevenueCat webhook verification secret                         |
+| `REVENUECAT_API_KEY`             | Yes for sync-tier             | empty                     | RevenueCat REST API key for entitlement reconciliation          |
+| `REVENUECAT_PREMIUM_ENTITLEMENT_ID` | No                         | `premium`                 | RevenueCat entitlement ID that grants premium access            |
 | `AI_GATEWAY_ENABLED`             | No                            | `true`                    | Enforce legacy v1 AI gateway rules                             |
 | `TELEMETRY_ENABLED`              | No                            | `false`                   | Accept v2 telemetry batches                                    |
 | `HABITS_ENABLED`                 | No                            | `true`                    | Compute habit signals                                          |
@@ -305,6 +308,9 @@ AI_CREDITS_PREMIUM=800
 AI_CREDIT_COST_CHAT=1
 AI_CREDIT_COST_TEXT_MEAL=1
 AI_CREDIT_COST_PHOTO=5
+REVENUECAT_WEBHOOK_SECRET=your_revenuecat_webhook_secret
+REVENUECAT_API_KEY=your_revenuecat_api_key
+REVENUECAT_PREMIUM_ENTITLEMENT_ID=premium
 ```
 
 ## Railway Deployment
@@ -324,7 +330,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `STATE_ENABLED`, `HABITS_ENABLED`, `SMART_REMINDERS_ENABLED`, `WEEKLY_REPORTS_ENABLED`, `AI_GATEWAY_ENABLED`, `TELEMETRY_ENABLED`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_API_KEY`, `REVENUECAT_PREMIUM_ENTITLEMENT_ID`, `STATE_ENABLED`, `HABITS_ENABLED`, `SMART_REMINDERS_ENABLED`, `WEEKLY_REPORTS_ENABLED`, `AI_GATEWAY_ENABLED`, `TELEMETRY_ENABLED`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 

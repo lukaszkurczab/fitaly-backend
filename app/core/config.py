@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # Billing integrations
     REVENUECAT_WEBHOOK_SECRET: str = ""
     REVENUECAT_API_KEY: str = ""
+    REVENUECAT_PREMIUM_ENTITLEMENT_ID: str = "premium"
 
     model_config = SettingsConfigDict(
         env_file=".env",

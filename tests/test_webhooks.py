@@ -134,6 +134,105 @@ def test_revenuecat_webhook_rejects_invalid_secret(mocker: MockerFixture) -> Non
     get_credits.assert_not_called()
 
 
+def test_revenuecat_webhook_returns_503_when_secret_is_not_configured(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch.object(settings, "REVENUECAT_WEBHOOK_SECRET", "")
+    get_credits = mocker.patch("app.api.routes.webhooks.ai_credits_service.get_credits_status")
+
+    response = client.post(
+        "/webhooks/revenuecat",
+        headers={"X-RevenueCat-Signature": "test-webhook-secret"},
+        json={"event": {"type": "CANCELLATION", "app_user_id": "user-1", "id": "evt-1"}},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "RevenueCat webhook secret is not configured"}
+    get_credits.assert_not_called()
+
+
+def test_revenuecat_webhook_rejects_mutating_event_without_event_id(
+    mocker: MockerFixture,
+) -> None:
+    activation = mocker.patch(
+        "app.api.routes.webhooks.ai_credits_service.apply_premium_activation"
+    )
+
+    response = client.post(
+        "/webhooks/revenuecat",
+        headers={"X-RevenueCat-Signature": "test-webhook-secret"},
+        json={
+            "event": {
+                "type": "INITIAL_PURCHASE",
+                "app_user_id": "user-1",
+                "entitlement_id": "premium",
+                "purchased_at": "2026-04-14T08:00:00Z",
+                "expiration_at": "2026-05-14T08:00:00Z",
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Missing RevenueCat event ID"}
+    activation.assert_not_called()
+
+
+def test_revenuecat_webhook_ignores_unknown_entitlement_without_granting_premium(
+    mocker: MockerFixture,
+) -> None:
+    logger_info = mocker.patch("app.api.routes.webhooks.logger.info")
+    get_credits = mocker.patch(
+        "app.api.routes.webhooks.ai_credits_service.get_credits_status",
+        return_value=_status(
+            tier="free",
+            balance=100,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    activation = mocker.patch(
+        "app.api.routes.webhooks.ai_credits_service.apply_premium_activation"
+    )
+
+    response = client.post(
+        "/webhooks/revenuecat",
+        headers={"X-RevenueCat-Signature": "test-webhook-secret"},
+        json={
+            "event": {
+                "id": "evt-pro-1",
+                "type": "INITIAL_PURCHASE",
+                "app_user_id": "user-1",
+                "entitlement_id": "pro",
+                "purchased_at": "2026-04-14T08:00:00Z",
+                "expiration_at": "2026-05-14T08:00:00Z",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "eventType": "INITIAL_PURCHASE",
+        "userId": "user-1",
+        "tier": "free",
+        "balance": 100,
+        "ignored": True,
+    }
+    get_credits.assert_called_once_with("user-1")
+    activation.assert_not_called()
+    logger_info.assert_called_once_with(
+        "revenuecat_webhook_ignored_non_premium_entitlement",
+        extra={
+            "event_type": "INITIAL_PURCHASE",
+            "user_id": "user-1",
+            "event_id": "evt-pro-1",
+            "entitlement_id": "pro",
+            "tier": "free",
+        },
+    )
+
+
 def test_revenuecat_webhook_handles_initial_purchase(mocker: MockerFixture) -> None:
     logger_info = mocker.patch("app.api.routes.webhooks.logger.info")
     activation = mocker.patch(
@@ -212,6 +311,7 @@ def test_revenuecat_webhook_handles_renewal(mocker: MockerFixture) -> None:
     assert response.json()["tier"] == "premium"
     renewal.assert_called_once()
     assert renewal.call_args.kwargs["event_id"] == "evt-renewal-1"
+    assert renewal.call_args.kwargs["entitlement_id"] == "premium"
 
 
 def test_revenuecat_webhook_handles_expiration_transition(mocker: MockerFixture) -> None:
@@ -234,6 +334,7 @@ def test_revenuecat_webhook_handles_expiration_transition(mocker: MockerFixture)
                 "id": "evt-exp-1",
                 "type": "EXPIRATION",
                 "app_user_id": "user-1",
+                "entitlement_id": "premium",
                 "expiration_at": "2026-06-14T08:00:00Z",
             }
         },
