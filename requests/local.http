@@ -120,7 +120,7 @@ Content-Type: application/json
       "tzOffsetMin": 0,
       "schemaVersion": 2,
       "props": {
-        "origin": "local_evidence"
+        "origin": "app_boot"
       }
     }
   ]

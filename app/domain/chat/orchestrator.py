@@ -395,6 +395,7 @@ class ChatOrchestrator:
                 not isinstance(exc, AiCreditsExhaustedDomainError)
                 and credit_cost > 0
                 and credits_status is not None
+                and not assistant_message_id
             ):
                 try:
                     refund_result = await self.credits_service.refund_credits_idempotent(

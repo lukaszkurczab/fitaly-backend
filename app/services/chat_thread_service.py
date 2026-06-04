@@ -10,6 +10,7 @@ from typing import Any
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import coerce_int, coerce_optional_int
 from app.core.exceptions import FirestoreServiceError
@@ -87,7 +88,7 @@ async def list_threads(
     try:
         query = threads_ref.order_by("updatedAt", direction=firestore.Query.DESCENDING)
         if before_updated_at is not None:
-            query = query.where("updatedAt", "<", before_updated_at)
+            query = query.where(filter=FieldFilter("updatedAt", "<", before_updated_at))
         snapshots = list(query.limit(limit_count).stream())
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
@@ -113,7 +114,7 @@ async def list_messages(
     try:
         query = messages_ref.order_by("createdAt", direction=firestore.Query.DESCENDING)
         if before_created_at is not None:
-            query = query.where("createdAt", "<", before_created_at)
+            query = query.where(filter=FieldFilter("createdAt", "<", before_created_at))
         snapshots = list(query.limit(limit_count).stream())
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
@@ -125,4 +126,3 @@ async def list_messages(
     items = [_normalize_message(snapshot) for snapshot in snapshots]
     next_before_created_at = items[-1]["createdAt"] if len(items) == limit_count else None
     return items, next_before_created_at
-

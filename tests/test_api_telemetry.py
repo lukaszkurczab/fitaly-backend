@@ -527,6 +527,415 @@ def test_telemetry_batch_accepts_launch_kpi_events(mocker: MockerFixture) -> Non
     assert response.json()["rejectedCount"] == 0
 
 
+def test_telemetry_batch_accepts_session_start_app_boot_origin(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    props: dict[str, object] = {"origin": "app_boot"}
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload({"name": "session_start", "props": props}),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 1
+    assert firestore_client.storage["evt-1"]["props"] == props
+
+
+def test_telemetry_batch_rejects_unbounded_session_start_origin(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "session_start",
+                "props": {"origin": "private launch note"},
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_accepts_notification_opened_mobile_props(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    props: dict[str, object] = {
+        "notificationType": "meal_reminder",
+        "origin": "system_notifications",
+        "actionIdentifier": "default",
+        "openedFromBackground": True,
+    }
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload({"name": "notification_opened", "props": props}),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 1
+    assert firestore_client.storage["evt-1"]["props"] == props
+
+
+def test_telemetry_batch_accepts_user_and_system_notification_types(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    day_fill_props: dict[str, object] = {
+        "notificationType": "day_fill",
+        "origin": "user_notifications",
+    }
+    weekly_summary_props: dict[str, object] = {
+        "notificationType": "stats_weekly_summary",
+        "origin": "system_notifications",
+        "actionIdentifier": "open_chat",
+    }
+    motivation_props: dict[str, object] = {
+        "notificationType": "motivation_dont_give_up",
+        "origin": "system_notifications",
+    }
+    payload = build_payload()
+    payload["events"] = [
+        {
+            **build_event_context(event_id="evt-day-fill"),
+            "name": "notification_opened",
+            "props": day_fill_props,
+        },
+        {
+            **build_event_context(event_id="evt-weekly-summary"),
+            "name": "notification_opened",
+            "props": weekly_summary_props,
+        },
+        {
+            **build_event_context(event_id="evt-motivation"),
+            "name": "notification_opened",
+            "props": motivation_props,
+        },
+    ]
+
+    response = client.post("/api/v2/telemetry/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 3
+    assert firestore_client.storage["evt-day-fill"]["props"] == day_fill_props
+    assert firestore_client.storage["evt-weekly-summary"]["props"] == weekly_summary_props
+    assert firestore_client.storage["evt-motivation"]["props"] == motivation_props
+
+
+def test_telemetry_batch_accepts_manage_subscription_entitlement_and_restore_events(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    entitlement_confirmed_props: dict[str, object] = {
+        "source": "manage_subscription",
+        "tier": "premium",
+    }
+    entitlement_failed_props: dict[str, object] = {
+        "source": "manage_subscription",
+        "reason": "access_unknown_degraded",
+    }
+    restore_succeeded_props: dict[str, object] = {
+        "source": "manage_subscription",
+        "confirmed": True,
+    }
+    restore_failed_props: dict[str, object] = {
+        "source": "manage_subscription",
+        "reason": "network",
+    }
+    payload = build_payload()
+    payload["events"] = [
+        {
+            **build_event_context(event_id="evt-entitlement-confirmed"),
+            "name": "entitlement_confirmed",
+            "props": entitlement_confirmed_props,
+        },
+        {
+            **build_event_context(event_id="evt-entitlement-failed"),
+            "name": "entitlement_confirmation_failed",
+            "props": entitlement_failed_props,
+        },
+        {
+            **build_event_context(event_id="evt-restore-succeeded"),
+            "name": "restore_succeeded",
+            "props": restore_succeeded_props,
+        },
+        {
+            **build_event_context(event_id="evt-restore-failed"),
+            "name": "restore_failed",
+            "props": restore_failed_props,
+        },
+    ]
+
+    response = client.post("/api/v2/telemetry/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 4
+    assert (
+        firestore_client.storage["evt-entitlement-confirmed"]["props"]
+        == entitlement_confirmed_props
+    )
+    assert (
+        firestore_client.storage["evt-entitlement-failed"]["props"]
+        == entitlement_failed_props
+    )
+    assert (
+        firestore_client.storage["evt-restore-succeeded"]["props"]
+        == restore_succeeded_props
+    )
+    assert firestore_client.storage["evt-restore-failed"]["props"] == restore_failed_props
+
+
+def test_telemetry_batch_rejects_unbounded_premium_event_sources(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    event_cases: tuple[tuple[str, dict[str, object]], ...] = (
+        (
+            "entitlement_confirmed",
+            {"source": "private support note", "tier": "premium"},
+        ),
+        (
+            "entitlement_confirmation_failed",
+            {
+                "source": "private support note",
+                "reason": "access_unknown_degraded",
+            },
+        ),
+        (
+            "restore_succeeded",
+            {"source": "private support note", "confirmed": True},
+        ),
+        (
+            "restore_failed",
+            {"source": "private support note", "reason": "network"},
+        ),
+    )
+
+    for index, (event_name, props) in enumerate(event_cases):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload(
+                {
+                    "eventId": f"evt-premium-source-{index}",
+                    "name": event_name,
+                    "props": props,
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_unbounded_notification_type(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "notification_opened",
+                "props": {
+                    "notificationType": "private custom reminder note",
+                    "origin": "user_notifications",
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_unbounded_notification_action_identifier(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "notification_opened",
+                "props": {
+                    "notificationType": "meal_reminder",
+                    "origin": "system_notifications",
+                    "actionIdentifier": "private action label",
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_accepts_weekly_report_opened_with_bounded_access_reason(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    props: dict[str, object] = {
+        "reportStatus": "unavailable",
+        "insightCount": 0,
+        "priorityCount": 0,
+        "source": "fallback",
+        "accessState": "degraded",
+        "accessReason": "degraded",
+    }
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload({"name": "weekly_report_opened", "props": props}),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 1
+    assert firestore_client.storage["evt-1"]["props"] == props
+
+
+def test_telemetry_batch_accepts_weekly_locked_and_blocked_bounded_reasons(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    locked_props: dict[str, object] = {
+        "source": "remote",
+        "accessState": "locked",
+        "accessReason": "premium_required",
+    }
+    blocked_props: dict[str, object] = {
+        "source": "disabled",
+        "accessState": "degraded",
+        "accessReason": "feature_disabled",
+    }
+    payload = build_payload()
+    payload["events"] = [
+        {
+            **build_event_context(event_id="evt-weekly-locked"),
+            "name": "weekly_report_locked_viewed",
+            "props": locked_props,
+        },
+        {
+            **build_event_context(event_id="evt-weekly-blocked"),
+            "name": "weekly_report_access_blocked",
+            "props": blocked_props,
+        },
+    ]
+
+    response = client.post("/api/v2/telemetry/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 2
+    assert firestore_client.storage["evt-weekly-locked"]["props"] == locked_props
+    assert firestore_client.storage["evt-weekly-blocked"]["props"] == blocked_props
+
+
+def test_telemetry_batch_rejects_unbounded_weekly_access_reason(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "weekly_report_locked_viewed",
+                "props": {
+                    "source": "remote",
+                    "accessState": "locked",
+                    "accessReason": "my private paywall note",
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_weekly_user_authored_content_props(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    for prop_key in ("title", "body", "summary", "reasonCodes", "text", "message"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload(
+                {
+                    "eventId": f"evt-weekly-{prop_key}",
+                    "name": "weekly_report_opened",
+                    "props": {
+                        "reportStatus": "ready",
+                        "source": "remote",
+                        "accessState": "premium",
+                        prop_key: "raw weekly report content",
+                    },
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_accepts_smart_reminder_events(
     mocker: MockerFixture,
 ) -> None:

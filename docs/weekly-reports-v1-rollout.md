@@ -33,6 +33,7 @@ Expected responses:
 |---|---|---|
 | `200` | feature computed successfully | valid `WeeklyReportResponse` payload |
 | `400` | invalid `weekEnd` | client input bug |
+| `403` | authenticated user is not premium | `WEEKLY_REPORT_PREMIUM_REQUIRED` |
 | `503` | `WEEKLY_REPORTS_ENABLED=false` | runtime kill switch is active |
 | `500` | backend failure | investigate Firestore/service failure |
 
@@ -49,8 +50,9 @@ After rollout, a disabled response should only appear when the backend flag is i
 2. Verify a week with at least `4` valid logged days returns `status="ready"`.
 3. Verify an empty or very sparse week returns `status="insufficient_data"`.
 4. Verify invalid `weekEnd` returns `400`.
-5. Verify disabling `WEEKLY_REPORTS_ENABLED` returns `503` with `detail="Weekly reports are disabled"` without backend crash.
-6. Verify mobile renders loading, ready, insufficient-data, and unavailable states.
+5. Verify a free authenticated user returns `403` with `detail="WEEKLY_REPORT_PREMIUM_REQUIRED"`.
+6. Verify disabling `WEEKLY_REPORTS_ENABLED` returns `503` with `detail="Weekly reports are disabled"` without backend crash.
+7. Verify mobile renders loading, ready, insufficient-data, locked, and unavailable states.
 
 ## QA Notes
 
@@ -105,9 +107,9 @@ Monitor:
 - screen opens from Home card
 - unavailable fallback frequency
 - optional bounded telemetry:
-  - `weekly_report_viewed`
-  - `weekly_report_cta_clicked`
-  - `weekly_report_dismissed`
+  - `weekly_report_opened`
+  - `weekly_report_locked_viewed`
+  - `weekly_report_access_blocked`
 
 If mobile shows frequent unavailable state while backend is healthy, investigate contract drift first.
 

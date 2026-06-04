@@ -380,6 +380,53 @@ async def test_ai_chat_v2_retry_after_refunded_failure_and_second_failure_refund
     assert next(iter(harness.credits_service.idempotency.values()))["state"] == "refunded"
 
 
+async def test_ai_chat_v2_failure_after_persisted_assistant_does_not_refund(
+    mocker: MockerFixture,
+) -> None:
+    planner_result = planner_result_payload(
+        task_type="data_grounded_answer",
+        capabilities=[],
+        response_mode="concise_answer",
+    )
+    harness = build_orchestrator_harness(
+        planner_result=planner_result,
+        tools={},
+        generator_script=[generation_result(text="Odpowiedz zostala zapisana.")],
+    )
+    mocker.patch.object(
+        harness.summary_service,
+        "maybe_refresh_summary",
+        side_effect=RuntimeError("summary write failed after assistant persistence"),
+    )
+    payload = ChatRunRequestDto.model_validate(
+        {
+            "threadId": "thread-post-assistant-failure",
+            "clientMessageId": "post-assistant-failure-1",
+            "message": "Podsumuj dzisiaj",
+            "language": "pl",
+        }
+    )
+
+    with pytest.raises(RuntimeError):
+        await harness.orchestrator.run(user_id="user-post-assistant-failure", request=payload)
+
+    assert len(harness.credits_service.deductions) == 1
+    assert len(harness.credits_service.refunds) == 0
+    assert harness.credits_service.balance == 9
+    assert next(iter(harness.credits_service.idempotency.values()))["state"] == "deducted"
+
+    replay = await harness.orchestrator.run(
+        user_id="user-post-assistant-failure",
+        request=payload,
+    )
+
+    assert replay.reply == "Odpowiedz zostala zapisana."
+    assert len(harness.credits_service.deductions) == 1
+    assert len(harness.credits_service.refunds) == 0
+    assert replay.credits is not None
+    assert replay.credits.balance == 9
+
+
 async def test_ai_chat_v2_out_of_scope_refusal_is_billable_after_planner() -> None:
     planner_result = planner_result_payload(
         task_type="out_of_scope_refusal",

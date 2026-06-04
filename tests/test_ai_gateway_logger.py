@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from pytest_mock import MockerFixture
 
 from app.services import ai_gateway_logger
@@ -27,6 +29,10 @@ def _sample_gateway_result() -> dict[str, object]:
         "truncated": False,
         "cost_charged": 1.0,
     }
+
+
+def _payload_text(payload: Mapping[str, object]) -> str:
+    return " ".join(str(value) for value in payload.values())
 
 
 def test_log_gateway_decision_emits_observability_and_analytics(
@@ -91,6 +97,38 @@ def test_log_gateway_decision_emits_observability_and_analytics(
     assert "actualTokens" not in analytics_payload
     assert "retryCount" not in analytics_payload
     assert "usedSummary" not in analytics_payload
+
+
+def test_log_gateway_decision_does_not_emit_raw_user_content(
+    mocker: MockerFixture,
+) -> None:
+    observability_logger = mocker.Mock()
+    analytics_logger = mocker.Mock()
+    mocker.patch.object(ai_gateway_logger, "_OBSERVABILITY_LOGGER", observability_logger)
+    mocker.patch.object(ai_gateway_logger, "_ANALYTICS_LOGGER", analytics_logger)
+    raw_message = (
+        '{"name":"secret family recipe","notes":"allergic to private ingredient"}'
+    )
+
+    ai_gateway_logger.log_gateway_decision(
+        "user-1",
+        raw_message,
+        _sample_gateway_result(),  # type: ignore[arg-type]
+        "text_meal_analysis",
+        language="en",
+    )
+
+    observability_payload = observability_logger.info.call_args.kwargs["extra"]["context"]
+    analytics_payload = analytics_logger.info.call_args.kwargs["extra"]["context"]
+
+    assert observability_payload["messageLength"] == len(raw_message)
+    assert "message" not in observability_payload
+    assert "messageHash" not in observability_payload
+    assert "message" not in analytics_payload
+    assert "messageLength" not in analytics_payload
+    for forbidden in ("secret family recipe", "allergic to private ingredient"):
+        assert forbidden not in _payload_text(observability_payload)
+        assert forbidden not in _payload_text(analytics_payload)
 
 
 def test_log_gateway_decision_falls_back_when_sink_is_unavailable(

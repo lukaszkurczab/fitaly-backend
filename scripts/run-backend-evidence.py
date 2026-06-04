@@ -211,7 +211,7 @@ DEFAULT_CHECKS: tuple[EvidenceCheck, ...] = (
                     "timezone": "UTC",
                     "tzOffsetMin": 0,
                     "schemaVersion": 2,
-                    "props": {"origin": "local_evidence"},
+                    "props": {"origin": "app_boot"},
                 }
             ],
         },
