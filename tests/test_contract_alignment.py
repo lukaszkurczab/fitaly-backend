@@ -38,6 +38,13 @@ from app.schemas.meal import (
     MealType,
     MealUpsertRequest,
 )
+from app.schemas.media_asset import (
+    MEDIA_ASSET_LIFECYCLE_OWNED_FIELDS,
+    MEDIA_ASSET_LIFECYCLE_OWNER,
+    MEDIA_ASSET_STATES,
+    MEDIA_ASSET_SURFACES,
+    MediaAssetLifecycleContract,
+)
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import (
     NOOP_REASON_CODES,
@@ -70,6 +77,13 @@ from app.services.coach_service import get_coach_response
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
 JSONDict = dict[str, Any]
 StringListDict = dict[str, list[str]]
+MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN = {
+    "avatarUrl",
+    "attachmentUrl",
+    "downloadUrl",
+    "publicUrl",
+    "resolvedDownloadUrl",
+}
 
 
 def _load_fixture(name: str) -> JSONDict:
@@ -832,6 +846,62 @@ class TestEnumParity:
         assert sorted(enums["ReminderReasonCode"]) == sorted(
             get_args(ReminderReasonCode)
         )
+
+
+# ---------------------------------------------------------------------------
+# Fixture: media_asset_lifecycle_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestMediaAssetLifecycleContract:
+    """Shared media asset lifecycle fixture must parse and stay exact."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("media_asset_lifecycle_v1.json")
+
+    def test_contract_parses(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert contract.contract == "media_asset_lifecycle_v1"
+        assert contract.lifecycleOwner == MEDIA_ASSET_LIFECYCLE_OWNER
+        assert (
+            tuple(contract.assetLifecycleOwns)
+            == MEDIA_ASSET_LIFECYCLE_OWNED_FIELDS
+        )
+        assert {"opId", "clientMutationId"}.issubset(contract.assetLifecycleOwns)
+
+    def test_state_vocabulary_is_exact(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert tuple(contract.assetStates) == MEDIA_ASSET_STATES
+
+    def test_release_surfaces_are_exact(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert set(contract.surfaces.keys()) == set(MEDIA_ASSET_SURFACES)
+
+    def test_every_surface_uses_shared_states_and_owner_boundaries(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        for surface in MEDIA_ASSET_SURFACES:
+            surface_contract = contract.surfaces[surface]
+
+            assert surface_contract.usesAssetStates == "assetStates"
+            assert surface_contract.domainDocumentOwns
+            assert surface_contract.domainDocumentMustNotOwn == list(
+                contract.assetLifecycleOwns
+            )
+            assert not MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN.intersection(
+                surface_contract.domainDocumentOwns
+            )
+            assert not any(
+                field.endswith(("Url", "URL"))
+                for field in surface_contract.domainDocumentOwns
+            )
 
 
 class TestCoachContractEnums:

@@ -1,0 +1,118 @@
+{
+  "contract": "media_asset_lifecycle_v1",
+  "assetStates": [
+    "local_pending",
+    "uploading",
+    "uploaded",
+    "attached",
+    "failed",
+    "dead_letter",
+    "retryable",
+    "discarded",
+    "deleted"
+  ],
+  "lifecycleOwner": "media_asset_lifecycle",
+  "assetLifecycleOwns": [
+    "localFilePath",
+    "opId",
+    "clientMutationId",
+    "remoteStoragePath",
+    "uploadAttempt",
+    "uploadState",
+    "retryState",
+    "discardState",
+    "deleteState",
+    "deadLetterReason",
+    "resolvedDownloadUrl"
+  ],
+  "surfaces": {
+    "meal_photo": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "meal",
+      "domainDocumentOwns": [
+        "imageRef",
+        "displayMetadata",
+        "mealDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "saved_meal_photo": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "saved_meal",
+      "domainDocumentOwns": [
+        "imageRef",
+        "displayMetadata",
+        "savedMealDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "avatar": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "profile",
+      "domainDocumentOwns": [
+        "avatarRef",
+        "displayMetadata",
+        "profileDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "feedback_attachment": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "feedback",
+      "domainDocumentOwns": [
+        "attachmentRef",
+        "displayMetadata",
+        "feedbackDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    }
+  }
+}
