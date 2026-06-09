@@ -1,6 +1,8 @@
 """Business logic for account/profile mutations owned by the backend."""
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 import re
 from typing import Any, cast
@@ -40,8 +42,10 @@ from app.core.firestore_constants import (
     USERNAMES_COLLECTION,
     USERS_COLLECTION,
 )
+from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
 
 logger = logging.getLogger(__name__)
+AiConsentDocument = dict[str, str | None]
 
 DELETE_SUBCOLLECTIONS = (
     "meals",
@@ -51,6 +55,7 @@ DELETE_SUBCOLLECTIONS = (
     "prefs",
     "notif_meta",
     "feedback",
+    MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
 )
@@ -60,6 +65,13 @@ MIN_USERNAME_LENGTH = 3
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
         "profile",
+    }
+)
+EDITABLE_PROFILE_DOCUMENT_FIELDS = frozenset(
+    {
+        "language",
+        "nutritionProfile",
+        "aiPreferences",
     }
 )
 
@@ -95,6 +107,10 @@ class AvatarMetadataValidationError(Exception):
 
 class UserProfileValidationError(Exception):
     """Raised when the user profile payload contains forbidden fields."""
+
+
+class UserProfileMutationDedupeConflictError(ValueError):
+    """Raised when a clientMutationId is reused for a different profile mutation."""
 
 
 class OnboardingValidationError(Exception):
@@ -158,12 +174,62 @@ def _default_nutrition_profile() -> dict[str, Any]:
     }
 
 
+def _default_ai_consent() -> AiConsentDocument:
+    return {
+        "status": "not_granted",
+        "grantedAt": None,
+        "revokedAt": None,
+    }
+
+
+def _normalize_ai_consent(raw: object) -> AiConsentDocument:
+    if not isinstance(raw, dict):
+        return _default_ai_consent()
+    payload = cast(dict[str, Any], raw)
+    status_raw = payload.get("status")
+    status = (
+        status_raw
+        if status_raw in {"not_granted", "granted", "revoked"}
+        else "not_granted"
+    )
+    granted_at = payload.get("grantedAt")
+    revoked_at = payload.get("revokedAt")
+    return {
+        "status": cast(str, status),
+        "grantedAt": granted_at if isinstance(granted_at, str) else None,
+        "revokedAt": revoked_at if isinstance(revoked_at, str) else None,
+    }
+
+
+def _has_active_ai_consent(ai_consent: AiConsentDocument) -> bool:
+    return (
+        ai_consent.get("status") == "granted"
+        and bool(ai_consent.get("grantedAt"))
+        and ai_consent.get("revokedAt") is None
+    )
+
+
+def _canonicalize_profile_contract(profile: dict[str, Any]) -> dict[str, Any]:
+    canonical = _deep_merge_dict(_default_profile(), profile)
+    canonical.pop("consents", None)
+    canonical["aiConsent"] = _normalize_ai_consent(canonical.get("aiConsent"))
+    return canonical
+
+
+def _profile_write_with_legacy_consents_delete(
+    canonical_profile: dict[str, Any],
+) -> dict[str, Any]:
+    profile_write = dict(canonical_profile)
+    profile_write["consents"] = firestore.DELETE_FIELD
+    return profile_write
+
+
 def _default_profile(normalized_language: str = "en") -> dict[str, Any]:
     return {
         "language": normalized_language,
         "nutritionProfile": _default_nutrition_profile(),
         "aiPreferences": {"stylePersona": "calm_guide"},
-        "consents": {"aiHealthDataConsentAt": None},
+        "aiConsent": _default_ai_consent(),
         "readiness": {
             "status": "needs_profile",
             "onboardingCompletedAt": None,
@@ -222,6 +288,9 @@ def _merge_document_for_response(
             merged.pop(key, None)
         else:
             merged[key] = value
+    profile = merged.get("profile")
+    if isinstance(profile, dict):
+        merged["profile"] = _canonicalize_profile_contract(cast(dict[str, Any], profile))
     return merged
 
 
@@ -246,9 +315,13 @@ def _build_onboarding_profile_document(
     profile.setdefault("lastLogin", now_iso)
     profile.setdefault("plan", "free")
     existing_profile = profile.get("profile")
-    profile["profile"] = _deep_merge_dict(
-        _default_profile(normalized_language),
-        cast(dict[str, Any], existing_profile) if isinstance(existing_profile, dict) else {},
+    profile["profile"] = _canonicalize_profile_contract(
+        _deep_merge_dict(
+            _default_profile(normalized_language),
+            cast(dict[str, Any], existing_profile)
+            if isinstance(existing_profile, dict)
+            else {},
+        )
     )
     profile.setdefault("syncState", "pending")
     profile.setdefault("lastSyncedAt", "")
@@ -293,11 +366,17 @@ def _initialize_onboarding_profile_transaction(
         now_ms=now_ms,
         existing=existing,
     )
+    profile_write_document = dict(profile_document)
+    profile_payload = profile_write_document.get("profile")
+    if isinstance(profile_payload, dict):
+        profile_write_document["profile"] = _profile_write_with_legacy_consents_delete(
+            cast(dict[str, Any], profile_payload)
+        )
 
     transaction.set(username_ref, {"uid": user_id}, merge=True)
     transaction.set(
         user_ref,
-        {**_legacy_delete_document(), **profile_document},
+        {**_legacy_delete_document(), **profile_write_document},
         merge=True,
     )
 
@@ -317,7 +396,177 @@ def _sanitize_profile_patch(payload: dict[str, Any]) -> dict[str, Any]:
     profile = patch.get("profile")
     if profile is not None and not isinstance(profile, dict):
         raise UserProfileValidationError("Profile payload must be an object.")
+    if isinstance(profile, dict):
+        profile_patch = cast(dict[str, Any], profile)
+        invalid_profile_keys = sorted(
+            key for key in profile_patch if key not in EDITABLE_PROFILE_DOCUMENT_FIELDS
+        )
+        if invalid_profile_keys:
+            joined = ", ".join(f"profile.{key}" for key in invalid_profile_keys)
+            raise UserProfileValidationError(f"Forbidden profile fields: {joined}")
     return patch
+
+
+def _require_profile_client_mutation_id(value: object) -> str:
+    client_mutation_id = str(value or "").strip()
+    if not client_mutation_id:
+        raise ValueError("Missing clientMutationId")
+    return client_mutation_id
+
+
+def _stable_profile_payload_hash(value: dict[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _profile_mutation_ref(
+    client: firestore.Client,
+    user_id: str,
+    client_mutation_id: str,
+) -> firestore.DocumentReference:
+    mutation_hash = hashlib.sha256(client_mutation_id.encode("utf-8")).hexdigest()
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        MEAL_MUTATION_DEDUPE_SUBCOLLECTION
+    ).document(mutation_hash)
+
+
+def _profile_mutation_record(
+    *,
+    user_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    result_profile: dict[str, Any],
+    applied: bool,
+) -> dict[str, Any]:
+    return {
+        "userId": user_id,
+        "clientMutationId": client_mutation_id,
+        "kind": "profile_update",
+        "profileDocumentId": "user_profile",
+        "payloadHash": payload_hash,
+        "resultProfile": result_profile,
+        "applied": applied,
+        "createdAt": _utc_timestamp(),
+    }
+
+
+def _result_from_existing_profile_mutation(
+    data: dict[str, Any],
+    *,
+    client_mutation_id: str,
+    payload_hash: str,
+) -> dict[str, Any]:
+    if (
+        data.get("clientMutationId") != client_mutation_id
+        or data.get("kind") != "profile_update"
+        or data.get("profileDocumentId") != "user_profile"
+        or data.get("payloadHash") != payload_hash
+    ):
+        raise UserProfileMutationDedupeConflictError(
+            "clientMutationId was already used for a different profile mutation"
+        )
+
+    result_profile = data.get("resultProfile")
+    if not isinstance(result_profile, dict):
+        raise UserProfileMutationDedupeConflictError(
+            "clientMutationId record is incomplete"
+        )
+    return dict(cast(dict[str, Any], result_profile))
+
+
+def _build_user_profile_update_document(
+    *,
+    user_id: str,
+    sanitized_patch: dict[str, Any],
+    existing: dict[str, Any],
+    auth_email: str | None,
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    document: dict[str, Any] = {**_legacy_delete_document(), "uid": user_id}
+    _apply_confirmed_auth_email(
+        document,
+        existing=existing,
+        auth_email=auth_email,
+    )
+    if "createdAt" not in existing:
+        document["createdAt"] = _utc_timestamp_ms()
+    if "plan" not in existing:
+        document["plan"] = "free"
+    if "syncState" not in existing:
+        document["syncState"] = "pending"
+    if "lastLogin" not in existing:
+        document["lastLogin"] = _utc_timestamp()
+
+    existing_profile = existing.get("profile")
+    patch_profile = sanitized_patch.get("profile")
+    if isinstance(patch_profile, dict):
+        document["profile"] = _profile_write_with_legacy_consents_delete(
+            _canonicalize_profile_contract(
+                _deep_merge_dict(
+                    cast(dict[str, Any], existing_profile)
+                    if isinstance(existing_profile, dict)
+                    else _default_profile(),
+                    cast(dict[str, Any], patch_profile),
+                )
+            )
+        )
+
+    merged = _merge_document_for_response(existing, document)
+    nutrition_patch = (
+        sanitized_patch.get("profile", {}).get("nutritionProfile")
+        if isinstance(sanitized_patch.get("profile"), dict)
+        else None
+    )
+    should_sync_streak = (
+        isinstance(nutrition_patch, dict) and "calorieTarget" in nutrition_patch
+    )
+    return document, merged, should_sync_streak
+
+
+@firestore.transactional
+def _upsert_user_profile_mutation_transaction(
+    transaction: firestore.Transaction,
+    *,
+    mutation_ref: firestore.DocumentReference,
+    user_ref: firestore.DocumentReference,
+    user_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    sanitized_patch: dict[str, Any],
+    auth_email: str | None,
+) -> tuple[dict[str, Any], bool, bool]:
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return (
+            _result_from_existing_profile_mutation(
+                dict(mutation_snapshot.to_dict() or {}),
+                client_mutation_id=client_mutation_id,
+                payload_hash=payload_hash,
+            ),
+            False,
+            False,
+        )
+
+    user_snapshot = user_ref.get(transaction=transaction)
+    existing = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else {}
+    document, merged, should_sync_streak = _build_user_profile_update_document(
+        user_id=user_id,
+        sanitized_patch=sanitized_patch,
+        existing=existing,
+        auth_email=auth_email,
+    )
+    transaction.set(user_ref, document, merge=True)
+    transaction.set(
+        mutation_ref,
+        _profile_mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            payload_hash=payload_hash,
+            result_profile=merged,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return merged, True, should_sync_streak
 
 
 async def set_email_pending(user_id: str, email: str) -> str:
@@ -440,50 +689,41 @@ async def get_user_profile_data(
             ) from exc
         profile = _merge_document_for_response(profile, document)
 
-    return profile
+    return _merge_document_for_response(profile, {})
 
 
 async def upsert_user_profile_data(
     user_id: str,
     payload: dict[str, Any],
     *,
+    client_mutation_id: str,
     auth_email: str | None = None,
 ) -> dict[str, Any]:
     sanitized_patch = _sanitize_profile_patch(payload)
+    normalized_client_mutation_id = _require_profile_client_mutation_id(
+        client_mutation_id
+    )
+    payload_hash = _stable_profile_payload_hash(
+        {"kind": "profile_update", "profile": sanitized_patch}
+    )
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
+    mutation_ref = _profile_mutation_ref(client, user_id, normalized_client_mutation_id)
 
     try:
-        snapshot = user_ref.get()
-        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-
-        document: dict[str, Any] = {**_legacy_delete_document(), "uid": user_id}
-        _apply_confirmed_auth_email(
-            document,
-            existing=existing,
+        profile, applied, should_sync_streak = _upsert_user_profile_mutation_transaction(
+            client.transaction(),
+            mutation_ref=mutation_ref,
+            user_ref=user_ref,
+            user_id=user_id,
+            client_mutation_id=normalized_client_mutation_id,
+            payload_hash=payload_hash,
+            sanitized_patch=sanitized_patch,
             auth_email=auth_email,
         )
-        if "createdAt" not in existing:
-            document["createdAt"] = _utc_timestamp_ms()
-        if "plan" not in existing:
-            document["plan"] = "free"
-        if "syncState" not in existing:
-            document["syncState"] = "pending"
-        if "lastLogin" not in existing:
-            document["lastLogin"] = _utc_timestamp()
-
-        if sanitized_patch:
-            existing_profile = existing.get("profile")
-            patch_profile = sanitized_patch.get("profile")
-            if isinstance(patch_profile, dict):
-                document["profile"] = _deep_merge_dict(
-                    cast(dict[str, Any], existing_profile)
-                    if isinstance(existing_profile, dict)
-                    else _default_profile(),
-                    cast(dict[str, Any], patch_profile),
-                )
-        user_ref.set(document, merge=True)
     except UserProfileValidationError:
+        raise
+    except UserProfileMutationDedupeConflictError:
         raise
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
@@ -492,17 +732,10 @@ async def upsert_user_profile_data(
         )
         raise FirestoreServiceError("Failed to upsert user profile data.") from exc
 
-    merged = _merge_document_for_response(existing, document)
-
-    nutrition_patch = (
-        sanitized_patch.get("profile", {}).get("nutritionProfile")
-        if isinstance(sanitized_patch.get("profile"), dict)
-        else None
-    )
-    if isinstance(nutrition_patch, dict) and "calorieTarget" in nutrition_patch:
+    if applied and should_sync_streak:
         await streak_service.sync_streak_from_meals(user_id)
 
-    return merged
+    return profile
 
 
 async def complete_onboarding_profile(
@@ -524,17 +757,19 @@ async def complete_onboarding_profile(
         now_iso = _utc_timestamp()
         existing_profile = existing.get("profile")
         patch_profile = profile_patch.get("profile")
-        canonical_profile = _deep_merge_dict(
-            cast(dict[str, Any], existing_profile)
-            if isinstance(existing_profile, dict)
-            else _default_profile(),
-            cast(dict[str, Any], patch_profile) if isinstance(patch_profile, dict) else {},
+        canonical_profile = _canonicalize_profile_contract(
+            _deep_merge_dict(
+                cast(dict[str, Any], existing_profile)
+                if isinstance(existing_profile, dict)
+                else _default_profile(),
+                cast(dict[str, Any], patch_profile) if isinstance(patch_profile, dict) else {},
+            )
         )
         document: dict[str, Any] = {
             **_legacy_delete_document(),
             "uid": user_id,
             "lastLogin": now_iso,
-            "profile": canonical_profile,
+            "profile": _profile_write_with_legacy_consents_delete(canonical_profile),
         }
         _apply_confirmed_auth_email(
             document,
@@ -563,59 +798,40 @@ async def complete_onboarding_profile(
     return merged
 
 
-async def record_ai_health_data_consent(
+async def grant_ai_consent(
     user_id: str,
     *,
     auth_email: str | None = None,
-) -> dict[str, Any]:
+) -> AiConsentDocument:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
-    consent_at = _utc_timestamp()
+    now_iso = _utc_timestamp()
 
     try:
         snapshot = user_ref.get()
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
 
         existing_profile = existing.get("profile")
-        canonical_profile = (
+        canonical_profile = _canonicalize_profile_contract(
             cast(dict[str, Any], existing_profile)
             if isinstance(existing_profile, dict)
             else _default_profile()
         )
-        existing_readiness = canonical_profile.get("readiness")
-        existing_readiness_document = (
-            cast(dict[str, Any], existing_readiness)
-            if isinstance(existing_readiness, dict)
-            else {}
+        current_ai_consent = _normalize_ai_consent(canonical_profile.get("aiConsent"))
+        next_ai_consent: AiConsentDocument = (
+            current_ai_consent
+            if _has_active_ai_consent(current_ai_consent)
+            else {
+                "status": "granted",
+                "grantedAt": now_iso,
+                "revokedAt": None,
+            }
         )
-        onboarding_completed_at = existing_readiness_document.get(
-            "onboardingCompletedAt"
-        )
-        has_completed_profile = isinstance(onboarding_completed_at, str) and bool(
-            onboarding_completed_at.strip()
-        )
-        next_readiness: dict[str, Any] = {
-            "status": "ready" if has_completed_profile else "needs_profile",
-            "onboardingCompletedAt": onboarding_completed_at
-            if isinstance(onboarding_completed_at, str)
-            else None,
-            "readyAt": consent_at if has_completed_profile else None,
-        }
-        canonical_profile = _deep_merge_dict(
-            _default_profile(),
-            canonical_profile,
-        )
-        canonical_profile = _deep_merge_dict(
-            canonical_profile,
-            {
-                "consents": {"aiHealthDataConsentAt": consent_at},
-                "readiness": next_readiness,
-            },
-        )
+        canonical_profile["aiConsent"] = next_ai_consent
         document: dict[str, Any] = {
             **_legacy_delete_document(),
             "uid": user_id,
-            "profile": canonical_profile,
+            "profile": _profile_write_with_legacy_consents_delete(canonical_profile),
         }
         _apply_confirmed_auth_email(
             document,
@@ -629,18 +845,77 @@ async def record_ai_health_data_consent(
         if "syncState" not in existing:
             document["syncState"] = "pending"
         if "lastLogin" not in existing:
-            document["lastLogin"] = consent_at
+            document["lastLogin"] = now_iso
 
         user_ref.set(document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
-            "Failed to record AI health data consent.",
+            "Failed to grant AI consent.",
             extra={"user_id": user_id},
         )
-        raise FirestoreServiceError("Failed to record AI health data consent.") from exc
+        raise FirestoreServiceError("Failed to grant AI consent.") from exc
 
-    merged = _merge_document_for_response(existing, document)
-    return merged
+    return _normalize_ai_consent(canonical_profile.get("aiConsent"))
+
+
+async def revoke_ai_consent(
+    user_id: str,
+    *,
+    auth_email: str | None = None,
+) -> AiConsentDocument:
+    client: firestore.Client = get_firestore()
+    user_ref = client.collection(USERS_COLLECTION).document(user_id)
+    now_iso = _utc_timestamp()
+
+    try:
+        snapshot = user_ref.get()
+        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+
+        existing_profile = existing.get("profile")
+        canonical_profile = _canonicalize_profile_contract(
+            cast(dict[str, Any], existing_profile)
+            if isinstance(existing_profile, dict)
+            else _default_profile()
+        )
+        current_ai_consent = _normalize_ai_consent(canonical_profile.get("aiConsent"))
+        next_ai_consent: AiConsentDocument = (
+            current_ai_consent
+            if current_ai_consent.get("status") == "revoked"
+            else {
+                "status": "revoked",
+                "grantedAt": current_ai_consent.get("grantedAt"),
+                "revokedAt": now_iso,
+            }
+        )
+        canonical_profile["aiConsent"] = next_ai_consent
+        document: dict[str, Any] = {
+            **_legacy_delete_document(),
+            "uid": user_id,
+            "profile": _profile_write_with_legacy_consents_delete(canonical_profile),
+        }
+        _apply_confirmed_auth_email(
+            document,
+            existing=existing,
+            auth_email=auth_email,
+        )
+        if "createdAt" not in existing:
+            document["createdAt"] = _utc_timestamp_ms()
+        if "plan" not in existing:
+            document["plan"] = "free"
+        if "syncState" not in existing:
+            document["syncState"] = "pending"
+        if "lastLogin" not in existing:
+            document["lastLogin"] = now_iso
+
+        user_ref.set(document, merge=True)
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to revoke AI consent.",
+            extra={"user_id": user_id},
+        )
+        raise FirestoreServiceError("Failed to revoke AI consent.") from exc
+
+    return _normalize_ai_consent(canonical_profile.get("aiConsent"))
 
 
 async def initialize_onboarding_profile(
@@ -916,6 +1191,7 @@ async def get_user_export_data(
     list[dict[str, Any]],
     dict[str, Any],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -931,6 +1207,10 @@ async def get_user_export_data(
         notifications = _read_subcollection_documents(user_ref, "notifications")
         prefs_documents = _read_subcollection_documents(user_ref, "prefs")
         feedback = _read_subcollection_documents(user_ref, FEEDBACK_SUBCOLLECTION)
+        meal_mutation_dedupe = _read_subcollection_documents(
+            user_ref,
+            MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+        )
         notification_prefs = {}
         for document in prefs_documents:
             notifications_value = document.get("notifications")
@@ -954,4 +1234,5 @@ async def get_user_export_data(
         notifications,
         notification_prefs,
         feedback,
+        meal_mutation_dedupe,
     )

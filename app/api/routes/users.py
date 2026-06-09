@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import cast
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
@@ -7,9 +7,9 @@ from app.api.http_errors import raise_bad_request
 from app.domain.users.services.consent_service import ConsentService
 from app.domain.users.services.user_profile_service import UserProfileService
 from app.schemas.user_account import (
-    AiHealthDataConsentRequest,
-    AiHealthDataConsentResponse,
-    AiHealthDataConsentState,
+    AiConsentActionResponse,
+    AiConsentState,
+    AiConsentStatusValue,
     AvatarMetadataRequest,
     AvatarMetadataResponse,
     DeleteAccountResponse,
@@ -23,8 +23,6 @@ from app.schemas.user_account import (
     UserProfilePatchRequest,
     UserProfileResponse,
     UserProfileUpdateResponse,
-    UserReadinessRequest,
-    ReadinessStatusValue,
 )
 from app.services import user_account_service
 from app.services.user_account_service import (
@@ -32,10 +30,22 @@ from app.services.user_account_service import (
     EmailValidationError,
     OnboardingUsernameUnavailableError,
     OnboardingValidationError,
+    UserProfileMutationDedupeConflictError,
     UserProfileValidationError,
 )
 
 router = APIRouter()
+
+
+def _to_ai_consent_state(ai_consent: dict[str, str | None]) -> AiConsentState:
+    status_value = ai_consent.get("status")
+    if status_value not in {"not_granted", "granted", "revoked"}:
+        status_value = "not_granted"
+    return AiConsentState(
+        status=cast(AiConsentStatusValue, status_value),
+        grantedAt=ai_consent.get("grantedAt"),
+        revokedAt=ai_consent.get("revokedAt"),
+    )
 
 
 @router.get("/users/me/profile", response_model=UserProfileResponse)
@@ -62,60 +72,50 @@ async def upsert_user_profile_me(
         profile = await user_account_service.upsert_user_profile_data(
             current_user.uid,
             payload.to_patch(),
+            client_mutation_id=payload.clientMutationId,
             auth_email=auth_email if isinstance(auth_email, str) else None,
         )
     except UserProfileValidationError as exc:
         raise_bad_request(exc)
+    except UserProfileMutationDedupeConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
     return UserProfileUpdateResponse(profile=profile, updated=True)
 
 
 @router.post(
-    "/users/me/ai-health-data-consent",
-    response_model=AiHealthDataConsentResponse,
+    "/users/me/ai-consent/grant",
+    response_model=AiConsentActionResponse,
 )
-async def accept_ai_health_data_consent_me(
-    _request: AiHealthDataConsentRequest,
+async def grant_ai_consent_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
-) -> AiHealthDataConsentResponse:
+) -> AiConsentActionResponse:
     auth_email = current_user.claims.get("email")
     consent_service = ConsentService(UserProfileService())
-    profile = await consent_service.grant_ai_health_data_consent(
+    ai_consent = await consent_service.grant_ai_consent(
         user_id=current_user.uid,
         auth_email=auth_email if isinstance(auth_email, str) else None,
     )
-    canonical_profile = profile.get("profile")
-    profile_document = (
-        cast(dict[str, Any], canonical_profile) if isinstance(canonical_profile, dict) else {}
-    )
-    readiness = profile_document.get("readiness")
-    readiness_document = (
-        cast(dict[str, Any], readiness) if isinstance(readiness, dict) else {}
-    )
-    readiness_status = readiness_document.get("status")
-    if readiness_status not in {"needs_profile", "needs_ai_consent", "ready"}:
-        readiness_status = "needs_profile"
-    readiness_status_text = cast(ReadinessStatusValue, readiness_status)
-    consents = profile_document.get("consents")
-    consents_document = cast(dict[str, Any], consents) if isinstance(consents, dict) else {}
-    ai_consent_at = consents_document.get("aiHealthDataConsentAt")
-    onboarding_completed_at = readiness_document.get("onboardingCompletedAt")
-    ready_at = readiness_document.get("readyAt")
+    return AiConsentActionResponse(aiConsent=_to_ai_consent_state(ai_consent))
 
-    return AiHealthDataConsentResponse(
-        profile=profile,
-        updated=True,
-        consent=AiHealthDataConsentState(
-            aiHealthDataConsentAt=ai_consent_at if isinstance(ai_consent_at, str) else None,
-            readiness=UserReadinessRequest(
-                status=readiness_status_text,
-                onboardingCompletedAt=onboarding_completed_at
-                if isinstance(onboarding_completed_at, str)
-                else None,
-                readyAt=ready_at if isinstance(ready_at, str) else None,
-            ),
-        ),
+
+@router.post(
+    "/users/me/ai-consent/revoke",
+    response_model=AiConsentActionResponse,
+)
+async def revoke_ai_consent_me(
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> AiConsentActionResponse:
+    auth_email = current_user.claims.get("email")
+    consent_service = ConsentService(UserProfileService())
+    ai_consent = await consent_service.revoke_ai_consent(
+        user_id=current_user.uid,
+        auth_email=auth_email if isinstance(auth_email, str) else None,
     )
+    return AiConsentActionResponse(aiConsent=_to_ai_consent_state(ai_consent))
 
 
 @router.post("/users/me/onboarding", response_model=UserOnboardingResponse)
@@ -251,6 +251,7 @@ async def get_user_export_me(
         notifications,
         notification_prefs,
         feedback,
+        meal_mutation_dedupe,
     ) = await user_account_service.get_user_export_data(current_user.uid)
 
     return UserExportResponse(
@@ -263,4 +264,5 @@ async def get_user_export_me(
         notifications=notifications,
         notificationPrefs=notification_prefs,
         feedback=feedback,
+        mealMutationDedupe=meal_mutation_dedupe,
     )

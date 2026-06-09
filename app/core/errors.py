@@ -3,7 +3,7 @@ class DomainError(Exception):
     status_code: int = 400
 
 class ConsentRequiredError(DomainError):
-    code = "AI_CHAT_CONSENT_REQUIRED"
+    code = "AI_CONSENT_REQUIRED"
     status_code = 403
 
 class OutOfScopeError(DomainError):

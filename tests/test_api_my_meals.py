@@ -5,6 +5,7 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from app.services.meal_service import MealMutationDedupeConflictError
 from tests.types import AuthHeaders
 
 client = TestClient(app)
@@ -64,6 +65,7 @@ def test_post_my_meal_upsert_uses_backend_service(
     response = client.post(
         "/api/v1/users/me/my-meals",
         json={
+            "clientMutationId": "mutation-saved-upsert-route",
             "mealId": "saved-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "type": "lunch",
@@ -75,6 +77,53 @@ def test_post_my_meal_upsert_uses_backend_service(
     assert response.status_code == 200
     assert response.json()["updated"] is True
     upsert_saved_meal.assert_called_once()
+    assert upsert_saved_meal.call_args.args[0] == "user-1"
+    assert (
+        upsert_saved_meal.call_args.args[1]["clientMutationId"]
+        == "mutation-saved-upsert-route"
+    )
+
+
+def test_post_my_meal_upsert_requires_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/my-meals",
+        json={
+            "mealId": "saved-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_my_meal_upsert_returns_409_for_client_mutation_conflict(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.my_meals.my_meal_service.upsert_saved_meal",
+        side_effect=MealMutationDedupeConflictError("clientMutationId conflict"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/my-meals",
+        json={
+            "clientMutationId": "mutation-saved-upsert-conflict",
+            "mealId": "saved-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "clientMutationId conflict"}
 
 
 def test_post_my_meal_delete_uses_backend_service(
@@ -86,12 +135,16 @@ def test_post_my_meal_delete_uses_backend_service(
         return_value={
             "id": "saved-1",
             "updatedAt": "2026-03-03T12:00:00.000Z",
+            "deleted": True,
         },
     )
 
     response = client.post(
         "/api/v1/users/me/my-meals/saved-1/delete",
-        json={"updatedAt": "2026-03-03T12:00:00.000Z"},
+        json={
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "clientMutationId": "mutation-saved-delete-route",
+        },
         headers=auth_headers("user-1"),
     )
 
@@ -105,7 +158,72 @@ def test_post_my_meal_delete_uses_backend_service(
         "user-1",
         "saved-1",
         updated_at="2026-03-03T12:00:00.000Z",
+        client_mutation_id="mutation-saved-delete-route",
     )
+
+
+def test_post_my_meal_delete_requires_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/my-meals/saved-1/delete",
+        json={"updatedAt": "2026-03-03T12:00:00.000Z"},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_my_meal_delete_reflects_service_deleted_value(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.my_meals.my_meal_service.mark_deleted",
+        return_value={
+            "id": "saved-1",
+            "updatedAt": "2026-03-03T13:00:00.000Z",
+            "deleted": False,
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/my-meals/saved-1/delete",
+        json={
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "clientMutationId": "mutation-saved-delete-stale-route",
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mealId": "saved-1",
+        "updatedAt": "2026-03-03T13:00:00.000Z",
+        "deleted": False,
+    }
+
+
+def test_post_my_meal_delete_returns_409_for_client_mutation_conflict(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.my_meals.my_meal_service.mark_deleted",
+        side_effect=MealMutationDedupeConflictError("clientMutationId conflict"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/my-meals/saved-1/delete",
+        json={
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "clientMutationId": "mutation-saved-delete-conflict",
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "clientMutationId conflict"}
 
 
 def test_post_my_meal_photo_upload_uses_backend_service(

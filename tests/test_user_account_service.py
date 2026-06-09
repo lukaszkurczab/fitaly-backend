@@ -13,6 +13,7 @@ from app.services.user_account_service import (
     EmailValidationError,
     OnboardingUsernameUnavailableError,
     OnboardingValidationError,
+    UserProfileMutationDedupeConflictError,
     UserProfileValidationError,
 )
 
@@ -22,7 +23,7 @@ class FakeTransaction:
         self._id = b"transaction-id"
         self._max_attempts = 1
         self._read_only = False
-        self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
+        self.set_calls: list[tuple[object, dict[str, Any], bool | None]] = []
         self.delete_calls: list[object] = []
 
     def _begin(self, *args: Any, **kwargs: Any) -> None:
@@ -40,7 +41,7 @@ class FakeTransaction:
     def set(
         self,
         document_ref: object,
-        data: dict[str, object],
+        data: dict[str, Any],
         merge: bool | None = None,
     ) -> None:
         self.set_calls.append((document_ref, data, merge))
@@ -67,6 +68,8 @@ def _build_client(mocker: MockerFixture):
     usernames_collection_ref = mocker.Mock()
     user_ref = mocker.Mock()
     username_ref = mocker.Mock()
+    mutation_collection_ref = mocker.Mock()
+    mutation_ref = mocker.Mock()
 
     def collection_side_effect(name: str):
         if name == "users":
@@ -77,8 +80,12 @@ def _build_client(mocker: MockerFixture):
 
     client.collection.side_effect = collection_side_effect
     client.batch.return_value = mocker.Mock()
+    client.transaction.return_value = FakeTransaction()
     users_collection_ref.document.return_value = user_ref
     usernames_collection_ref.document.return_value = username_ref
+    user_ref.collection.return_value = mutation_collection_ref
+    mutation_collection_ref.document.return_value = mutation_ref
+    mutation_ref.get.return_value = _build_snapshot(mocker, exists=False)
 
     return client, users_collection_ref, usernames_collection_ref, user_ref, username_ref
 
@@ -95,6 +102,16 @@ def _build_snapshot(
     return snapshot
 
 
+def _transaction_set_payload(
+    transaction: FakeTransaction,
+    document_ref: object,
+) -> dict[str, Any]:
+    for ref, data, _merge in transaction.set_calls:
+        if ref is document_ref:
+            return data
+    raise AssertionError("Expected transaction.set call was not recorded")
+
+
 def test_set_email_pending_updates_user_document(mocker: MockerFixture) -> None:
     client, users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
         _build_client(mocker)
@@ -105,7 +122,7 @@ def test_set_email_pending_updates_user_document(mocker: MockerFixture) -> None:
         user_account_service.set_email_pending("user-1", " new@example.com ")
     )
 
-    users_collection_ref.document.assert_called_once_with("user-1")
+    users_collection_ref.document.assert_any_call("user-1")
     user_ref.set.assert_called_once_with({"emailPending": "new@example.com"}, merge=True)
     assert normalized_email == "new@example.com"
 
@@ -139,6 +156,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     prefs_collection_ref = mocker.Mock()
     notif_meta_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
+    meal_mutation_dedupe_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
@@ -154,6 +172,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_doc = mocker.Mock()
     feedback_doc = mocker.Mock()
     feedback_doc.to_dict.return_value = {}
+    meal_mutation_dedupe_doc = mocker.Mock()
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
     billing_doc = mocker.Mock()
@@ -199,6 +218,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return notif_meta_collection_ref
         if name == "feedback":
             return feedback_collection_ref
+        if name == "mealMutationDedupe":
+            return meal_mutation_dedupe_collection_ref
         if name == "badges":
             return badges_collection_ref
         if name == "streak":
@@ -217,6 +238,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     prefs_collection_ref.stream.return_value = [prefs_doc]
     notif_meta_collection_ref.stream.return_value = [notif_meta_doc]
     feedback_collection_ref.stream.return_value = [feedback_doc]
+    meal_mutation_dedupe_collection_ref.stream.return_value = [meal_mutation_dedupe_doc]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
     billing_collection_ref.stream.return_value = [billing_doc]
@@ -286,6 +308,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert prefs_doc.reference in deleted_refs
     assert notif_meta_doc.reference in deleted_refs
     assert feedback_doc.reference in deleted_refs
+    assert meal_mutation_dedupe_doc.reference in deleted_refs
     assert badge_doc.reference in deleted_refs
     assert streak_doc.reference in deleted_refs
     assert ai_credit_doc.reference in deleted_refs
@@ -392,7 +415,7 @@ def test_set_avatar_metadata_updates_shared_profile_fields(
         user_account_service.set_avatar_metadata("user-1", "https://cdn/avatar.jpg")
     )
 
-    users_collection_ref.document.assert_called_once_with("user-1")
+    users_collection_ref.document.assert_any_call("user-1")
     user_ref.set.assert_called_once_with(
         {
             "avatarUrl": "https://cdn/avatar.jpg",
@@ -614,7 +637,22 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     user_ref.get.return_value = _build_snapshot(
         mocker,
         exists=True,
-        data={"username": "neo"},
+        data={
+            "username": "neo",
+            "profile": {
+                "aiConsent": {
+                    "status": "revoked",
+                    "grantedAt": "2026-05-01T10:00:00Z",
+                    "revokedAt": "2026-05-02T10:00:00Z",
+                },
+                "consents": {"aiHealthDataConsentAt": "2026-04-01T10:00:00Z"},
+                "readiness": {
+                    "status": "needs_ai_consent",
+                    "onboardingCompletedAt": "2026-04-01T09:00:00Z",
+                    "readyAt": None,
+                },
+            },
+        },
     )
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.user_account_service.streak_service.sync_streak_from_meals")
@@ -623,13 +661,14 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
         user_account_service.upsert_user_profile_data(
             "user-1",
             {"profile": {"language": "pl"}},
+            client_mutation_id="profile-mutation-1",
             auth_email="user-1@example.com",
         )
     )
 
-    users_collection_ref.document.assert_called_once_with("user-1")
-    document = user_ref.set.call_args.args[0]
-    assert user_ref.set.call_args.kwargs == {"merge": True}
+    transaction = client.transaction.return_value
+    users_collection_ref.document.assert_any_call("user-1")
+    document = _transaction_set_payload(transaction, user_ref)
     assert document["uid"] == "user-1"
     assert document["email"] == "user-1@example.com"
     assert document["createdAt"] == ANY
@@ -637,11 +676,24 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     assert document["syncState"] == "pending"
     assert document["lastLogin"] == ANY
     assert document["profile"]["language"] == "pl"
+    assert document["profile"]["aiConsent"] == {
+        "status": "revoked",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": "2026-05-02T10:00:00Z",
+    }
+    assert document["profile"]["consents"] is user_account_service.firestore.DELETE_FIELD
+    assert document["profile"]["readiness"] == {
+        "status": "needs_ai_consent",
+        "onboardingCompletedAt": "2026-04-01T09:00:00Z",
+        "readyAt": None,
+    }
     assert profile["uid"] == "user-1"
     assert profile["email"] == "user-1@example.com"
     assert profile["username"] == "neo"
     assert profile["profile"]["language"] == "pl"
+    assert "consents" not in profile["profile"]
     sync_streak.assert_not_called()
+    assert len(transaction.set_calls) == 2
 
 
 def test_upsert_user_profile_data_clears_confirmed_email_pending(
@@ -669,11 +721,12 @@ def test_upsert_user_profile_data_clears_confirmed_email_pending(
         user_account_service.upsert_user_profile_data(
             "user-1",
             {"profile": {"language": "pl"}},
+            client_mutation_id="profile-mutation-2",
             auth_email="new@example.com",
         )
     )
 
-    document = user_ref.set.call_args.args[0]
+    document = _transaction_set_payload(client.transaction.return_value, user_ref)
     assert document["email"] == "new@example.com"
     assert document["emailPending"] is user_account_service.firestore.DELETE_FIELD
     assert profile["email"] == "new@example.com"
@@ -705,6 +758,7 @@ def test_upsert_user_profile_data_recomputes_streak_when_calorie_target_changes(
         user_account_service.upsert_user_profile_data(
             "user-1",
             {"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
+            client_mutation_id="profile-mutation-calorie",
             auth_email="user-1@example.com",
         )
     )
@@ -726,9 +780,472 @@ def test_upsert_user_profile_data_rejects_forbidden_fields(
             user_account_service.upsert_user_profile_data(
                 "user-1",
                 {"username": "neo"},
+                client_mutation_id="profile-mutation-forbidden",
                 auth_email="user-1@example.com",
             )
         )
+
+
+def test_upsert_user_profile_data_rejects_nested_ai_consent_before_firestore(
+    mocker: MockerFixture,
+) -> None:
+    get_firestore = mocker.patch("app.services.user_account_service.get_firestore")
+
+    with pytest.raises(UserProfileValidationError):
+        asyncio.run(
+            user_account_service.upsert_user_profile_data(
+                "user-1",
+                {
+                    "profile": {
+                        "aiConsent": {
+                            "status": "granted",
+                            "grantedAt": "2026-05-01T10:00:00Z",
+                            "revokedAt": None,
+                        }
+                    }
+                },
+                client_mutation_id="profile-mutation-ai-consent",
+                auth_email="user-1@example.com",
+            )
+        )
+
+    get_firestore.assert_not_called()
+
+
+def test_upsert_user_profile_data_rejects_nested_readiness_before_firestore(
+    mocker: MockerFixture,
+) -> None:
+    get_firestore = mocker.patch("app.services.user_account_service.get_firestore")
+
+    with pytest.raises(UserProfileValidationError):
+        asyncio.run(
+            user_account_service.upsert_user_profile_data(
+                "user-1",
+                {
+                    "profile": {
+                        "language": "pl",
+                        "readiness": {
+                            "status": "ready",
+                            "onboardingCompletedAt": "2026-05-01T10:00:00Z",
+                            "readyAt": "2026-05-01T10:00:00Z",
+                        },
+                    }
+                },
+                client_mutation_id="profile-mutation-readiness",
+                auth_email="user-1@example.com",
+            )
+        )
+
+    get_firestore.assert_not_called()
+
+
+def test_upsert_user_profile_data_accepts_editable_nested_profile_fields(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "user-1", "profile": {"language": "en"}},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch(
+        "app.services.user_account_service.streak_service.sync_streak_from_meals"
+    )
+
+    profile = asyncio.run(
+        user_account_service.upsert_user_profile_data(
+            "user-1",
+            {
+                "profile": {
+                    "language": "pl",
+                    "nutritionProfile": {"goal": "gain"},
+                    "aiPreferences": {"stylePersona": "focused_coach"},
+                }
+            },
+            client_mutation_id="profile-mutation-editable",
+            auth_email="user-1@example.com",
+        )
+    )
+
+    document = _transaction_set_payload(client.transaction.return_value, user_ref)
+    assert document["profile"]["language"] == "pl"
+    assert document["profile"]["nutritionProfile"]["goal"] == "gain"
+    assert document["profile"]["aiPreferences"]["stylePersona"] == "focused_coach"
+    assert profile["profile"]["language"] == "pl"
+    assert profile["profile"]["nutritionProfile"]["goal"] == "gain"
+    assert profile["profile"]["aiPreferences"]["stylePersona"] == "focused_coach"
+    sync_streak.assert_not_called()
+
+
+def test_upsert_user_profile_data_replays_duplicate_mutation_without_second_write(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    mutation_ref = user_ref.collection.return_value.document.return_value
+    result_profile: dict[str, Any] = {
+        "uid": "user-1",
+        "profile": {
+            "language": "pl",
+            "nutritionProfile": {"calorieTarget": 1800},
+        },
+    }
+    payload_hash = user_account_service._stable_profile_payload_hash(
+        {
+            "kind": "profile_update",
+            "profile": {"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
+        }
+    )
+    mutation_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "userId": "user-1",
+            "clientMutationId": "profile-mutation-replay",
+            "kind": "profile_update",
+            "profileDocumentId": "user_profile",
+            "payloadHash": payload_hash,
+            "resultProfile": result_profile,
+            "applied": True,
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch(
+        "app.services.user_account_service.streak_service.sync_streak_from_meals"
+    )
+
+    profile = asyncio.run(
+        user_account_service.upsert_user_profile_data(
+            "user-1",
+            {"profile": {"nutritionProfile": {"calorieTarget": 1800}}},
+            client_mutation_id="profile-mutation-replay",
+            auth_email="user-1@example.com",
+        )
+    )
+
+    assert profile == result_profile
+    user_ref.get.assert_not_called()
+    assert client.transaction.return_value.set_calls == []
+    sync_streak.assert_not_called()
+
+
+def test_upsert_user_profile_data_rejects_reused_mutation_id_for_different_patch(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    mutation_ref = user_ref.collection.return_value.document.return_value
+    mutation_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "userId": "user-1",
+            "clientMutationId": "profile-mutation-conflict",
+            "kind": "profile_update",
+            "profileDocumentId": "user_profile",
+            "payloadHash": "different-payload",
+            "resultProfile": {"uid": "user-1"},
+            "applied": True,
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    with pytest.raises(UserProfileMutationDedupeConflictError):
+        asyncio.run(
+            user_account_service.upsert_user_profile_data(
+                "user-1",
+                {"profile": {"language": "pl"}},
+                client_mutation_id="profile-mutation-conflict",
+                auth_email="user-1@example.com",
+            )
+        )
+
+    user_ref.get.assert_not_called()
+    assert client.transaction.return_value.set_calls == []
+
+
+def test_upsert_user_profile_data_rejects_reused_mutation_id_for_different_kind(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    mutation_ref = user_ref.collection.return_value.document.return_value
+    payload_hash = user_account_service._stable_profile_payload_hash(
+        {"kind": "profile_update", "profile": {"profile": {"language": "pl"}}}
+    )
+    mutation_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "userId": "user-1",
+            "clientMutationId": "profile-mutation-kind-conflict",
+            "kind": "delete",
+            "profileDocumentId": "user_profile",
+            "payloadHash": payload_hash,
+            "resultProfile": {"uid": "user-1"},
+            "applied": True,
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    with pytest.raises(UserProfileMutationDedupeConflictError):
+        asyncio.run(
+            user_account_service.upsert_user_profile_data(
+                "user-1",
+                {"profile": {"language": "pl"}},
+                client_mutation_id="profile-mutation-kind-conflict",
+                auth_email="user-1@example.com",
+            )
+        )
+
+    user_ref.get.assert_not_called()
+    assert client.transaction.return_value.set_calls == []
+
+
+def test_complete_onboarding_profile_marks_ready_and_preserves_revoked_ai_consent(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    existing_ai_consent: dict[str, str | None] = {
+        "status": "revoked",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": "2026-05-02T10:00:00Z",
+    }
+    completion_readiness: dict[str, str | None] = {
+        "status": "ready",
+        "onboardingCompletedAt": "2026-05-05T10:00:00Z",
+        "readyAt": "2026-05-05T10:00:00Z",
+    }
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "uid": "user-1",
+            "username": "neo",
+            "profile": {
+                "aiConsent": existing_ai_consent,
+                "consents": {"aiHealthDataConsentAt": "2026-04-01T10:00:00Z"},
+                "readiness": {
+                    "status": "needs_profile",
+                    "onboardingCompletedAt": None,
+                    "readyAt": None,
+                },
+            },
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-05T10:00:00Z",
+    )
+    sync_streak = mocker.patch(
+        "app.services.user_account_service.streak_service.sync_streak_from_meals"
+    )
+
+    profile = asyncio.run(
+        user_account_service.complete_onboarding_profile(
+            "user-1",
+            {
+                "profile": {
+                    "nutritionProfile": {"calorieTarget": 2200},
+                    "aiPreferences": {"stylePersona": "focused_coach"},
+                    "readiness": completion_readiness,
+                }
+            },
+            auth_email="user-1@example.com",
+        )
+    )
+
+    document = user_ref.set.call_args.args[0]
+    assert user_ref.set.call_args.kwargs == {"merge": True}
+    assert document["profile"]["aiConsent"] == existing_ai_consent
+    assert document["profile"]["readiness"] == completion_readiness
+    assert document["profile"]["consents"] is user_account_service.firestore.DELETE_FIELD
+    assert profile["profile"]["aiConsent"] == existing_ai_consent
+    assert profile["profile"]["readiness"] == completion_readiness
+    assert "consents" not in profile["profile"]
+    sync_streak.assert_called_once_with("user-1")
+
+
+def test_grant_ai_consent_creates_release_contract_and_removes_legacy_consents(
+    mocker: MockerFixture,
+) -> None:
+    client, users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    existing_readiness: dict[str, str | None] = {
+        "status": "ready",
+        "onboardingCompletedAt": "2026-04-01T09:00:00Z",
+        "readyAt": "2026-04-01T09:00:00Z",
+    }
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "username": "neo",
+            "profile": {
+                "consents": {"retiredAt": "2026-04-01T10:00:00Z"},
+                "readiness": existing_readiness,
+            },
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-01T10:00:00Z",
+    )
+
+    ai_consent = asyncio.run(
+        user_account_service.grant_ai_consent(
+            "user-1",
+            auth_email="user-1@example.com",
+        )
+    )
+
+    users_collection_ref.document.assert_called_once_with("user-1")
+    assert ai_consent == {
+        "status": "granted",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": None,
+    }
+    document = user_ref.set.call_args.args[0]
+    assert document["email"] == "user-1@example.com"
+    assert document["profile"]["aiConsent"] == ai_consent
+    assert document["profile"]["consents"] is user_account_service.firestore.DELETE_FIELD
+    assert document["profile"]["readiness"] == existing_readiness
+
+
+def test_grant_ai_consent_does_not_refresh_already_active_consent(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    active_consent: dict[str, str | None] = {
+        "status": "granted",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": None,
+    }
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"profile": {"aiConsent": active_consent}},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-02T10:00:00Z",
+    )
+
+    ai_consent = asyncio.run(user_account_service.grant_ai_consent("user-1"))
+
+    assert ai_consent == active_consent
+    document = user_ref.set.call_args.args[0]
+    assert document["profile"]["aiConsent"] == active_consent
+    assert document["profile"]["consents"] is user_account_service.firestore.DELETE_FIELD
+
+
+def test_grant_ai_consent_after_revoked_creates_fresh_grant(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "profile": {
+                "aiConsent": {
+                    "status": "revoked",
+                    "grantedAt": "2026-05-01T10:00:00Z",
+                    "revokedAt": "2026-05-02T10:00:00Z",
+                }
+            }
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-03T10:00:00Z",
+    )
+
+    ai_consent = asyncio.run(user_account_service.grant_ai_consent("user-1"))
+
+    assert ai_consent == {
+        "status": "granted",
+        "grantedAt": "2026-05-03T10:00:00Z",
+        "revokedAt": None,
+    }
+
+
+def test_revoke_ai_consent_sets_inactive_state_and_is_repeat_idempotent(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    existing_readiness: dict[str, str | None] = {
+        "status": "ready",
+        "onboardingCompletedAt": "2026-04-01T09:00:00Z",
+        "readyAt": "2026-04-01T09:00:00Z",
+    }
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "profile": {
+                "aiConsent": {
+                    "status": "granted",
+                    "grantedAt": "2026-05-01T10:00:00Z",
+                    "revokedAt": None,
+                },
+                "readiness": existing_readiness,
+            }
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-02T10:00:00Z",
+    )
+
+    ai_consent = asyncio.run(user_account_service.revoke_ai_consent("user-1"))
+
+    assert ai_consent == {
+        "status": "revoked",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": "2026-05-02T10:00:00Z",
+    }
+    document = user_ref.set.call_args.args[0]
+    assert document["profile"]["readiness"] == existing_readiness
+
+    user_ref.set.reset_mock()
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"profile": {"aiConsent": ai_consent, "readiness": existing_readiness}},
+    )
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-03T10:00:00Z",
+    )
+
+    repeated = asyncio.run(user_account_service.revoke_ai_consent("user-1"))
+
+    assert repeated == ai_consent
+    document = user_ref.set.call_args.args[0]
+    assert document["profile"]["aiConsent"] == ai_consent
+    assert document["profile"]["readiness"] == existing_readiness
+    assert document["profile"]["consents"] is user_account_service.firestore.DELETE_FIELD
 
 
 def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
@@ -775,6 +1292,59 @@ def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
         for call in transaction.set_calls
     )
     assert transaction.delete_calls == [previous_username_ref]
+
+
+def test_initialize_onboarding_profile_deletes_legacy_nested_consents(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    transaction = FakeTransaction()
+    client.transaction.return_value = transaction
+    username_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    existing_ai_consent: dict[str, str | None] = {
+        "status": "revoked",
+        "grantedAt": "2026-05-01T10:00:00Z",
+        "revokedAt": "2026-05-02T10:00:00Z",
+    }
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "uid": "user-1",
+            "username": "neo",
+            "profile": {
+                "aiConsent": existing_ai_consent,
+                "consents": {"aiHealthDataConsentAt": "2026-04-01T10:00:00Z"},
+                "readiness": {
+                    "status": "needs_profile",
+                    "onboardingCompletedAt": None,
+                    "readyAt": None,
+                },
+            },
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    _normalized_username, profile = asyncio.run(
+        user_account_service.initialize_onboarding_profile(
+            "user-1",
+            username="Neo",
+            language="pl",
+            auth_email="user@example.com",
+        )
+    )
+
+    user_write = next(
+        call[1] for call in transaction.set_calls if call[0] is user_ref
+    )
+    written_profile = user_write["profile"]
+    assert isinstance(written_profile, dict)
+    assert written_profile["aiConsent"] == existing_ai_consent
+    assert written_profile["consents"] is user_account_service.firestore.DELETE_FIELD
+    assert profile["profile"]["aiConsent"] == existing_ai_consent
+    assert "consents" not in profile["profile"]
 
 
 def test_initialize_onboarding_profile_repeated_same_uid_and_username_succeeds(
@@ -908,6 +1478,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     notifications_collection_ref = mocker.Mock()
     prefs_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
+    meal_mutation_dedupe_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
     ai_runs_collection_ref = mocker.Mock()
     ai_runs_query = mocker.Mock()
@@ -923,6 +1494,11 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     }
     feedback_document = mocker.Mock()
     feedback_document.to_dict.return_value = {"id": "feedback-1", "message": "hello"}
+    meal_mutation_dedupe_document = mocker.Mock()
+    meal_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "profile-mutation-1",
+        "kind": "profile_update",
+    }
     chat_thread_document = mocker.Mock()
     chat_thread_document.id = "thread-1"
     chat_thread_document.to_dict.return_value = {"title": "First chat"}
@@ -960,6 +1536,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return prefs_collection_ref
         if name == "feedback":
             return feedback_collection_ref
+        if name == "mealMutationDedupe":
+            return meal_mutation_dedupe_collection_ref
         if name == "chat_threads":
             return chat_threads_collection_ref
         raise AssertionError(f"Unexpected subcollection {name}")
@@ -970,6 +1548,9 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     notifications_collection_ref.stream.return_value = [notification_document]
     prefs_collection_ref.stream.return_value = [prefs_document]
     feedback_collection_ref.stream.return_value = [feedback_document]
+    meal_mutation_dedupe_collection_ref.stream.return_value = [
+        meal_mutation_dedupe_document
+    ]
     chat_threads_collection_ref.stream.return_value = [chat_thread_document]
     ai_runs_collection_ref.where.return_value = ai_runs_query
     ai_runs_query.stream.return_value = [ai_run_document]
@@ -1003,6 +1584,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         notifications,
         notification_prefs,
         feedback,
+        meal_mutation_dedupe,
     ) = asyncio.run(
         user_account_service.get_user_export_data("user-1")
     )
@@ -1028,6 +1610,9 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     assert notifications == [{"id": "notif-1", "enabled": True}]
     assert notification_prefs == {"motivationEnabled": True, "daysAhead": 7}
     assert feedback == [{"id": "feedback-1", "message": "hello"}]
+    assert meal_mutation_dedupe == [
+        {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
+    ]
     ai_runs_collection_ref.where.assert_called_once()
     ai_runs_filter = ai_runs_collection_ref.where.call_args.kwargs["filter"]
     assert ai_runs_filter.field_path == "userId"

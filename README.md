@@ -202,7 +202,7 @@ Telemetry props must stay categorical and bounded. Do not send copy, raw reason 
 
 ## Feature flags
 
-These flags are runtime kill switches for live surfaces. A disabled surface returns a predictable disabled response and does not fall back to legacy behavior.
+These flags control live runtime surfaces. Disabled surfaces return predictable disabled responses and do not fall back to legacy behavior. `AI_GATEWAY_ENABLED` is a guardrail/logging bypass, not an Add Meal AI kill switch.
 
 | Flag                      | Default | What it controls                                                                                                                       | Disabled behavior |
 | ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
@@ -211,7 +211,8 @@ These flags are runtime kill switches for live surfaces. A disabled surface retu
 | `HABITS_ENABLED`          | `true`  | Serve v2 habit signals and include habit summaries in nutrition state. Coach and Smart Reminders require this foundation.               | `503 Habit signals are disabled`; nutrition state marks habits as `disabled` |
 | `SMART_REMINDERS_ENABLED` | `true`  | Serve v2 Smart Reminders decision endpoint.                                                                                            | `503 Smart reminders are unavailable` |
 | `WEEKLY_REPORTS_ENABLED`  | `true`  | Serve v2 weekly reports endpoint.                                                                                                      | `503 Weekly reports are disabled` |
-| `AI_GATEWAY_ENABLED`      | `true`  | Enforce legacy v1 AI gateway guardrails and logging for photo/text meal analysis.                                                       | Gateway enforcement is bypassed for legacy v1 analysis routes |
+| `AI_MEAL_ANALYSIS_ENABLED` | `true` | Serve v1 Add Meal photo/text analysis endpoints.                                                                                        | `503` with `AI_MEAL_ANALYSIS_DISABLED`; no gateway, credit, provider, or gateway-log work |
+| `AI_GATEWAY_ENABLED`      | `true`  | Enforce legacy v1 AI gateway guardrails and logging for photo/text meal analysis.                                                       | Gateway enforcement/logging is bypassed; Add Meal AI still proceeds when `AI_MEAL_ANALYSIS_ENABLED=true` |
 
 ## Backend setup
 
@@ -276,6 +277,7 @@ The canonical mobile to backend matrix for prod, smoke, and dev/local is [../doc
 | `REVENUECAT_WEBHOOK_SECRET`      | Yes when webhooks are active  | empty                     | RevenueCat webhook verification secret                         |
 | `REVENUECAT_API_KEY`             | Yes for sync-tier             | empty                     | RevenueCat REST API key for entitlement reconciliation          |
 | `REVENUECAT_PREMIUM_ENTITLEMENT_ID` | No                         | `premium`                 | RevenueCat entitlement ID that grants premium access            |
+| `AI_MEAL_ANALYSIS_ENABLED`       | No                            | `true`                    | Enable v1 photo/text Add Meal AI analysis                      |
 | `AI_GATEWAY_ENABLED`             | No                            | `true`                    | Enforce legacy v1 AI gateway rules                             |
 | `TELEMETRY_ENABLED`              | No                            | `false`                   | Accept v2 telemetry batches                                    |
 | `HABITS_ENABLED`                 | No                            | `true`                    | Compute habit signals                                          |
@@ -308,6 +310,9 @@ AI_CREDITS_PREMIUM=800
 AI_CREDIT_COST_CHAT=1
 AI_CREDIT_COST_TEXT_MEAL=1
 AI_CREDIT_COST_PHOTO=5
+AI_CHAT_ENABLED=true
+AI_MEAL_ANALYSIS_ENABLED=true
+AI_GATEWAY_ENABLED=true
 REVENUECAT_WEBHOOK_SECRET=your_revenuecat_webhook_secret
 REVENUECAT_API_KEY=your_revenuecat_api_key
 REVENUECAT_PREMIUM_ENTITLEMENT_ID=premium
@@ -330,7 +335,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_API_KEY`, `REVENUECAT_PREMIUM_ENTITLEMENT_ID`, `STATE_ENABLED`, `HABITS_ENABLED`, `SMART_REMINDERS_ENABLED`, `WEEKLY_REPORTS_ENABLED`, `AI_GATEWAY_ENABLED`, `TELEMETRY_ENABLED`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `EAGER_FIREBASE_INIT`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `AI_CREDITS_FREE`, `AI_CREDITS_PREMIUM`, `AI_CREDIT_COST_CHAT`, `AI_CREDIT_COST_TEXT_MEAL`, `AI_CREDIT_COST_PHOTO`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_API_KEY`, `REVENUECAT_PREMIUM_ENTITLEMENT_ID`, `STATE_ENABLED`, `HABITS_ENABLED`, `SMART_REMINDERS_ENABLED`, `WEEKLY_REPORTS_ENABLED`, `AI_CHAT_ENABLED`, `AI_MEAL_ANALYSIS_ENABLED`, `AI_GATEWAY_ENABLED`, `TELEMETRY_ENABLED`, `ENVIRONMENT`, `WEB_CONCURRENCY`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
@@ -384,7 +389,7 @@ Railway prod variable checklist:
 - `SENTRY_ENVIRONMENT=production`
 - `SENTRY_TRACES_SAMPLE_RATE=0.01`
 - Railway Health Check Path: `/api/v1/health`
-- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_GATEWAY_ENABLED=true`, `TELEMETRY_ENABLED=true`
+- Launch feature flags remain enabled unless executing an explicit rollback: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_MEAL_ANALYSIS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`, `TELEMETRY_ENABLED=true`
 
 Railway smoke variable checklist:
 
@@ -396,15 +401,29 @@ Railway smoke variable checklist:
 - `FIREBASE_PROJECT_ID=<smoke-or-shared-project>`
 - `FIREBASE_CLIENT_EMAIL=<smoke-service-account-email>`
 - `FIREBASE_PRIVATE_KEY=<smoke-service-account-private-key>`
-- `OPENAI_API_KEY=<smoke-or-limited-openai-key>`
+- `OPENAI_API_KEY=<smoke-only-or-quota-limited-openai-key>`
 - `CORS_ORIGINS=<smoke-client-or-test-origins>`
 - `SENTRY_DSN=<smoke-sentry-dsn>` or unset to disable Sentry in smoke
 - `SENTRY_ENVIRONMENT=smoke`
 - `SENTRY_TRACES_SAMPLE_RATE=0`
 - Railway Health Check Path: `/api/v1/health`
 - For infra readiness tests only: temporarily set `EAGER_FIREBASE_INIT=true` to verify smoke Firebase credentials and `fitaly-smoke` database access during startup.
-- Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
+- Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_MEAL_ANALYSIS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
 - Keep `TELEMETRY_ENABLED=true` for launch-like smoke. If a smoke run intentionally disables telemetry, record it as rollback coverage and do not count it as production readiness evidence.
+
+Bounded OpenAI provider smoke is an optional operator-triggered wiring check,
+not a default local test, pytest suite, CI gate, or product correctness test. If
+the release owner schedules it, use the smoke backend or local backend URL,
+non-production Firebase/user data, `OPENAI_API_KEY` from a smoke-only or
+quota-limited key, and `AI_CHAT_ENABLED=true`,
+`AI_MEAL_ANALYSIS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`. One run is capped at
+2 total provider calls: one Chat v2 text run and one Add Meal text-meal analysis.
+Avoid photo analysis unless the release owner intentionally includes image
+cleanup/redaction evidence. Store only sanitized operational evidence
+(endpoint/status/request id/run id/structured code and bounded credits or usage
+metadata); do not attach raw prompts, raw responses, images, request/response
+bodies, auth tokens, or provider payloads. See
+[Runtime Config: Bounded OpenAI Provider Smoke Contract](../docs/runbooks/runtime-config.md#bounded-openai-provider-smoke-contract).
 
 Railway dashboard checklist:
 

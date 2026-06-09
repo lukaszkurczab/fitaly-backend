@@ -18,7 +18,7 @@ _CACHE_TTL_SECONDS = 120
 _EXEMPT_PATHS = {"/health", "/health/firestore"}
 
 _BUCKET_LOCK = threading.Lock()
-_ip_buckets: TTLCache[str, deque[float]] = TTLCache(
+_ip_buckets: TTLCache[str, deque[float]] = TTLCache[str, deque[float]](
     maxsize=50_000,
     ttl=_CACHE_TTL_SECONDS,
 )

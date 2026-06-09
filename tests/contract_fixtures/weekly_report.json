@@ -1,10 +1,25 @@
 {
-  "status": "insufficient_data",
+  "status": "ready",
   "period": {
     "startDay": "2026-03-09",
     "endDay": "2026-03-15"
   },
-  "summary": "Log a few complete days to unlock a weekly report.",
-  "insights": [],
-  "priorities": []
+  "summary": "Logging stayed steady across the week. Next focus: keep the same logging rhythm on most days.",
+  "insights": [
+    {
+      "type": "consistency",
+      "importance": "high",
+      "tone": "positive",
+      "title": "You stayed consistent on most days",
+      "body": "You had valid logging on 6 of 7 days, which made the week readable.",
+      "reasonCodes": ["valid_logged_days_7_high"]
+    }
+  ],
+  "priorities": [
+    {
+      "type": "maintain_consistency",
+      "text": "Keep the same logging rhythm on most days.",
+      "reasonCodes": ["maintain_best_pattern"]
+    }
+  ]
 }

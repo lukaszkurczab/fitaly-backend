@@ -153,7 +153,7 @@ class ChatOrchestrator:
         """
         language = self._normalize_language(request.language)
 
-        await self.consent_service.ensure_ai_health_data_consent(user_id=user_id)
+        await self.consent_service.ensure_ai_consent(user_id=user_id)
 
         existing_user_message = await self.message_service.find_by_client_message_id(
             user_id=user_id,

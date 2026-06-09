@@ -3,7 +3,7 @@
 import json
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MAX_SOURCE_LENGTH = 120
 MAX_MESSAGE_LENGTH = 2_000
@@ -51,6 +51,20 @@ _SENSITIVE_KEY_MARKERS = (
     "text",
     "token",
 )
+_RAW_PROVIDER_TEXT_MARKERS = (
+    "rawprompt",
+    "rawresponse",
+    "providermessages",
+    "fullpayload",
+    "rawimage",
+    "rawtooloutput",
+    "secret-provider-prompt",
+    "secret-provider-response",
+    "secret-full-payload",
+    "secret-raw-image",
+    "secret-tool-dump",
+    "secret-debug-log",
+)
 
 
 def _is_safe_context_value(value: Any) -> bool:
@@ -62,11 +76,23 @@ def _contains_sensitive_marker(key: str) -> bool:
     return any(marker in lowered for marker in _SENSITIVE_KEY_MARKERS)
 
 
+def _contains_raw_provider_text_marker(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker in lowered for marker in _RAW_PROVIDER_TEXT_MARKERS)
+
+
 class ErrorLogRequest(BaseModel):
     source: str = Field(min_length=1, max_length=MAX_SOURCE_LENGTH)
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
     stack: Optional[str] = Field(default=None, max_length=MAX_STACK_LENGTH)
     context: Optional[Dict[str, Any]] = None
+
+    @field_validator("message", "stack")
+    @classmethod
+    def reject_raw_provider_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and _contains_raw_provider_text_marker(value):
+            raise ValueError("Log text contains raw provider payload markers")
+        return value
 
     @model_validator(mode="after")
     def validate_context_size(self) -> "ErrorLogRequest":

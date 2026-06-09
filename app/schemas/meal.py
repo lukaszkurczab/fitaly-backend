@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict", "failed"]
-MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved", "quick_add"]
+MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved"]
 _DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -148,6 +148,7 @@ class MealChangesPageResponse(BaseModel):
 
 
 class MealUpsertRequest(BaseModel):
+    clientMutationId: str = Field(min_length=1)
     id: str | None = Field(default=None, min_length=1)
     mealId: str | None = Field(default=None, min_length=1)
     cloudId: str | None = Field(default=None, min_length=1)
@@ -181,20 +182,45 @@ class MealUpsertRequest(BaseModel):
             return None
         return validate_day_key_format(value)
 
+    @field_validator("clientMutationId")
+    @classmethod
+    def _validate_client_mutation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientMutationId must be non-empty")
+        return normalized
+
 
 class MealUpsertResponse(BaseModel):
     meal: MealItem
     updated: bool
 
 
+class SavedMealUpsertRequest(MealUpsertRequest):
+    pass
+
+
 class MealDeleteRequest(BaseModel):
+    clientMutationId: str = Field(min_length=1)
     updatedAt: str = Field(min_length=1)
+
+    @field_validator("clientMutationId")
+    @classmethod
+    def _validate_client_mutation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientMutationId must be non-empty")
+        return normalized
 
 
 class MealDeleteResponse(BaseModel):
     mealId: str
     updatedAt: str
     deleted: bool
+
+
+class SavedMealDeleteRequest(MealDeleteRequest):
+    pass
 
 
 class MealPhotoUploadResponse(BaseModel):

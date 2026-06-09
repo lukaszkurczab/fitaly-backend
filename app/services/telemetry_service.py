@@ -70,7 +70,7 @@ MAX_BATCH_PAYLOAD_BYTES = 64 * 1024
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 60
 _BUCKET_LOCK = threading.Lock()
-_request_buckets: TTLCache[str, deque[float]] = TTLCache(
+_request_buckets: TTLCache[str, deque[float]] = TTLCache[str, deque[float]](
     maxsize=5_000,
     ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
 )

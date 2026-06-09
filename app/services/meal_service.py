@@ -1,6 +1,8 @@
 """Backend-owned storage and pagination for meals."""
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 from typing import Any, TypedDict, cast
 from uuid import uuid4
@@ -19,7 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from app.core.coercion import coerce_float, coerce_optional_str
 from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
-from app.core.firestore_query_fallback import is_missing_index_error
+from app.core.firestore_index_requirements import stream_required_indexed_query
 from app.db.firebase import (
     build_storage_download_url,
     get_firestore,
@@ -35,13 +37,24 @@ DOCUMENT_ID_FIELD = "__name__"
 
 MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
-MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text", "saved", "quick_add"}
+MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text", "saved"}
+MEAL_MUTATION_DEDUPE_SUBCOLLECTION = "mealMutationDedupe"
 
 
 class MealPhotoPayload(TypedDict):
     imageId: str
     photoUrl: str
     mealId: NotRequired[str | None]
+
+
+class MealMutationDedupeConflictError(ValueError):
+    """Raised when a clientMutationId is reused for a different meal mutation."""
+
+
+class MealMutationResult(TypedDict):
+    meal: dict[str, Any]
+    applied: bool
+    reference_day_key: str | None
 
 
 def _as_object_map(value: object) -> dict[str, object] | None:
@@ -183,6 +196,27 @@ def _meals_collection(user_id: str) -> firestore.CollectionReference:
 
 def _meal_ref(user_id: str, meal_id: str) -> firestore.DocumentReference:
     return _meals_collection(user_id).document(meal_id)
+
+
+def _meal_ref_for_client(
+    client: firestore.Client,
+    user_id: str,
+    meal_id: str,
+) -> firestore.DocumentReference:
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        MEALS_SUBCOLLECTION
+    ).document(meal_id)
+
+
+def _meal_mutation_ref(
+    client: firestore.Client,
+    user_id: str,
+    client_mutation_id: str,
+) -> firestore.DocumentReference:
+    mutation_hash = hashlib.sha256(client_mutation_id.encode("utf-8")).hexdigest()
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        MEAL_MUTATION_DEDUPE_SUBCOLLECTION
+    ).document(mutation_hash)
 
 
 def _read_or_create_storage_token(blob: Any) -> str:
@@ -413,6 +447,68 @@ def _meal_item_from_document(
     }
 
 
+def _require_client_mutation_id(value: Any) -> str:
+    client_mutation_id = coerce_optional_str(value)
+    if not client_mutation_id:
+        raise ValueError("Missing clientMutationId")
+    return client_mutation_id
+
+
+def _stable_payload_hash(value: dict[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _mutation_record(
+    *,
+    user_id: str,
+    client_mutation_id: str,
+    kind: str,
+    meal_id: str,
+    payload_hash: str,
+    result_meal: dict[str, Any],
+    applied: bool,
+) -> dict[str, Any]:
+    return {
+        "userId": user_id,
+        "clientMutationId": client_mutation_id,
+        "kind": kind,
+        "mealId": meal_id,
+        "payloadHash": payload_hash,
+        "resultMeal": result_meal,
+        "applied": applied,
+        "createdAt": _now_iso(),
+    }
+
+
+def _result_from_existing_mutation(
+    data: dict[str, Any],
+    *,
+    client_mutation_id: str,
+    kind: str,
+    meal_id: str,
+    payload_hash: str,
+) -> MealMutationResult:
+    if (
+        data.get("clientMutationId") != client_mutation_id
+        or data.get("kind") != kind
+        or data.get("mealId") != meal_id
+        or data.get("payloadHash") != payload_hash
+    ):
+        raise MealMutationDedupeConflictError(
+            "clientMutationId was already used for a different meal mutation"
+        )
+
+    result_meal = _as_object_map(data.get("resultMeal"))
+    if result_meal is None:
+        raise MealMutationDedupeConflictError("clientMutationId record is incomplete")
+    return {
+        "meal": dict(result_meal),
+        "applied": False,
+        "reference_day_key": None,
+    }
+
+
 def normalize_meal_payload(
     user_id: str,
     payload: dict[str, Any],
@@ -630,15 +726,6 @@ async def list_history(
                 logged_at_start=logged_at_start,
                 logged_at_end=logged_at_end,
             )
-            degraded_query = meals_ref.order_by(
-                "loggedAt",
-                direction=firestore.Query.DESCENDING,
-            )
-            degraded_query = _apply_legacy_logged_at_filters(
-                degraded_query,
-                logged_at_start=logged_at_start,
-                logged_at_end=logged_at_end,
-            )
         else:
             indexed_query = (
                 meals_ref.where(filter=FieldFilter("deleted", "==", False))
@@ -648,15 +735,6 @@ async def list_history(
             )
             indexed_query = _apply_day_key_filters(
                 indexed_query,
-                day_key_start=day_key_start,
-                day_key_end=day_key_end,
-            )
-            degraded_query = meals_ref.order_by(
-                "dayKey",
-                direction=firestore.Query.DESCENDING,
-            )
-            degraded_query = _apply_day_key_filters(
-                degraded_query,
                 day_key_start=day_key_start,
                 day_key_end=day_key_end,
             )
@@ -684,23 +762,18 @@ async def list_history(
             ):
                 items_by_id[doc_id] = item
 
-        try:
-            snapshots = list(indexed_query.limit(limit_count).stream())
-            for snapshot in snapshots:
-                include_item(_normalize_meal_snapshot(user_id, snapshot))
-        except FailedPrecondition as exc:
-            if not is_missing_index_error(exc):
-                raise
-            logger.warning(
-                "Missing Firestore composite index for meals.history; using degraded bounded query.",
-                extra={"user_id": user_id},
-            )
-            degraded_limit = max(limit_count * 20, 500)
-            degraded_snapshots = list(degraded_query.limit(degraded_limit).stream())
-            for snapshot in degraded_snapshots:
-                include_item(_normalize_meal_snapshot(user_id, snapshot))
-                if len(items_by_id) >= limit_count:
-                    break
+        query_name = (
+            "meals.history.logged_at_range"
+            if use_legacy_logged_at_range
+            else "meals.history.day_key_range"
+        )
+        for snapshot in stream_required_indexed_query(
+            indexed_query=indexed_query.limit(limit_count),
+            logger=logger,
+            query_name=query_name,
+            extra={"user_id": user_id},
+        ):
+            include_item(_normalize_meal_snapshot(user_id, snapshot))
     except (FirebaseError, GoogleAPICallError, RetryError, FailedPrecondition) as exc:
         logger.exception("Failed to list meals history.", extra={"user_id": user_id})
         raise FirestoreServiceError("Failed to list meals history.") from exc
@@ -733,21 +806,98 @@ async def list_changes(
     )
 
 
+@firestore.transactional
+def _upsert_meal_mutation_transaction(
+    transaction: firestore.Transaction,
+    *,
+    mutation_ref: firestore.DocumentReference,
+    meal_ref: firestore.DocumentReference,
+    user_id: str,
+    meal_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    normalized_document: dict[str, Any],
+) -> MealMutationResult:
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return _result_from_existing_mutation(
+            dict(mutation_snapshot.to_dict() or {}),
+            client_mutation_id=client_mutation_id,
+            kind="upsert",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+        )
+
+    snapshot = meal_ref.get(transaction=transaction)
+    if snapshot.exists:
+        existing = _normalize_meal_snapshot(user_id, snapshot)
+        if existing["updatedAt"] > normalized_document["updatedAt"]:
+            transaction.set(
+                mutation_ref,
+                _mutation_record(
+                    user_id=user_id,
+                    client_mutation_id=client_mutation_id,
+                    kind="upsert",
+                    meal_id=meal_id,
+                    payload_hash=payload_hash,
+                    result_meal=existing,
+                    applied=False,
+                ),
+                merge=False,
+            )
+            return {
+                "meal": existing,
+                "applied": False,
+                "reference_day_key": None,
+            }
+
+    result_meal = _meal_item_from_document(meal_id, normalized_document)
+    transaction.set(meal_ref, normalized_document, merge=True)
+    transaction.set(
+        mutation_ref,
+        _mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            kind="upsert",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+            result_meal=result_meal,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return {
+        "meal": result_meal,
+        "applied": True,
+        "reference_day_key": coerce_optional_str(normalized_document.get("dayKey")),
+    }
+
+
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    client_mutation_id = _require_client_mutation_id(payload.get("clientMutationId"))
     meal_id, normalized_document = normalize_meal_document_payload(
         user_id,
         payload,
         allow_logged_at_day_key_fallback=False,
     )
-    meal_ref = _meal_ref(user_id, meal_id)
+    payload_hash = _stable_payload_hash(
+        {"kind": "upsert", "mealId": meal_id, "document": normalized_document}
+    )
+    client: firestore.Client = get_firestore()
+    meal_ref = _meal_ref_for_client(client, user_id, meal_id)
+    mutation_ref = _meal_mutation_ref(client, user_id, client_mutation_id)
 
     try:
-        snapshot = meal_ref.get()
-        if snapshot.exists:
-            existing = _normalize_meal_snapshot(user_id, snapshot)
-            if existing["updatedAt"] > normalized_document["updatedAt"]:
-                return existing
-        meal_ref.set(normalized_document, merge=True)
+        result = _upsert_meal_mutation_transaction(
+            client.transaction(),
+            mutation_ref=mutation_ref,
+            meal_ref=meal_ref,
+            user_id=user_id,
+            meal_id=meal_id,
+            client_mutation_id=client_mutation_id,
+            payload_hash=payload_hash,
+            normalized_document=normalized_document,
+        )
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to upsert meal.",
@@ -755,12 +905,101 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
         raise FirestoreServiceError("Failed to upsert meal.") from exc
 
-    await streak_service.sync_streak_from_meals(
-        user_id,
-        reference_day_key=coerce_optional_str(normalized_document.get("dayKey")),
-    )
+    if result["applied"]:
+        await streak_service.sync_streak_from_meals(
+            user_id,
+            reference_day_key=result["reference_day_key"],
+        )
 
-    return _meal_item_from_document(meal_id, normalized_document)
+    return result["meal"]
+
+
+@firestore.transactional
+def _delete_meal_mutation_transaction(
+    transaction: firestore.Transaction,
+    *,
+    mutation_ref: firestore.DocumentReference,
+    meal_ref: firestore.DocumentReference,
+    user_id: str,
+    meal_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    normalized_updated_at: str,
+) -> MealMutationResult:
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return _result_from_existing_mutation(
+            dict(mutation_snapshot.to_dict() or {}),
+            client_mutation_id=client_mutation_id,
+            kind="delete",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+        )
+
+    snapshot = meal_ref.get(transaction=transaction)
+    existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+    payload: dict[str, Any] = {
+        **existing,
+        "id": meal_id,
+        "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,
+        "dayKey": existing.get("dayKey"),
+        "type": existing.get("type") or "other",
+        "createdAt": existing.get("createdAt")
+        or existing.get("loggedAt")
+        or existing.get("timestamp")
+        or normalized_updated_at,
+        "updatedAt": normalized_updated_at,
+        "deleted": True,
+    }
+    normalized_id, normalized_document = normalize_meal_document_payload(
+        user_id,
+        payload,
+        fallback_cloud_id=meal_id,
+        fallback_updated_at=normalized_updated_at,
+        fallback_day_key=coerce_optional_str(existing.get("dayKey")),
+    )
+    if snapshot.exists:
+        existing_normalized = _normalize_meal_snapshot(user_id, snapshot)
+        if existing_normalized["updatedAt"] > normalized_document["updatedAt"]:
+            transaction.set(
+                mutation_ref,
+                _mutation_record(
+                    user_id=user_id,
+                    client_mutation_id=client_mutation_id,
+                    kind="delete",
+                    meal_id=meal_id,
+                    payload_hash=payload_hash,
+                    result_meal=existing_normalized,
+                    applied=False,
+                ),
+                merge=False,
+            )
+            return {
+                "meal": existing_normalized,
+                "applied": False,
+                "reference_day_key": None,
+            }
+
+    result_meal = _meal_item_from_document(normalized_id, normalized_document)
+    transaction.set(meal_ref, normalized_document, merge=True)
+    transaction.set(
+        mutation_ref,
+        _mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            kind="delete",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+            result_meal=result_meal,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return {
+        "meal": result_meal,
+        "applied": True,
+        "reference_day_key": coerce_optional_str(normalized_document.get("dayKey")),
+    }
 
 
 async def mark_deleted(
@@ -768,38 +1007,32 @@ async def mark_deleted(
     meal_id: str,
     *,
     updated_at: str,
+    client_mutation_id: str,
 ) -> dict[str, Any]:
-    meal_ref = _meal_ref(user_id, meal_id)
+    normalized_client_mutation_id = _require_client_mutation_id(client_mutation_id)
     normalized_updated_at = coerce_iso8601(updated_at)
+    payload_hash = _stable_payload_hash(
+        {
+            "kind": "delete",
+            "mealId": meal_id,
+            "updatedAt": normalized_updated_at,
+        }
+    )
+    client: firestore.Client = get_firestore()
+    meal_ref = _meal_ref_for_client(client, user_id, meal_id)
+    mutation_ref = _meal_mutation_ref(client, user_id, normalized_client_mutation_id)
 
     try:
-        snapshot = meal_ref.get()
-        existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-        payload: dict[str, Any] = {
-            **existing,
-            "id": meal_id,
-            "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,
-            "dayKey": existing.get("dayKey"),
-            "type": existing.get("type") or "other",
-            "createdAt": existing.get("createdAt")
-            or existing.get("loggedAt")
-            or existing.get("timestamp")
-            or normalized_updated_at,
-            "updatedAt": normalized_updated_at,
-            "deleted": True,
-        }
-        normalized_id, normalized_document = normalize_meal_document_payload(
-            user_id,
-            payload,
-            fallback_cloud_id=meal_id,
-            fallback_updated_at=normalized_updated_at,
-            fallback_day_key=coerce_optional_str(existing.get("dayKey")),
+        result = _delete_meal_mutation_transaction(
+            client.transaction(),
+            mutation_ref=mutation_ref,
+            meal_ref=meal_ref,
+            user_id=user_id,
+            meal_id=meal_id,
+            client_mutation_id=normalized_client_mutation_id,
+            payload_hash=payload_hash,
+            normalized_updated_at=normalized_updated_at,
         )
-        if snapshot.exists:
-            existing_normalized = _normalize_meal_snapshot(user_id, snapshot)
-            if existing_normalized["updatedAt"] > normalized_document["updatedAt"]:
-                return existing_normalized
-        meal_ref.set(normalized_document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to delete meal.",
@@ -807,12 +1040,13 @@ async def mark_deleted(
         )
         raise FirestoreServiceError("Failed to delete meal.") from exc
 
-    await streak_service.sync_streak_from_meals(
-        user_id,
-        reference_day_key=coerce_optional_str(normalized_document.get("dayKey")),
-    )
+    if result["applied"]:
+        await streak_service.sync_streak_from_meals(
+            user_id,
+            reference_day_key=result["reference_day_key"],
+        )
 
-    return _meal_item_from_document(normalized_id, normalized_document)
+    return result["meal"]
 
 
 async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:

@@ -33,6 +33,7 @@ def _meal_payload(
 ) -> dict[str, object]:
     return {
         "id": meal_id,
+        "clientMutationId": f"mutation-{meal_id}",
         "mealId": meal_id,
         "cloudId": meal_id,
         "userUid": "legacy-user-field",
@@ -212,6 +213,7 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
             user_a,
             main_meal_id,
             updated_at=deleted_updated_at,
+            client_mutation_id=f"mutation-delete-{main_meal_id}",
         )
         assert deleted["deleted"] is True
 

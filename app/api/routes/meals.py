@@ -17,6 +17,7 @@ from app.schemas.meal import (
     validate_day_key_format,
 )
 from app.services import meal_service
+from app.services.meal_service import MealMutationDedupeConflictError
 
 router = APIRouter()
 
@@ -177,6 +178,8 @@ async def upsert_meal_me(
         meal = await meal_service.upsert_meal(current_user.uid, parsed_request.model_dump())
     except ValidationError as exc:
         _raise_meal_upsert_validation_error(exc)
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
@@ -194,12 +197,15 @@ async def delete_meal_me(
             current_user.uid,
             mealId,
             updated_at=request.updatedAt,
+            client_mutation_id=request.clientMutationId,
         )
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
     return MealDeleteResponse(
         mealId=meal["id"],
         updatedAt=meal["updatedAt"],
-        deleted=True,
+        deleted=bool(meal["deleted"]),
     )

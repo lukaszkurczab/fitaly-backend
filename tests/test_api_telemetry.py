@@ -1084,6 +1084,48 @@ def test_telemetry_batch_rejects_privacy_sensitive_props(
     assert firestore_client.storage == {}
 
 
+def test_telemetry_batch_rejects_raw_provider_payload_props(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    raw_provider_props: tuple[tuple[str, object], ...] = (
+        ("rawPrompt", "secret-provider-prompt"),
+        ("rawResponse", "secret-provider-response"),
+        ("providerMessages", ["secret-provider-prompt"]),
+        ("fullPayload", "secret-full-payload"),
+        ("rawImage", "secret-raw-image"),
+        ("rawToolOutput", "secret-tool-dump"),
+        ("debug", "secret-debug-log"),
+        ("logs", "secret-debug-log"),
+    )
+
+    for prop_key, prop_value in raw_provider_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload(
+                {
+                    "eventId": f"evt-raw-provider-{prop_key}",
+                    "name": "ai_meal_review_saved",
+                    "props": {
+                        "inputMethod": "photo",
+                        "corrected": False,
+                        "ingredientCount": 3,
+                        "requestId": "run-1",
+                        prop_key: prop_value,
+                    },
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_rejects_invalid_enum_values(
     mocker: MockerFixture,
 ) -> None:

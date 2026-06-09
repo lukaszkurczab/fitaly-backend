@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.datetime_utils import utc_now
 from app.core.exceptions import FirestoreServiceError, NutritionStateUnavailableError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
-from app.core.firestore_query_fallback import stream_with_missing_index_fallback
+from app.core.firestore_index_requirements import stream_required_indexed_query
 from app.db.firebase import get_firestore
 from app.schemas.nutrition_state import (
     NutritionAiSummary,
@@ -114,8 +114,7 @@ def _load_bounded_meals(
     Uses the same approach as habit_signal_service._load_recent_meals:
     1. Query by canonical dayKey range (primary source of truth)
     2. Query by loggedAt range (canonical event time)
-    3. Query by legacy timestamp range (fallback for old records)
-    4. Deduplicate by document ID
+    3. Deduplicate by document ID
 
     The window is centered on ``reference_day_key`` going back ``window_days``,
     with a small buffer on both sides to handle timezone edge cases.
@@ -134,20 +133,14 @@ def _load_bounded_meals(
     snapshots_by_id: dict[str, dict[str, Any]] = {}
 
     # Primary: read by canonical dayKey with the deleted filter pushed into
-    # Firestore. If the composite index is missing, retry with the same bounded
-    # range and filter deleted meals in memory later.
+    # Firestore. Missing composite indexes must fail explicitly.
     day_key_query = (
         meals_collection.where(filter=FieldFilter("deleted", "==", False))
         .where(filter=FieldFilter("dayKey", ">=", start_day_key))
         .where(filter=FieldFilter("dayKey", "<=", end_day_key))
     )
-    day_key_fallback_query = (
-        meals_collection.where(filter=FieldFilter("dayKey", ">=", start_day_key))
-        .where(filter=FieldFilter("dayKey", "<=", end_day_key))
-    )
-    for snapshot in stream_with_missing_index_fallback(
+    for snapshot in stream_required_indexed_query(
         indexed_query=day_key_query,
-        fallback_query=day_key_fallback_query,
         logger=logger,
         query_name="nutrition_state.day_key_range",
         extra={"reference_day_key": reference_day_key},
@@ -160,34 +153,10 @@ def _load_bounded_meals(
         .where(filter=FieldFilter("loggedAt", ">=", start_ts))
         .where(filter=FieldFilter("loggedAt", "<", end_ts))
     )
-    logged_at_fallback_query = (
-        meals_collection.where(filter=FieldFilter("loggedAt", ">=", start_ts))
-        .where(filter=FieldFilter("loggedAt", "<", end_ts))
-    )
-    for snapshot in stream_with_missing_index_fallback(
+    for snapshot in stream_required_indexed_query(
         indexed_query=logged_at_query,
-        fallback_query=logged_at_fallback_query,
         logger=logger,
         query_name="nutrition_state.logged_at_range",
-        extra={"reference_day_key": reference_day_key},
-    ):
-        snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
-
-    # Legacy event-time fallback for old documents.
-    timestamp_query = (
-        meals_collection.where(filter=FieldFilter("deleted", "==", False))
-        .where(filter=FieldFilter("timestamp", ">=", start_ts))
-        .where(filter=FieldFilter("timestamp", "<", end_ts))
-    )
-    timestamp_fallback_query = (
-        meals_collection.where(filter=FieldFilter("timestamp", ">=", start_ts))
-        .where(filter=FieldFilter("timestamp", "<", end_ts))
-    )
-    for snapshot in stream_with_missing_index_fallback(
-        indexed_query=timestamp_query,
-        fallback_query=timestamp_fallback_query,
-        logger=logger,
-        query_name="nutrition_state.timestamp_range",
         extra={"reference_day_key": reference_day_key},
     ):
         snapshots_by_id.setdefault(snapshot.id, {"id": snapshot.id, **dict(snapshot.to_dict() or {})})
@@ -451,7 +420,7 @@ async def get_nutrition_state(
         raise FirestoreServiceError("Failed to build nutrition state.") from exc
 
     # Safety net: the preferred query path filters deleted == False at
-    # Firestore level, while the missing-index fallback filters in memory.
+    # Firestore level; keep the in-memory filter for direct compute/test inputs.
     meals = _filter_core_meals(bounded_meals)
     requested_day_meals = _filter_meals_for_day(meals, day_key=resolved_day_key)
     targets_map = _extract_macro_targets(profile)

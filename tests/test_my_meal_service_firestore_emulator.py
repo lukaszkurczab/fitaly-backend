@@ -98,7 +98,8 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
                 day_key="2026-04-20",
                 updated_at=shared_updated_at,
                 image_id=f"image-main-{run_id}",
-            ),
+            )
+            | {"clientMutationId": f"mutation-saved-main-{run_id}"},
         )
         await my_meal_service.upsert_saved_meal(
             user_a,
@@ -108,7 +109,8 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
                 day_key="2026-04-21",
                 updated_at=shared_updated_at,
                 image_id=f"image-side-{run_id}",
-            ),
+            )
+            | {"clientMutationId": f"mutation-saved-side-{run_id}"},
         )
         await my_meal_service.upsert_saved_meal(
             user_b,
@@ -118,7 +120,8 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
                 day_key="2026-04-20",
                 updated_at=shared_updated_at,
                 image_id=f"image-b-{run_id}",
-            ),
+            )
+            | {"clientMutationId": f"mutation-saved-user-b-{run_id}"},
         )
 
         assert result["id"] == main_meal_id
@@ -203,6 +206,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             user_a,
             main_meal_id,
             updated_at=deleted_updated_at,
+            client_mutation_id=f"mutation-saved-delete-{run_id}",
         )
         assert deleted["deleted"] is True
 
@@ -222,4 +226,6 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             user_ref = client.collection("users").document(uid)
             for meal_id in meal_ids:
                 user_ref.collection("myMeals").document(meal_id).delete()
+            for mutation in user_ref.collection("mealMutationDedupe").stream():
+                mutation.reference.delete()
             user_ref.delete()

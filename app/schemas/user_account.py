@@ -41,6 +41,7 @@ class UserExportResponse(BaseModel):
     notifications: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
     feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    mealMutationDedupe: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
 
 
 class UserProfileResponse(BaseModel):
@@ -81,6 +82,7 @@ GoalValue = Literal["lose", "maintain", "increase", ""]
 SexValue = Literal["male", "female"]
 LanguageValue = Literal["en", "pl"]
 ReadinessStatusValue = Literal["needs_profile", "needs_ai_consent", "ready"]
+AiConsentStatusValue = Literal["not_granted", "granted", "revoked"]
 
 
 def _empty_preferences() -> list[PreferenceValue]:
@@ -143,20 +145,12 @@ class UserAiPreferencesRequest(BaseModel):
     stylePersona: AiPersonaValue | None = Field(default=None)
 
 
-class UserConsentsRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    aiHealthDataConsentAt: str | None = Field(default=None, max_length=64)
-
-
 class UserCanonicalProfileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     language: LanguageValue | None = Field(default=None)
     nutritionProfile: UserNutritionProfileRequest | None = Field(default=None)
     aiPreferences: UserAiPreferencesRequest | None = Field(default=None)
-    consents: UserConsentsRequest | None = Field(default=None)
-    readiness: UserReadinessRequest | None = Field(default=None)
 
     def to_editable_patch(self) -> dict[str, Any]:
         profile: dict[str, Any] = {}
@@ -176,11 +170,19 @@ class UserCanonicalProfileRequest(BaseModel):
 class UserProfilePatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    clientMutationId: str = Field(min_length=1, max_length=256)
     profile: UserCanonicalProfileRequest | None = Field(default=None)
+
+    @field_validator("clientMutationId", mode="before")
+    @classmethod
+    def _normalize_client_mutation_id(cls, value: object) -> str:
+        return str(value or "").strip()
 
     @model_validator(mode="after")
     def _ensure_non_empty_patch(self) -> "UserProfilePatchRequest":
-        if not self.model_fields_set:
+        editable_fields = set(self.model_fields_set)
+        editable_fields.discard("clientMutationId")
+        if not editable_fields:
             raise ValueError("Profile patch payload must not be empty.")
         if self.profile is None or not self.profile.to_editable_patch():
             raise ValueError("Profile patch payload has no editable canonical fields.")
@@ -273,17 +275,11 @@ class UserOnboardingCompleteResponse(UserProfileUpdateResponse):
     pass
 
 
-class AiHealthDataConsentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    accepted: Literal[True] = True
-
-
-class AiHealthDataConsentState(BaseModel):
-    aiHealthDataConsentAt: str | None = None
-    readiness: UserReadinessRequest
+class AiConsentState(BaseModel):
+    status: AiConsentStatusValue
+    grantedAt: str | None = None
+    revokedAt: str | None = None
 
 
-class AiHealthDataConsentResponse(UserProfileResponse):
-    updated: bool
-    consent: AiHealthDataConsentState
+class AiConsentActionResponse(BaseModel):
+    aiConsent: AiConsentState

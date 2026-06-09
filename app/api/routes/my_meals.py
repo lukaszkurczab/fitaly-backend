@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
 from app.schemas.meal import (
     MealChangesPageResponse,
-    MealDeleteRequest,
     MealDeleteResponse,
     MealItem,
     MealPhotoUploadResponse,
-    MealUpsertRequest,
     MealUpsertResponse,
+    SavedMealDeleteRequest,
+    SavedMealUpsertRequest,
 )
 from app.services import my_meal_service
+from app.services.meal_service import MealMutationDedupeConflictError
 
 router = APIRouter()
 
@@ -39,7 +40,7 @@ async def get_my_meal_changes_me(
 
 @router.post("/users/me/my-meals", response_model=MealUpsertResponse)
 async def upsert_my_meal_me(
-    request: MealUpsertRequest,
+    request: SavedMealUpsertRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealUpsertResponse:
     try:
@@ -47,6 +48,8 @@ async def upsert_my_meal_me(
             current_user.uid,
             request.model_dump(),
         )
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
@@ -56,7 +59,7 @@ async def upsert_my_meal_me(
 @router.post("/users/me/my-meals/{mealId}/delete", response_model=MealDeleteResponse)
 async def delete_my_meal_me(
     mealId: str,
-    request: MealDeleteRequest,
+    request: SavedMealDeleteRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealDeleteResponse:
     try:
@@ -64,14 +67,17 @@ async def delete_my_meal_me(
             current_user.uid,
             mealId,
             updated_at=request.updatedAt,
+            client_mutation_id=request.clientMutationId,
         )
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
     return MealDeleteResponse(
         mealId=meal["id"],
         updatedAt=meal["updatedAt"],
-        deleted=True,
+        deleted=bool(meal["deleted"]),
     )
 
 

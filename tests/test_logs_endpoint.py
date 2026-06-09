@@ -7,6 +7,21 @@ from pytest_mock import MockerFixture
 from app.api.routes import logs as logs_route_module
 from app.api.routes.logs import router as logs_router
 
+RAW_PROVIDER_LOG_TEXTS: tuple[str, ...] = (
+    "rawPrompt: secret-provider-prompt",
+    "rawResponse: secret-provider-response",
+    "providerMessages=[secret-provider-prompt]",
+    "fullPayload=secret-full-payload",
+    "rawImage=secret-raw-image",
+    "rawToolOutput=secret-tool-dump",
+    "secret-provider-prompt",
+    "secret-provider-response",
+    "secret-full-payload",
+    "secret-raw-image",
+    "secret-tool-dump",
+    "secret-debug-log",
+)
+
 
 def create_test_client() -> TestClient:
     app = FastAPI()
@@ -177,6 +192,84 @@ def test_logs_error_endpoint_rejects_privacy_sensitive_context_key(
     )
 
     assert response.status_code == 422
+    log_error.assert_not_called()
+
+
+def test_logs_error_endpoint_rejects_raw_provider_context_keys(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+    raw_provider_context: tuple[tuple[str, object], ...] = (
+        ("rawPrompt", "secret-provider-prompt"),
+        ("rawResponse", "secret-provider-response"),
+        ("providerMessages", ["secret-provider-prompt"]),
+        ("fullPayload", "secret-full-payload"),
+        ("rawImage", "secret-raw-image"),
+        ("rawToolOutput", "secret-tool-dump"),
+        ("debug", "secret-debug-log"),
+        ("logs", "secret-debug-log"),
+    )
+
+    for context_key, context_value in raw_provider_context:
+        response = client.post(
+            "/api/v1/logs/error",
+            json={
+                "source": "mobile.ai",
+                "message": "provider boundary regression",
+                "context": {context_key: context_value},
+            },
+        )
+
+        assert response.status_code == 422
+
+    log_error.assert_not_called()
+
+
+def test_logs_error_endpoint_rejects_raw_provider_message_text(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+
+    for raw_text in RAW_PROVIDER_LOG_TEXTS:
+        response = client.post(
+            "/api/v1/logs/error",
+            json={
+                "source": "mobile.ai",
+                "message": raw_text,
+                "stack": "stack trace",
+                "context": {"screen": "ai"},
+            },
+        )
+
+        assert response.status_code == 422
+
+    log_error.assert_not_called()
+
+
+def test_logs_error_endpoint_rejects_raw_provider_stack_text(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+
+    for raw_text in RAW_PROVIDER_LOG_TEXTS:
+        response = client.post(
+            "/api/v1/logs/error",
+            json={
+                "source": "mobile.ai",
+                "message": "Provider response handling failed",
+                "stack": f"Error stack\n{raw_text}",
+                "context": {"screen": "ai"},
+            },
+        )
+
+        assert response.status_code == 422
+
     log_error.assert_not_called()
 
 

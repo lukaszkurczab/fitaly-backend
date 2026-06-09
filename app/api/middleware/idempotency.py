@@ -18,7 +18,9 @@ from starlette.responses import Response
 
 _CACHE_LOCK = threading.Lock()
 # 50 000 unique (user, key) pairs, 90-second TTL
-_idempotency_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=50_000, ttl=90)
+_idempotency_cache: TTLCache[str, dict[str, Any]] = TTLCache[str, dict[str, Any]](
+    maxsize=50_000, ttl=90
+)
 
 # Only cache these path prefixes
 _IDEMPOTENT_PATHS = {

@@ -13,7 +13,16 @@ from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MY_MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.services import meal_storage
-from app.services.meal_service import coerce_iso8601, normalize_meal_document_payload
+from app.services.meal_service import (
+    MealMutationResult,
+    _meal_mutation_ref,
+    _mutation_record,
+    _require_client_mutation_id,
+    _result_from_existing_mutation,
+    _stable_payload_hash,
+    coerce_iso8601,
+    normalize_meal_document_payload,
+)
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -28,6 +37,16 @@ def _my_meal_ref(user_id: str, meal_id: str) -> firestore.DocumentReference:
     return _my_meals_collection(user_id).document(meal_id)
 
 
+def _my_meal_ref_for_client(
+    client: firestore.Client,
+    user_id: str,
+    meal_id: str,
+) -> firestore.DocumentReference:
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        MY_MEALS_SUBCOLLECTION
+    ).document(meal_id)
+
+
 async def list_changes(
     user_id: str,
     *,
@@ -40,6 +59,7 @@ async def list_changes(
         _normalize_saved_meal_snapshot,
         limit_count=limit_count,
         after_cursor=after_cursor,
+        require_document_id_cursor=True,
         error_message="Failed to list saved meal changes.",
     )
 
@@ -129,16 +149,26 @@ def _normalize_saved_meal_snapshot(
 
 
 async def upsert_saved_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    client_mutation_id = _require_client_mutation_id(payload.get("clientMutationId"))
     normalized_id, normalized_document = _normalize_saved_meal_document(user_id, payload)
-    meal_ref = _my_meal_ref(user_id, normalized_id)
+    payload_hash = _stable_payload_hash(
+        {"kind": "saved_meal_upsert", "mealId": normalized_id, "document": normalized_document}
+    )
+    client: firestore.Client = get_firestore()
+    meal_ref = _my_meal_ref_for_client(client, user_id, normalized_id)
+    mutation_ref = _meal_mutation_ref(client, user_id, client_mutation_id)
 
     try:
-        snapshot = meal_ref.get()
-        if snapshot.exists:
-            existing = _normalize_saved_meal_snapshot(user_id, snapshot)
-            if existing["updatedAt"] > normalized_document["updatedAt"]:
-                return existing
-        meal_ref.set(normalized_document, merge=True)
+        result = _upsert_saved_meal_mutation_transaction(
+            client.transaction(),
+            mutation_ref=mutation_ref,
+            meal_ref=meal_ref,
+            user_id=user_id,
+            meal_id=normalized_id,
+            client_mutation_id=client_mutation_id,
+            payload_hash=payload_hash,
+            normalized_document=normalized_document,
+        )
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to upsert saved meal.",
@@ -146,7 +176,74 @@ async def upsert_saved_meal(user_id: str, payload: dict[str, Any]) -> dict[str, 
         )
         raise FirestoreServiceError("Failed to upsert saved meal.") from exc
 
-    return _saved_meal_item_from_document(normalized_id, normalized_document)
+    return result["meal"]
+
+
+@firestore.transactional
+def _upsert_saved_meal_mutation_transaction(
+    transaction: firestore.Transaction,
+    *,
+    mutation_ref: firestore.DocumentReference,
+    meal_ref: firestore.DocumentReference,
+    user_id: str,
+    meal_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    normalized_document: dict[str, Any],
+) -> MealMutationResult:
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return _result_from_existing_mutation(
+            dict(mutation_snapshot.to_dict() or {}),
+            client_mutation_id=client_mutation_id,
+            kind="saved_meal_upsert",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+        )
+
+    snapshot = meal_ref.get(transaction=transaction)
+    if snapshot.exists:
+        existing = _normalize_saved_meal_snapshot(user_id, snapshot)
+        if existing["updatedAt"] > normalized_document["updatedAt"]:
+            transaction.set(
+                mutation_ref,
+                _mutation_record(
+                    user_id=user_id,
+                    client_mutation_id=client_mutation_id,
+                    kind="saved_meal_upsert",
+                    meal_id=meal_id,
+                    payload_hash=payload_hash,
+                    result_meal=existing,
+                    applied=False,
+                ),
+                merge=False,
+            )
+            return {
+                "meal": existing,
+                "applied": False,
+                "reference_day_key": None,
+            }
+
+    result_meal = _saved_meal_item_from_document(meal_id, normalized_document)
+    transaction.set(meal_ref, normalized_document, merge=True)
+    transaction.set(
+        mutation_ref,
+        _mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            kind="saved_meal_upsert",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+            result_meal=result_meal,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return {
+        "meal": result_meal,
+        "applied": True,
+        "reference_day_key": None,
+    }
 
 
 async def mark_deleted(
@@ -154,35 +251,32 @@ async def mark_deleted(
     meal_id: str,
     *,
     updated_at: str,
+    client_mutation_id: str,
 ) -> dict[str, Any]:
-    meal_ref = _my_meal_ref(user_id, meal_id)
+    normalized_client_mutation_id = _require_client_mutation_id(client_mutation_id)
     normalized_updated_at = coerce_iso8601(updated_at)
+    payload_hash = _stable_payload_hash(
+        {
+            "kind": "saved_meal_delete",
+            "mealId": meal_id,
+            "updatedAt": normalized_updated_at,
+        }
+    )
+    client: firestore.Client = get_firestore()
+    meal_ref = _my_meal_ref_for_client(client, user_id, meal_id)
+    mutation_ref = _meal_mutation_ref(client, user_id, normalized_client_mutation_id)
 
     try:
-        snapshot = meal_ref.get()
-        existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-        normalized_id, normalized_document = _normalize_saved_meal_document(
-            user_id,
-            {
-                **existing,
-                "id": meal_id,
-                "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,
-                "type": existing.get("type") or "other",
-                "createdAt": existing.get("createdAt")
-                or existing.get("loggedAt")
-                or existing.get("timestamp")
-                or normalized_updated_at,
-                "updatedAt": normalized_updated_at,
-                "deleted": True,
-            },
-            fallback_cloud_id=meal_id,
-            fallback_updated_at=normalized_updated_at,
+        result = _delete_saved_meal_mutation_transaction(
+            client.transaction(),
+            mutation_ref=mutation_ref,
+            meal_ref=meal_ref,
+            user_id=user_id,
+            meal_id=meal_id,
+            client_mutation_id=normalized_client_mutation_id,
+            payload_hash=payload_hash,
+            normalized_updated_at=normalized_updated_at,
         )
-        if snapshot.exists:
-            existing_normalized = _normalize_saved_meal_snapshot(user_id, snapshot)
-            if existing_normalized["updatedAt"] > normalized_document["updatedAt"]:
-                return existing_normalized
-        meal_ref.set(normalized_document, merge=True)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to delete saved meal.",
@@ -190,7 +284,92 @@ async def mark_deleted(
         )
         raise FirestoreServiceError("Failed to delete saved meal.") from exc
 
-    return _saved_meal_item_from_document(normalized_id, normalized_document)
+    return result["meal"]
+
+
+@firestore.transactional
+def _delete_saved_meal_mutation_transaction(
+    transaction: firestore.Transaction,
+    *,
+    mutation_ref: firestore.DocumentReference,
+    meal_ref: firestore.DocumentReference,
+    user_id: str,
+    meal_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+    normalized_updated_at: str,
+) -> MealMutationResult:
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return _result_from_existing_mutation(
+            dict(mutation_snapshot.to_dict() or {}),
+            client_mutation_id=client_mutation_id,
+            kind="saved_meal_delete",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+        )
+
+    snapshot = meal_ref.get(transaction=transaction)
+    existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+    normalized_id, normalized_document = _normalize_saved_meal_document(
+        user_id,
+        {
+            **existing,
+            "id": meal_id,
+            "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,
+            "type": existing.get("type") or "other",
+            "createdAt": existing.get("createdAt")
+            or existing.get("loggedAt")
+            or existing.get("timestamp")
+            or normalized_updated_at,
+            "updatedAt": normalized_updated_at,
+            "deleted": True,
+        },
+        fallback_cloud_id=meal_id,
+        fallback_updated_at=normalized_updated_at,
+    )
+    if snapshot.exists:
+        existing_normalized = _normalize_saved_meal_snapshot(user_id, snapshot)
+        if existing_normalized["updatedAt"] > normalized_document["updatedAt"]:
+            transaction.set(
+                mutation_ref,
+                _mutation_record(
+                    user_id=user_id,
+                    client_mutation_id=client_mutation_id,
+                    kind="saved_meal_delete",
+                    meal_id=meal_id,
+                    payload_hash=payload_hash,
+                    result_meal=existing_normalized,
+                    applied=False,
+                ),
+                merge=False,
+            )
+            return {
+                "meal": existing_normalized,
+                "applied": False,
+                "reference_day_key": None,
+            }
+
+    result_meal = _saved_meal_item_from_document(normalized_id, normalized_document)
+    transaction.set(meal_ref, normalized_document, merge=True)
+    transaction.set(
+        mutation_ref,
+        _mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            kind="saved_meal_delete",
+            meal_id=meal_id,
+            payload_hash=payload_hash,
+            result_meal=result_meal,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return {
+        "meal": result_meal,
+        "applied": True,
+        "reference_day_key": None,
+    }
 
 
 async def upload_photo(

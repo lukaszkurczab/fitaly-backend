@@ -7,7 +7,11 @@ from pytest_mock import MockerFixture
 
 from app.api.v2.deps import get_chat_orchestrator
 from app.core.config import settings
-from app.core.errors import AiCreditsExhaustedDomainError, AiProviderRetryableError
+from app.core.errors import (
+    AiCreditsExhaustedDomainError,
+    AiProviderRetryableError,
+    ConsentRequiredError,
+)
 from app.main import app
 from app.schemas.ai_chat.request import ChatRunRequestDto
 from app.schemas.ai_chat.response import ChatRunResponseDto
@@ -223,6 +227,40 @@ def test_credits_exhausted_domain_error_returns_402_with_serialized_credits(
     }
     assert orchestrator.calls == 1
     assert orchestrator.user_ids == ["route-contract-credits-user"]
+
+
+def test_consent_required_domain_error_returns_ai_consent_detail_not_readiness(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch.object(settings, "AI_CHAT_ENABLED", True)
+    orchestrator = _RecordingOrchestrator(
+        error=ConsentRequiredError("AI health data consent required.")
+    )
+    _override_orchestrator(orchestrator)
+
+    response = client.post(
+        "/api/v2/ai/chat/runs",
+        json=_valid_payload(),
+        headers=auth_headers("route-contract-consent-user"),
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": {
+            "code": "AI_CONSENT_REQUIRED",
+            "message": "AI health data consent required.",
+            "aiConsent": {
+                "required": True,
+                "scope": "global_ai_health_data",
+            },
+        }
+    }
+    detail = response.json()["detail"]
+    assert "readiness" not in detail
+    assert "needs_ai_consent" not in str(detail)
+    assert orchestrator.calls == 1
+    assert orchestrator.user_ids == ["route-contract-consent-user"]
 
 
 def test_unexpected_orchestrator_error_returns_500_without_leaking_exception_text(

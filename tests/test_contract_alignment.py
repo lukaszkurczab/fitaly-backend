@@ -52,6 +52,14 @@ from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
     ALLOWED_TELEMETRY_EVENT_PROPS,
 )
+from app.schemas.weekly_reports import (
+    WeeklyReportInsightImportance,
+    WeeklyReportInsightTone,
+    WeeklyReportInsightType,
+    WeeklyReportPriorityType,
+    WeeklyReportResponse,
+    WeeklyReportStatus,
+)
 from app.services.ai_gateway_service import (
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
@@ -121,7 +129,9 @@ class TestMealItemContract:
         assert item.deleted is False
 
     def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
-        req = MealUpsertRequest.model_validate(fixture)
+        req = MealUpsertRequest.model_validate(
+            {**fixture, "clientMutationId": "mutation-contract-meal"}
+        )
         assert req.id == "meal-contract-1"
         assert req.type == "lunch"
         assert req.totals is not None
@@ -615,6 +625,154 @@ class TestGatewayRejectContract:
         """The reason in the fixture must be one of the backend's canonical constants."""
         canonical_reasons = {REJECT_REASON_OFF_TOPIC, REJECT_REASON_TOO_SHORT}
         assert fixture["detail"]["reason"] in canonical_reasons
+
+
+# ---------------------------------------------------------------------------
+# Fixture: ai_rejections.json
+# ---------------------------------------------------------------------------
+
+
+class TestAiRejectionContract:
+    """Canonical AI rejection fixtures match product-safe HTTP error shapes."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("ai_rejections.json")
+
+    def test_consent_required_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["consentRequired"]
+        detail = rejection["detail"]
+        ai_consent = detail["aiConsent"]
+
+        assert rejection["status"] == 403
+        assert detail["code"] == "AI_CONSENT_REQUIRED"
+        assert detail["code"] != "_".join(["AI", "CHAT", "CONSENT", "REQUIRED"])
+        assert detail["message"] == "AI health data consent required."
+        assert ai_consent["required"] is True
+        assert ai_consent["scope"] == "global_ai_health_data"
+
+    def test_meal_analysis_disabled_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["mealAnalysisDisabled"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 503
+        assert detail["code"] == "AI_MEAL_ANALYSIS_DISABLED"
+        assert detail["message"] == "Meal analysis AI is temporarily disabled."
+        assert "aiConsent" not in detail
+
+    def test_meal_analysis_idempotency_conflict_rejection_shape(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        rejection = fixture["rejections"]["mealAnalysisIdempotencyConflict"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 409
+        assert detail["code"] == "AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT"
+        assert detail["message"] == (
+            "Meal analysis request is already in progress or completed."
+        )
+        assert "aiConsent" not in detail
+
+    def test_provider_unavailable_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["providerUnavailable"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 503
+        assert detail["code"] == "AI_CHAT_PROVIDER_UNAVAILABLE"
+        assert detail["message"] == "AI provider is temporarily unavailable."
+        assert "OpenAI" not in detail["message"]
+        assert "aiConsent" not in detail
+
+    def test_provider_timeout_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["providerTimeout"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 504
+        assert detail["code"] == "AI_CHAT_TIMEOUT"
+        assert detail["message"] == "AI provider timed out before a response was generated."
+        assert "OpenAI" not in detail["message"]
+        assert "aiConsent" not in detail
+
+    def test_credits_exhausted_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["creditsExhausted"]
+        detail = rejection["detail"]
+        credits = detail["credits"]
+
+        assert rejection["status"] == 402
+        assert detail["code"] == "AI_CREDITS_EXHAUSTED"
+        assert detail["message"] == "AI credits exhausted."
+        assert "aiConsent" not in detail
+        assert set(credits.keys()) >= {
+            "userId",
+            "tier",
+            "balance",
+            "allocation",
+            "periodStartAt",
+            "periodEndAt",
+            "costs",
+            "renewalAnchorSource",
+            "revenueCatEntitlementId",
+            "revenueCatExpirationAt",
+            "lastRevenueCatEventId",
+        }
+        assert credits["userId"] == "user-1"
+        assert credits["tier"] == "free"
+        assert credits["balance"] == 0
+        assert credits["allocation"] == 100
+        assert credits["periodStartAt"] == "2026-04-19T00:00:00Z"
+        assert credits["periodEndAt"] == "2026-05-19T00:00:00Z"
+        assert credits["costs"] == {
+            "chat": 1,
+            "textMeal": 1,
+            "photo": 5,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Fixture: weekly_report.json
+# ---------------------------------------------------------------------------
+
+
+class TestWeeklyReportContract:
+    """Canonical weekly report fixture must parse through WeeklyReportResponse."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("weekly_report.json")
+
+    def test_response_parses(self, fixture: JSONDict) -> None:
+        report = WeeklyReportResponse.model_validate(fixture)
+
+        assert report.status == "ready"
+        assert report.period.startDay == "2026-03-09"
+        assert report.period.endDay == "2026-03-15"
+        assert report.summary is not None
+        assert "Logging stayed steady across the week." in report.summary
+        assert len(report.insights) == 1
+        assert len(report.priorities) == 1
+        assert report.insights[0].type == "consistency"
+        assert report.priorities[0].type == "maintain_consistency"
+
+    def test_top_level_keys_match_schema(self, fixture: JSONDict) -> None:
+        expected_keys = set(WeeklyReportResponse.model_fields.keys())
+        actual_keys = set(fixture.keys())
+        assert actual_keys == expected_keys
+
+    def test_fixture_values_match_backend_literals(self, fixture: JSONDict) -> None:
+        report = WeeklyReportResponse.model_validate(fixture)
+
+        assert report.status in get_args(WeeklyReportStatus)
+        assert len(report.insights) <= 4
+        assert len(report.priorities) <= 2
+
+        for insight in report.insights:
+            assert insight.type in get_args(WeeklyReportInsightType)
+            assert insight.importance in get_args(WeeklyReportInsightImportance)
+            assert insight.tone in get_args(WeeklyReportInsightTone)
+
+        for priority in report.priorities:
+            assert priority.type in get_args(WeeklyReportPriorityType)
 
 
 # ---------------------------------------------------------------------------

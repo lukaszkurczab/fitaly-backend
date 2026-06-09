@@ -1,0 +1,68 @@
+{
+  "_doc": "Canonical structured AI rejection response bodies shared by backend and mobile.",
+  "rejections": {
+    "consentRequired": {
+      "status": 403,
+      "detail": {
+        "code": "AI_CONSENT_REQUIRED",
+        "message": "AI health data consent required.",
+        "aiConsent": {
+          "required": true,
+          "scope": "global_ai_health_data"
+        }
+      }
+    },
+    "mealAnalysisDisabled": {
+      "status": 503,
+      "detail": {
+        "code": "AI_MEAL_ANALYSIS_DISABLED",
+        "message": "Meal analysis AI is temporarily disabled."
+      }
+    },
+    "mealAnalysisIdempotencyConflict": {
+      "status": 409,
+      "detail": {
+        "code": "AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT",
+        "message": "Meal analysis request is already in progress or completed."
+      }
+    },
+    "providerUnavailable": {
+      "status": 503,
+      "detail": {
+        "code": "AI_CHAT_PROVIDER_UNAVAILABLE",
+        "message": "AI provider is temporarily unavailable."
+      }
+    },
+    "providerTimeout": {
+      "status": 504,
+      "detail": {
+        "code": "AI_CHAT_TIMEOUT",
+        "message": "AI provider timed out before a response was generated."
+      }
+    },
+    "creditsExhausted": {
+      "status": 402,
+      "detail": {
+        "code": "AI_CREDITS_EXHAUSTED",
+        "message": "AI credits exhausted.",
+        "credits": {
+          "userId": "user-1",
+          "tier": "free",
+          "balance": 0,
+          "allocation": 100,
+          "periodStartAt": "2026-04-19T00:00:00Z",
+          "periodEndAt": "2026-05-19T00:00:00Z",
+          "costs": {
+            "chat": 1,
+            "textMeal": 1,
+            "photo": 5
+          },
+          "renewalAnchorSource": null,
+          "revenueCatEntitlementId": null,
+          "revenueCatExpirationAt": null,
+          "lastRevenueCatEventId": null
+        }
+      }
+    }
+  }
+}

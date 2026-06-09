@@ -108,12 +108,20 @@ async def test_ai_chat_v2_idempotent_replay_returns_existing_response() -> None:
 async def test_ai_chat_v2_consent_rejected_before_processing() -> None:
     planner_result = planner_result_payload(
         task_type="data_grounded_answer",
-        capabilities=[],
+        capabilities=[{"name": "resolve_time_scope", "priority": 1, "args": {"label": "today"}}],
         response_mode="concise_answer",
     )
     harness = build_orchestrator_harness(
         planner_result=planner_result,
-        tools={},
+        tools={
+            "resolve_time_scope": {
+                "type": "today",
+                "startDate": "2026-04-19",
+                "endDate": "2026-04-19",
+                "timezone": "Europe/Warsaw",
+                "isPartial": True,
+            }
+        },
         generator_script=[generation_result(text="ignored")],
         consent_allowed=False,
     )
@@ -130,6 +138,14 @@ async def test_ai_chat_v2_consent_rejected_before_processing() -> None:
                 }
             ),
         )
+
+    assert harness.planner.calls == []
+    assert harness.generator.calls == []
+    assert all(tool.calls == [] for tool in harness.tools.values())
+    assert harness.credits_service.deductions == []
+    assert harness.credits_service.refunds == []
+    assert harness.credits_service.idempotency == {}
+    assert harness.db.docs == {}
 
 
 async def test_ai_chat_v2_provider_retryable_failure_updates_run_and_raises() -> None:

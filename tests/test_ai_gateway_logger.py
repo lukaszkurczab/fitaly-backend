@@ -131,6 +131,74 @@ def test_log_gateway_decision_does_not_emit_raw_user_content(
         assert forbidden not in _payload_text(analytics_payload)
 
 
+def test_log_gateway_decision_omits_raw_provider_debug_fields(
+    mocker: MockerFixture,
+) -> None:
+    observability_logger = mocker.Mock()
+    analytics_logger = mocker.Mock()
+    mocker.patch.object(ai_gateway_logger, "_OBSERVABILITY_LOGGER", observability_logger)
+    mocker.patch.object(ai_gateway_logger, "_ANALYTICS_LOGGER", analytics_logger)
+    forbidden_fields: dict[str, str | list[str]] = {
+        "rawPrompt": "secret-provider-prompt",
+        "rawResponse": "secret-provider-response",
+        "providerMessages": ["secret-provider-prompt"],
+        "fullPayload": "secret-full-payload",
+        "rawToolOutput": "secret-tool-dump",
+        "rawImage": "secret-raw-image",
+        "debug": "secret-debug-log",
+        "logs": "secret-debug-log",
+    }
+    result_with_raw_provider_payload: dict[str, object] = {
+        **_sample_gateway_result(),
+        **forbidden_fields,
+    }
+
+    ai_gateway_logger.log_gateway_decision(
+        "user-1",
+        "analyze current meal",
+        result_with_raw_provider_payload,  # type: ignore[arg-type]
+        "photo_meal_analysis",
+        language="en",
+        response_time_ms=123.456,
+        execution_time_ms=234.567,
+        profile="free",
+        tier="free",
+        credit_cost=1.0,
+        thread_id="thread-1",
+    )
+
+    observability_payload = observability_logger.info.call_args.kwargs["extra"]["context"]
+    analytics_payload = analytics_logger.info.call_args.kwargs["extra"]["context"]
+
+    assert observability_payload["requestId"] == "req-1"
+    assert observability_payload["model"] == "gpt-4o-mini"
+    assert observability_payload["latencyMs"] == 111.11
+    assert observability_payload["actualTokens"] == 9
+    assert observability_payload["outcome"] == "FORWARDED"
+    assert observability_payload["scopeDecision"] == "ALLOW_NUTRITION"
+    assert observability_payload["retryCount"] == 0
+    assert observability_payload["usedSummary"] is False
+    assert observability_payload["truncated"] is False
+    assert observability_payload["costCharged"] == 1.0
+
+    assert analytics_payload["requestId"] == "req-1"
+    assert analytics_payload["outcome"] == "FORWARDED"
+    assert analytics_payload["scopeDecision"] == "ALLOW_NUTRITION"
+    assert analytics_payload["costCharged"] == 1.0
+    assert analytics_payload["creditCost"] == 1.0
+    assert analytics_payload["latencyMs"] == 111.11
+
+    for payload in (observability_payload, analytics_payload):
+        payload_text = _payload_text(payload)
+        for forbidden_key, forbidden_value in forbidden_fields.items():
+            assert forbidden_key not in payload
+            if isinstance(forbidden_value, list):
+                for sentinel in forbidden_value:
+                    assert sentinel not in payload_text
+            else:
+                assert forbidden_value not in payload_text
+
+
 def test_log_gateway_decision_falls_back_when_sink_is_unavailable(
     mocker: MockerFixture,
 ) -> None:

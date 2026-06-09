@@ -162,7 +162,7 @@ class FakeConsentService:
     def __init__(self, *, allowed: bool) -> None:
         self.allowed = allowed
 
-    async def ensure_ai_health_data_consent(self, *, user_id: str) -> None:
+    async def ensure_ai_consent(self, *, user_id: str) -> None:
         del user_id
         if self.allowed:
             return
