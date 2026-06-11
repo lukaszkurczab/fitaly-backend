@@ -37,7 +37,7 @@ DOCUMENT_ID_FIELD = "__name__"
 
 MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
-MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text", "saved"}
+MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text"}
 MEAL_MUTATION_DEDUPE_SUBCOLLECTION = "mealMutationDedupe"
 
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict", "failed"]
-MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved"]
+MealInputMethod = Literal["manual", "photo", "barcode", "text"]
 _DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 

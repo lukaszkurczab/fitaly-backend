@@ -618,7 +618,7 @@ def test_meal_source_accepts_valid_values() -> None:
 
 
 def test_all_input_methods_accepted() -> None:
-    for method in ("manual", "photo", "barcode", "text", "saved"):
+    for method in ("manual", "photo", "barcode", "text"):
         req = MealUpsertRequest.model_validate(
             {
                 "mealId": "m1",
@@ -630,6 +630,20 @@ def test_all_input_methods_accepted() -> None:
             }
         )
         assert req.inputMethod == method
+
+
+def test_meal_upsert_request_rejects_saved_input_method() -> None:
+    with pytest.raises(ValidationError):
+        MealUpsertRequest.model_validate(
+            {
+                "mealId": "m1",
+                "clientMutationId": "mutation-schema-input-saved",
+                "timestamp": "2026-03-18T12:00:00.000Z",
+                "type": "lunch",
+                "ingredients": [],
+                "inputMethod": "saved",
+            }
+        )
 
 
 def test_ai_meta_all_fields_optional() -> None:
