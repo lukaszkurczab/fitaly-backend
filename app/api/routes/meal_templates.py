@@ -17,8 +17,8 @@ from app.services.meal_service import MealMutationDedupeConflictError
 router = APIRouter()
 
 
-@router.get("/users/me/my-meals/changes", response_model=MealChangesPageResponse)
-async def get_my_meal_changes_me(
+@router.get("/users/me/meal-templates/changes", response_model=MealChangesPageResponse)
+async def get_meal_template_changes_me(
     limit: int = Query(default=100, ge=1, le=250),
     afterCursor: str | None = Query(default=None),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
@@ -38,8 +38,8 @@ async def get_my_meal_changes_me(
     )
 
 
-@router.post("/users/me/my-meals", response_model=MealUpsertResponse)
-async def upsert_my_meal_me(
+@router.post("/users/me/meal-templates", response_model=MealUpsertResponse)
+async def upsert_meal_template_me(
     request: SavedMealUpsertRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealUpsertResponse:
@@ -56,16 +56,19 @@ async def upsert_my_meal_me(
     return MealUpsertResponse(meal=MealItem.model_validate(meal), updated=True)
 
 
-@router.post("/users/me/my-meals/{mealId}/delete", response_model=MealDeleteResponse)
-async def delete_my_meal_me(
-    mealId: str,
+@router.post(
+    "/users/me/meal-templates/{templateId}/delete",
+    response_model=MealDeleteResponse,
+)
+async def delete_meal_template_me(
+    templateId: str,
     request: SavedMealDeleteRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealDeleteResponse:
     try:
         meal = await my_meal_service.mark_deleted(
             current_user.uid,
-            mealId,
+            templateId,
             updated_at=request.updatedAt,
             client_mutation_id=request.clientMutationId,
         )
@@ -82,17 +85,17 @@ async def delete_my_meal_me(
 
 
 @router.post(
-    "/users/me/my-meals/{mealId}/photo",
+    "/users/me/meal-templates/{templateId}/photo",
     response_model=MealPhotoUploadResponse,
 )
-async def upload_my_meal_photo_me(
-    mealId: str,
+async def upload_meal_template_photo_me(
+    templateId: str,
     file: UploadFile = File(...),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealPhotoUploadResponse:
     payload = await my_meal_service.upload_photo(
         current_user.uid,
-        mealId,
+        templateId,
         file,
     )
 
