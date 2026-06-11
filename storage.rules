@@ -16,7 +16,7 @@ service firebase.storage {
 
     match /avatars/{userId}/{filename} {
       allow read, write: if isOwner(userId)
-        && filename.matches('^avatar(\\.\\w+)?$');
+        && filename.matches('^avatar\\.[0-9a-f]{64}$');
     }
 
     match /meals/{userId}/{filename} {

@@ -262,6 +262,34 @@ def test_create_feedback_rejects_invalid_attachment_mime_before_writes(
     document_ref.set.assert_not_called()
 
 
+def test_create_feedback_rejects_invalid_declared_mime_with_image_bytes_before_writes(
+    mocker: MockerFixture,
+) -> None:
+    document_ref = _patch_feedback_firestore(mocker)
+    get_storage_bucket = mocker.patch("app.services.feedback_service.get_storage_bucket")
+
+    upload = _upload(
+        b"\xff\xd8\xfffeedback\xff\xd9",
+        filename="feedback.jpg",
+        content_type="text/plain",
+    )
+
+    with pytest.raises(
+        feedback_service.FeedbackValidationError,
+        match="Unsupported or unrecognized file type",
+    ):
+        asyncio.run(
+            feedback_service.create_feedback(
+                user_id="user-1",
+                message="App is great",
+                attachment=upload,
+            )
+        )
+
+    get_storage_bucket.assert_not_called()
+    document_ref.set.assert_not_called()
+
+
 def test_create_feedback_rejects_spoofed_allowed_attachment_mime_before_writes(
     mocker: MockerFixture,
 ) -> None:

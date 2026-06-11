@@ -28,6 +28,22 @@ def test_validate_upload_strict_mode_requires_supported_image_signature() -> Non
         )
 
 
+def test_validate_upload_strict_mode_requires_allowed_declared_image_mime() -> None:
+    with pytest.raises(ValueError, match="Unsupported or unrecognized file type"):
+        _validate_upload(
+            _upload(b"\xff\xd8\xffvalid-jpeg-body", content_type="text/plain"),
+            require_detected_image=True,
+        )
+
+
+def test_validate_upload_strict_mode_requires_declared_image_mime() -> None:
+    with pytest.raises(ValueError, match="Unsupported or unrecognized file type"):
+        _validate_upload(
+            _upload(b"\xff\xd8\xffvalid-jpeg-body", content_type=""),
+            require_detected_image=True,
+        )
+
+
 def test_validate_upload_default_preserves_mock_file_declared_image_fallback() -> None:
     upload = Mock()
     upload.content_type = "image/jpeg"

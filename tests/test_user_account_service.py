@@ -1,13 +1,17 @@
 import asyncio
 import hashlib
+from io import BytesIO
 from typing import Any
 from unittest.mock import ANY
 
+from fastapi import UploadFile
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
 from pytest_mock import MockerFixture
+from starlette.datastructures import Headers
 
 from app.core.exceptions import FirestoreServiceError
+from app.services.meal_storage import MAX_UPLOAD_BYTES
 from app.services import user_account_service
 from app.services.user_account_service import (
     EmailValidationError,
@@ -16,6 +20,21 @@ from app.services.user_account_service import (
     UserProfileMutationDedupeConflictError,
     UserProfileValidationError,
 )
+
+
+AVATAR_BYTES = (
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    b"avatar-unit-test"
+    b"\xff\xd9"
+)
+
+
+def _avatar_upload(content: bytes = AVATAR_BYTES, *, content_type: str = "image/jpeg") -> UploadFile:
+    return UploadFile(
+        BytesIO(content),
+        filename="avatar.jpg",
+        headers=Headers({"content-type": content_type}),
+    )
 
 
 class FakeTransaction:
@@ -526,7 +545,11 @@ def test_delete_account_data_wraps_firestore_errors(mocker: MockerFixture) -> No
         asyncio.run(user_account_service.delete_account_data("user-1"))
 
 
-def test_upload_avatar_persists_file_and_avatar_ref_metadata(mocker: MockerFixture) -> None:
+def test_upload_avatar_persists_file_and_avatar_ref_metadata(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FIREBASE_STORAGE_EMULATOR_HOST", raising=False)
     client, users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
         _build_client(mocker)
     )
@@ -540,9 +563,7 @@ def test_upload_avatar_persists_file_and_avatar_ref_metadata(mocker: MockerFixtu
         "app.services.user_account_service.uuid4",
         return_value="download-token",
     )
-    upload = mocker.Mock()
-    upload.file = mocker.Mock()
-    upload.content_type = "image/jpeg"
+    upload = _avatar_upload()
     expected_hash = hashlib.sha256(b"avatar-mutation-1").hexdigest()
     expected_path = f"avatars/user-1/avatar.{expected_hash}"
 
@@ -560,8 +581,7 @@ def test_upload_avatar_persists_file_and_avatar_ref_metadata(mocker: MockerFixtu
         content_type="image/jpeg",
     )
     blob.patch.assert_called_once_with()
-    upload.file.seek.assert_called_once_with(0)
-    upload.file.close.assert_called_once_with()
+    assert upload.file.closed is True
     users_collection_ref.document.assert_any_call("user-1")
     user_ref.set.assert_called_once_with(
         {
@@ -576,6 +596,42 @@ def test_upload_avatar_persists_file_and_avatar_ref_metadata(mocker: MockerFixtu
     assert "download-token" in avatar_url
     assert synced_at.endswith("Z")
     assert avatar_ref == {"storagePath": expected_path}
+
+
+def test_upload_avatar_skips_blob_patch_under_storage_emulator(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FIREBASE_STORAGE_EMULATOR_HOST", "127.0.0.1:9199")
+    client, _users_collection_ref, _usernames_collection_ref, _user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    bucket = mocker.Mock()
+    bucket.name = "bucket-name"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+    mocker.patch(
+        "app.services.user_account_service.uuid4",
+        return_value="download-token",
+    )
+    upload = _avatar_upload()
+
+    asyncio.run(
+        user_account_service.upload_avatar(
+            "user-1",
+            upload,
+            client_mutation_id="avatar-mutation-1",
+        )
+    )
+
+    blob.upload_from_file.assert_called_once_with(
+        upload.file,
+        content_type="image/jpeg",
+    )
+    blob.patch.assert_not_called()
+    assert upload.file.closed is True
 
 
 def test_upload_avatar_rejects_blank_client_mutation_id(mocker: MockerFixture) -> None:
@@ -594,7 +650,7 @@ def test_upload_avatar_rejects_blank_client_mutation_id(mocker: MockerFixture) -
     upload.file.close.assert_not_called()
 
 
-def test_upload_avatar_validation_failure_does_not_persist_avatar_metadata(
+def test_upload_avatar_rejects_invalid_declared_mime_with_image_bytes_before_storage_or_profile_write(
     mocker: MockerFixture,
 ) -> None:
     client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
@@ -606,9 +662,7 @@ def test_upload_avatar_validation_failure_does_not_persist_avatar_metadata(
     bucket.blob.return_value = blob
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
-    upload = mocker.Mock()
-    upload.file = mocker.Mock()
-    upload.content_type = "text/plain"
+    upload = _avatar_upload(AVATAR_BYTES, content_type="text/plain")
 
     with pytest.raises(ValueError, match="Unsupported or unrecognized file type"):
         asyncio.run(
@@ -622,7 +676,68 @@ def test_upload_avatar_validation_failure_does_not_persist_avatar_metadata(
     blob.upload_from_file.assert_not_called()
     blob.patch.assert_not_called()
     user_ref.set.assert_not_called()
-    upload.file.close.assert_called_once_with()
+    assert upload.file.closed is True
+
+
+def test_upload_avatar_rejects_spoofed_image_bytes_before_storage_or_profile_write(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    bucket = mocker.Mock()
+    bucket.name = "bucket-name"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+    upload = _avatar_upload(b"not an actual image", content_type="image/jpeg")
+
+    with pytest.raises(ValueError, match="Unsupported or unrecognized file type"):
+        asyncio.run(
+            user_account_service.upload_avatar(
+                "user-1",
+                upload,
+                client_mutation_id="avatar-mutation-1",
+            )
+        )
+
+    blob.upload_from_file.assert_not_called()
+    blob.patch.assert_not_called()
+    user_ref.set.assert_not_called()
+    assert upload.file.closed is True
+
+
+def test_upload_avatar_rejects_oversized_file_before_storage_or_profile_write(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    bucket = mocker.Mock()
+    bucket.name = "bucket-name"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+    upload = _avatar_upload(
+        b"\xff\xd8\xff" + (b"x" * (MAX_UPLOAD_BYTES - 2)),
+        content_type="image/jpeg",
+    )
+
+    with pytest.raises(ValueError, match="File exceeds maximum allowed size"):
+        asyncio.run(
+            user_account_service.upload_avatar(
+                "user-1",
+                upload,
+                client_mutation_id="avatar-mutation-1",
+            )
+        )
+
+    blob.upload_from_file.assert_not_called()
+    blob.patch.assert_not_called()
+    user_ref.set.assert_not_called()
+    assert upload.file.closed is True
 
 
 def test_upload_avatar_storage_failure_does_not_persist_avatar_metadata(
@@ -638,9 +753,7 @@ def test_upload_avatar_storage_failure_does_not_persist_avatar_metadata(
     bucket.blob.return_value = blob
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
-    upload = mocker.Mock()
-    upload.file = mocker.Mock()
-    upload.content_type = "image/jpeg"
+    upload = _avatar_upload()
 
     with pytest.raises(FirestoreServiceError, match="Failed to upload avatar"):
         asyncio.run(
@@ -657,7 +770,7 @@ def test_upload_avatar_storage_failure_does_not_persist_avatar_metadata(
     )
     blob.patch.assert_not_called()
     user_ref.set.assert_not_called()
-    upload.file.close.assert_called_once_with()
+    assert upload.file.closed is True
 
 
 def test_get_user_profile_data_returns_profile_document(

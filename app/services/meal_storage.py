@@ -68,9 +68,13 @@ def _validate_upload(upload: UploadFile, *, require_detected_image: bool = False
     header = upload.file.read(16)
     upload.file.seek(0)
     detected = _detect_image_content_type(header) if isinstance(header, bytes) else None
+    if require_detected_image:
+        if detected is not None and normalized_declared is not None:
+            return detected
+        raise ValueError("Unsupported or unrecognized file type")
     if detected is not None:
         return detected
-    if normalized_declared is not None and not require_detected_image:
+    if normalized_declared is not None:
         return normalized_declared
     raise ValueError("Unsupported or unrecognized file type")
 

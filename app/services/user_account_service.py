@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+import os
 import re
 from typing import Any, cast
 from uuid import uuid4
@@ -143,6 +144,10 @@ def _utc_timestamp() -> str:
 
 def _utc_timestamp_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _storage_emulator_configured() -> bool:
+    return bool(os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "").strip())
 
 
 def _default_nutrition_profile() -> dict[str, Any]:
@@ -633,9 +638,10 @@ async def upload_avatar(
     try:
         upload.file.seek(0)
         blob.metadata = {"firebaseStorageDownloadTokens": token}
-        safe_content_type = _validate_upload(upload)
+        safe_content_type = _validate_upload(upload, require_detected_image=True)
         blob.upload_from_file(upload.file, content_type=safe_content_type)
-        blob.patch()
+        if not _storage_emulator_configured():
+            blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(
             "Failed to upload avatar.",
