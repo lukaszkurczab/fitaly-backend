@@ -179,6 +179,27 @@ def test_meal_item_serializes_input_method_and_ai_meta() -> None:
     }
 
 
+def test_meal_item_does_not_synthesize_unknown_storage_path() -> None:
+    item = MealItem.model_validate(
+        {
+            "userUid": "user-1",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-18T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+            "createdAt": "2026-03-18T12:00:00.000Z",
+            "updatedAt": "2026-03-18T12:05:00.000Z",
+            "cloudId": "meal-1",
+            "imageId": "image-1",
+            "photoUrl": "https://cdn/meal.jpg",
+        }
+    )
+
+    assert item.imageId == "image-1"
+    assert item.photoUrl == "https://cdn/meal.jpg"
+    assert item.imageRef is None
+
+
 def test_meal_upsert_request_rejects_invalid_input_method() -> None:
     with pytest.raises(ValidationError):
         MealUpsertRequest.model_validate(
@@ -358,6 +379,24 @@ def test_full_meal_response_serializes_all_boundary_fields() -> None:
     assert data["notes"] == "Post-workout meal"
     assert data["tags"] == ["high-protein", "lunch"]
     assert data["deleted"] is False
+
+
+def test_meal_item_accepts_image_ref_without_storage_path() -> None:
+    item = MealItem.model_validate(
+        {
+            **_FULL_MEAL_PAYLOAD,
+            "source": "saved",
+            "imageRef": {
+                "imageId": "image-without-path-1",
+                "downloadUrl": "https://cdn.example.invalid/saved.jpg",
+            },
+        }
+    )
+
+    assert item.imageRef is not None
+    assert item.imageRef.imageId == "image-without-path-1"
+    assert item.imageRef.storagePath is None
+    assert item.imageRef.downloadUrl == "https://cdn.example.invalid/saved.jpg"
 
 
 def test_meal_document_normalization_drops_raw_ai_provider_payloads() -> None:

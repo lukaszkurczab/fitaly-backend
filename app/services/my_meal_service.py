@@ -129,6 +129,8 @@ def _normalize_saved_meal_document(
         payload,
         fallback_cloud_id=fallback_cloud_id,
         fallback_updated_at=fallback_updated_at,
+        image_storage_collection="myMeals",
+        derive_image_storage_path=False,
     )
     normalized["source"] = "saved"
     return meal_id, normalized
@@ -392,5 +394,6 @@ async def upload_photo(
     return {
         "mealId": meal_id,
         "imageId": payload["imageId"],
+        "storagePath": payload["storagePath"],
         "photoUrl": payload["photoUrl"],
     }

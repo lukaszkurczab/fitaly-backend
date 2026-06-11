@@ -83,6 +83,91 @@ def _wire_meal_firestore_refs(
     return client, meal_ref, mutation_ref, transaction
 
 
+def _base_meal_payload(overrides: dict[str, object] | None = None) -> dict[str, object]:
+    return {
+        "cloudId": "meal-1",
+        "mealId": "meal-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "dayKey": "2026-03-03",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "deleted": False,
+        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        **(overrides or {}),
+    }
+
+
+def test_normalize_meal_document_preserves_logged_upload_shaped_storage_path() -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": "meals/user-1/image-1.webp",
+                    "downloadUrl": "https://cdn/meal.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.webp",
+        "downloadUrl": "https://cdn/meal.jpg",
+    }
+
+
+@pytest.mark.parametrize(
+    "storage_path",
+    [
+        "meals/unknown/image-1.jpg",
+        "meals/other-user/image-1.jpg",
+        "meals/user-1/custom-image.jpg",
+        "meals/user-1/meal-1-image-1.jpg",
+        "meals/user-1/image-1",
+        "meals/user-1/nested/image-1.jpg",
+        "images/image-1.jpg",
+        "myMeals/user-1/image-1.jpg",
+    ],
+)
+def test_normalize_meal_document_derives_user_scoped_storage_path(
+    storage_path: str,
+) -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": storage_path,
+                    "downloadUrl": "https://cdn/meal.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "downloadUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_normalize_meal_document_derives_missing_storage_path() -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload({"imageRef": {"imageId": "image-1"}}),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+    }
+
+
 def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
     client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
@@ -557,6 +642,9 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     upload.file.seek.assert_called_once_with(0)
     upload.file.close.assert_called_once_with()
     assert payload["imageId"]
+    assert payload["storagePath"] == bucket.blob.call_args.args[0]
+    assert payload["storagePath"].startswith("meals/user-1/")
+    assert payload["storagePath"].endswith(".jpg")
     assert payload["photoUrl"].startswith(
         "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/meals%2Fuser-1%2F"
     )
@@ -585,6 +673,8 @@ def test_upload_photo_skips_metadata_patch_in_storage_emulator(
     )
     blob.patch.assert_not_called()
     assert blob.metadata["firebaseStorageDownloadTokens"]
+    assert payload["storagePath"] == bucket.blob.call_args.args[0]
+    assert payload["storagePath"].startswith("meals/user-1/")
     assert payload["photoUrl"].startswith(
         "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/meals%2Fuser-1%2F"
     )
@@ -628,7 +718,173 @@ def test_resolve_photo_uses_meal_document_photo_url(mocker: MockerFixture) -> No
     assert payload == {
         "mealId": "meal-1",
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_resolve_photo_ignores_foreign_stored_storage_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data=_base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": "meals/other-user/image-1.jpg",
+                },
+            }
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
+    }
+
+
+def test_resolve_photo_ignores_user_scoped_inconsistent_stored_storage_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=True)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.meal_service._normalize_meal_snapshot",
+        return_value={
+            "imageRef": {
+                "imageId": "image-1",
+                "storagePath": "meals/user-1/custom-image.jpg",
+            },
+        },
+    )
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
+    }
+
+
+def test_resolve_photo_returns_derived_path_with_photo_url_for_inconsistent_stored_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=True)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    get_storage_bucket = mocker.patch("app.services.meal_service.get_storage_bucket")
+    mocker.patch(
+        "app.services.meal_service._normalize_meal_snapshot",
+        return_value={
+            "imageRef": {
+                "imageId": "image-1",
+                "storagePath": "meals/user-1/custom-image.jpg",
+                "downloadUrl": "https://cdn/meal.jpg",
+            },
+        },
+    )
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    get_storage_bucket.assert_not_called()
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_resolve_photo_uses_user_scoped_storage_object_path(
+    mocker: MockerFixture,
+) -> None:
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(meal_service.resolve_photo("user-1", image_id="image-1"))
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    blob.reload.assert_called_once_with()
+    blob.patch.assert_not_called()
+    assert payload == {
+        "mealId": None,
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
     }
 
 

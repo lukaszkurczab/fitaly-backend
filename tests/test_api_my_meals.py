@@ -235,6 +235,7 @@ def test_post_my_meal_photo_upload_uses_backend_service(
         return_value={
             "mealId": "saved-1",
             "imageId": "image-1",
+            "storagePath": "myMeals/user-1/saved-1-image-1.jpg",
             "photoUrl": "https://cdn/saved-1.jpg",
         },
     )
@@ -249,6 +250,7 @@ def test_post_my_meal_photo_upload_uses_backend_service(
     assert response.json() == {
         "mealId": "saved-1",
         "imageId": "image-1",
+        "storagePath": "myMeals/user-1/saved-1-image-1.jpg",
         "photoUrl": "https://cdn/saved-1.jpg",
     }
     upload_photo.assert_called_once()

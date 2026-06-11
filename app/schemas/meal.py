@@ -39,7 +39,7 @@ class MealAiMeta(BaseModel):
 
 class MealImageRef(BaseModel):
     imageId: str = Field(min_length=1)
-    storagePath: str = Field(min_length=1)
+    storagePath: str | None = None
     downloadUrl: str | None = None
 
 
@@ -127,13 +127,6 @@ class MealItem(MealDocument):
         if normalized.get("loggedAt") is None:
             normalized["loggedAt"] = normalized.get("timestamp")
 
-        image_id = normalized.get("imageId")
-        if normalized.get("imageRef") is None and isinstance(image_id, str) and image_id:
-            normalized["imageRef"] = {
-                "imageId": image_id,
-                "storagePath": f"meals/unknown/{image_id}.jpg",
-                "downloadUrl": normalized.get("photoUrl"),
-            }
         return normalized
 
 
@@ -226,4 +219,5 @@ class SavedMealDeleteRequest(MealDeleteRequest):
 class MealPhotoUploadResponse(BaseModel):
     mealId: str | None = None
     imageId: str
+    storagePath: str
     photoUrl: str

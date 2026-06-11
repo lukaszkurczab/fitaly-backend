@@ -208,6 +208,7 @@ async def upload_photo_to_storage(
 
     return {
         "imageId": _extract_image_id_from_object_path(object_path),
+        "storagePath": object_path,
         "photoUrl": build_storage_download_url(
             get_storage_bucket_name(bucket),
             object_path,

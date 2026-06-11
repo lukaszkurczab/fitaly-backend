@@ -166,6 +166,7 @@ def test_get_meal_photo_url_returns_backend_payload(
         return_value={
             "mealId": "meal-1",
             "imageId": "image-1",
+            "storagePath": "meals/user-1/image-1.jpg",
             "photoUrl": "https://cdn/meal.jpg",
         },
     )
@@ -179,6 +180,7 @@ def test_get_meal_photo_url_returns_backend_payload(
     assert response.json() == {
         "mealId": "meal-1",
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
     }
     resolve_photo.assert_called_once_with(
@@ -196,6 +198,7 @@ def test_post_meal_photo_upload_returns_backend_payload(
         "app.api.routes.meals.meal_service.upload_photo",
         return_value={
             "imageId": "image-1",
+            "storagePath": "meals/user-1/image-1.jpg",
             "photoUrl": "https://cdn/meal.jpg",
         },
     )
@@ -210,6 +213,7 @@ def test_post_meal_photo_upload_returns_backend_payload(
     assert response.json() == {
         "mealId": None,
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
     }
     upload_photo.assert_called_once()

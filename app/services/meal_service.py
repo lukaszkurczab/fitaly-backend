@@ -43,6 +43,7 @@ MEAL_MUTATION_DEDUPE_SUBCOLLECTION = "mealMutationDedupe"
 
 class MealPhotoPayload(TypedDict):
     imageId: str
+    storagePath: str
     photoUrl: str
     mealId: NotRequired[str | None]
 
@@ -333,9 +334,64 @@ def _resolve_logged_at(
     )
 
 
+def _derive_user_scoped_storage_path(
+    *,
+    collection: str,
+    user_id: str,
+    image_id: str,
+) -> str:
+    return f"{collection}/{user_id}/{image_id}.jpg"
+
+
+def _parse_upload_storage_path(storage_path: str) -> tuple[str, str, str] | None:
+    parts = storage_path.split("/")
+    if len(parts) != 3:
+        return None
+
+    collection, owner_user_id, filename = parts
+    stem, separator, extension = filename.rpartition(".")
+    if not collection or not owner_user_id or not stem or separator != "." or not extension:
+        return None
+
+    return collection, owner_user_id, stem
+
+
+def _is_backend_upload_storage_path(
+    storage_path: str | None,
+    *,
+    collection: str,
+    user_id: str,
+    meal_id: str,
+    image_id: str,
+) -> bool:
+    if not storage_path:
+        return False
+
+    parsed = _parse_upload_storage_path(storage_path)
+    if parsed is None:
+        return False
+
+    path_collection, path_user_id, stem = parsed
+    if path_collection != collection or path_user_id != user_id:
+        return False
+
+    if collection == "meals":
+        return stem == image_id
+
+    if collection == "myMeals":
+        prefix = f"{meal_id}-"
+        return stem.startswith(prefix) and stem[len(prefix) :] == image_id
+
+    return False
+
+
 def _normalize_image_ref(
     user_id: str,
+    meal_id: str,
     payload: dict[str, Any],
+    *,
+    storage_collection: str = "meals",
+    derive_storage_path: bool = True,
 ) -> dict[str, Any] | None:
     image_ref_map = _as_object_map(payload.get("imageRef"))
     image_id = coerce_optional_str(
@@ -344,17 +400,31 @@ def _normalize_image_ref(
     if not image_id:
         return None
 
-    storage_path = coerce_optional_str(
+    incoming_storage_path = coerce_optional_str(
         image_ref_map.get("storagePath") if image_ref_map is not None else None
-    ) or f"meals/{user_id}/{image_id}.jpg"
+    )
+    storage_path: str | None = None
+    if _is_backend_upload_storage_path(
+        incoming_storage_path,
+        collection=storage_collection,
+        user_id=user_id,
+        meal_id=meal_id,
+        image_id=image_id,
+    ):
+        storage_path = incoming_storage_path
+    elif derive_storage_path:
+        storage_path = _derive_user_scoped_storage_path(
+            collection=storage_collection,
+            user_id=user_id,
+            image_id=image_id,
+        )
     download_url = coerce_optional_str(
         image_ref_map.get("downloadUrl") if image_ref_map is not None else None
     ) or coerce_optional_str(payload.get("photoUrl"))
 
-    out: dict[str, Any] = {
-        "imageId": image_id,
-        "storagePath": storage_path,
-    }
+    out: dict[str, Any] = {"imageId": image_id}
+    if storage_path:
+        out["storagePath"] = storage_path
     if download_url:
         out["downloadUrl"] = download_url
     return out
@@ -368,6 +438,8 @@ def normalize_meal_document_payload(
     fallback_updated_at: str | None = None,
     fallback_day_key: str | None = None,
     allow_logged_at_day_key_fallback: bool = True,
+    image_storage_collection: str = "meals",
+    derive_image_storage_path: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     now_iso = _now_iso()
     meal_id = _resolve_meal_id(payload, fallback_cloud_id=fallback_cloud_id)
@@ -398,7 +470,13 @@ def normalize_meal_document_payload(
             payload.get("inputMethod", payload.get("input_method"))
         ),
         "aiMeta": _normalize_ai_meta(payload.get("aiMeta", payload.get("ai_meta"))),
-        "imageRef": _normalize_image_ref(user_id, payload),
+        "imageRef": _normalize_image_ref(
+            user_id,
+            meal_id,
+            payload,
+            storage_collection=image_storage_collection,
+            derive_storage_path=derive_image_storage_path,
+        ),
         "notes": coerce_optional_str(payload.get("notes")),
         "tags": _normalize_tags(payload.get("tags")),
         "deleted": deleted,
@@ -1100,17 +1178,32 @@ async def resolve_photo(
             resolved_photo_url = coerce_optional_str(
                 image_ref_map.get("downloadUrl") if image_ref_map is not None else None
             ) or coerce_optional_str(normalized_meal.get("photoUrl"))
-            resolved_storage_path = coerce_optional_str(
+            stored_storage_path = coerce_optional_str(
                 image_ref_map.get("storagePath") if image_ref_map is not None else None
             )
             resolved_image_id = coerce_optional_str(
                 image_ref_map.get("imageId") if image_ref_map is not None else None
             ) or coerce_optional_str(normalized_meal.get("imageId")) or resolved_image_id
+            if resolved_image_id and _is_backend_upload_storage_path(
+                stored_storage_path,
+                collection="meals",
+                user_id=user_id,
+                meal_id=normalized_meal_id,
+                image_id=resolved_image_id,
+            ):
+                resolved_storage_path = stored_storage_path
 
     if resolved_photo_url and resolved_image_id:
+        if not resolved_storage_path:
+            resolved_storage_path = _derive_user_scoped_storage_path(
+                collection="meals",
+                user_id=user_id,
+                image_id=resolved_image_id,
+            )
         return {
             "mealId": normalized_meal_id or None,
             "imageId": resolved_image_id,
+            "storagePath": resolved_storage_path,
             "photoUrl": resolved_photo_url,
         }
 
@@ -1119,8 +1212,11 @@ async def resolve_photo(
 
     bucket = get_storage_bucket()
     candidate_paths = [path for path in [resolved_storage_path] if path] + [
-        f"meals/{user_id}/{resolved_image_id}.jpg",
-        f"images/{resolved_image_id}.jpg",
+        _derive_user_scoped_storage_path(
+            collection="meals",
+            user_id=user_id,
+            image_id=resolved_image_id,
+        ),
     ]
 
     for object_path in candidate_paths:
@@ -1140,6 +1236,7 @@ async def resolve_photo(
         return {
             "mealId": normalized_meal_id or None,
             "imageId": resolved_image_id,
+            "storagePath": object_path,
             "photoUrl": build_storage_download_url(
                 get_storage_bucket_name(bucket),
                 object_path,

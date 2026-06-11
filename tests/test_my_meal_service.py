@@ -83,6 +83,92 @@ def _wire_saved_meal_firestore_refs(
     return client, meal_ref, mutation_ref, transaction
 
 
+def _base_saved_meal_payload(
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "cloudId": "saved-1",
+        "mealId": "saved-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "source": "saved",
+        "deleted": False,
+        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        **(overrides or {}),
+    }
+
+
+def test_normalize_saved_meal_preserves_upload_shaped_storage_path() -> None:
+    _meal_id, document = my_meal_service._normalize_saved_meal_document(
+        "user-1",
+        _base_saved_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": "myMeals/user-1/saved-1-image-1.png",
+                    "downloadUrl": "https://cdn/saved.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "myMeals/user-1/saved-1-image-1.png",
+        "downloadUrl": "https://cdn/saved.jpg",
+    }
+
+
+@pytest.mark.parametrize(
+    "storage_path",
+    [
+        "myMeals/unknown/image-1.jpg",
+        "myMeals/other-user/image-1.jpg",
+        "myMeals/user-1/custom-image.jpg",
+        "myMeals/user-1/other-saved-1-image-1.jpg",
+        "myMeals/user-1/saved-1-other-image-1.jpg",
+        "myMeals/user-1/saved-1-image-1",
+        "myMeals/user-1/nested/saved-1-image-1.jpg",
+        "meals/user-1/image-1.jpg",
+        "images/image-1.jpg",
+    ],
+)
+def test_normalize_saved_meal_omits_unsafe_storage_path(
+    storage_path: str,
+) -> None:
+    _meal_id, document = my_meal_service._normalize_saved_meal_document(
+        "user-1",
+        _base_saved_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": storage_path,
+                    "downloadUrl": "https://cdn/saved.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "downloadUrl": "https://cdn/saved.jpg",
+    }
+
+
+def test_normalize_saved_meal_does_not_fabricate_missing_storage_path() -> None:
+    _meal_id, document = my_meal_service._normalize_saved_meal_document(
+        "user-1",
+        _base_saved_meal_payload({"imageRef": {"imageId": "image-1"}}),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+    }
+
+
 def test_upsert_saved_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
     client, meal_ref, mutation_ref, transaction = _wire_saved_meal_firestore_refs(
         mocker,
@@ -582,6 +668,9 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     blob.patch.assert_called_once_with()
     assert payload["mealId"] == "saved-1"
     assert payload["imageId"]
+    assert payload["storagePath"] == bucket.blob.call_args.args[0]
+    assert payload["storagePath"].startswith("myMeals/user-1/saved-1-")
+    assert payload["storagePath"].endswith(f"{payload['imageId']}.jpg")
     assert payload["photoUrl"].startswith(
         "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
     )
