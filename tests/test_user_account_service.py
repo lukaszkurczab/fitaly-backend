@@ -225,7 +225,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     def collection_side_effect(name: str):
         if name == "meals":
             return meals_collection_ref
-        if name == "myMeals":
+        if name == "mealTemplates":
             return my_meals_collection_ref
         if name == "chat_messages":
             return legacy_chat_collection_ref
@@ -350,7 +350,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     user_ref.delete.assert_called_once_with()
     bucket.list_blobs.assert_any_call(prefix="avatars/user-1/")
     bucket.list_blobs.assert_any_call(prefix="meals/user-1/")
-    bucket.list_blobs.assert_any_call(prefix="myMeals/user-1/")
+    bucket.list_blobs.assert_any_call(prefix="mealTemplates/user-1/")
     avatar_blob.delete.assert_called_once_with()
     meal_blob.delete.assert_called_once_with()
     my_meal_blob.delete.assert_called_once_with()
@@ -1881,7 +1881,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     def collection_side_effect(name: str):
         if name == "meals":
             return meals_collection_ref
-        if name == "myMeals":
+        if name == "mealTemplates":
             return my_meals_collection_ref
         if name == "notifications":
             return notifications_collection_ref

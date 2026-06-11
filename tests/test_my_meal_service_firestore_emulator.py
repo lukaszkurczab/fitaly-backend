@@ -24,6 +24,7 @@ def _emulator_client() -> firestore.Client:
 
 def _saved_meal_payload(
     *,
+    user_id: str,
     meal_id: str,
     logged_at: str,
     day_key: str,
@@ -65,7 +66,7 @@ def _saved_meal_payload(
         },
         "imageRef": {
             "imageId": image_id,
-            "storagePath": f"myMeals/test/{image_id}.jpg",
+            "storagePath": f"mealTemplates/{user_id}/{meal_id}-{image_id}.jpg",
             "downloadUrl": "https://cdn.example.invalid/saved-canonical.jpg",
         },
         "notes": "Reusable dinner",
@@ -93,6 +94,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         result = await my_meal_service.upsert_saved_meal(
             user_a,
             _saved_meal_payload(
+                user_id=user_a,
                 meal_id=main_meal_id,
                 logged_at="2026-04-20T18:00:00.000Z",
                 day_key="2026-04-20",
@@ -104,6 +106,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         await my_meal_service.upsert_saved_meal(
             user_a,
             _saved_meal_payload(
+                user_id=user_a,
                 meal_id=side_meal_id,
                 logged_at="2026-04-21T18:00:00.000Z",
                 day_key="2026-04-21",
@@ -115,6 +118,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         await my_meal_service.upsert_saved_meal(
             user_b,
             _saved_meal_payload(
+                user_id=user_b,
                 meal_id=user_b_meal_id,
                 logged_at="2026-04-20T18:00:00.000Z",
                 day_key="2026-04-20",
@@ -131,7 +135,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         stored_snapshot = (
             client.collection("users")
             .document(user_a)
-            .collection("myMeals")
+            .collection("mealTemplates")
             .document(main_meal_id)
             .get()
         )
@@ -168,7 +172,9 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             },
             "imageRef": {
                 "imageId": f"image-main-{run_id}",
-                "storagePath": f"myMeals/test/image-main-{run_id}.jpg",
+                "storagePath": (
+                    f"mealTemplates/{user_a}/{main_meal_id}-image-main-{run_id}.jpg"
+                ),
                 "downloadUrl": "https://cdn.example.invalid/saved-canonical.jpg",
             },
             "notes": "Reusable dinner",
@@ -225,7 +231,7 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         ):
             user_ref = client.collection("users").document(uid)
             for meal_id in meal_ids:
-                user_ref.collection("myMeals").document(meal_id).delete()
+                user_ref.collection("mealTemplates").document(meal_id).delete()
             for mutation in user_ref.collection("mealMutationDedupe").stream():
                 mutation.reference.delete()
             user_ref.delete()

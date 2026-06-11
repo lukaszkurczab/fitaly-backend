@@ -10,7 +10,7 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
-from app.core.firestore_constants import MY_MEALS_SUBCOLLECTION, USERS_COLLECTION
+from app.core.firestore_constants import MEAL_TEMPLATES_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.services import meal_storage
 from app.services.meal_service import (
@@ -30,7 +30,9 @@ UTC = timezone.utc
 
 def _my_meals_collection(user_id: str) -> firestore.CollectionReference:
     client: firestore.Client = get_firestore()
-    return client.collection(USERS_COLLECTION).document(user_id).collection(MY_MEALS_SUBCOLLECTION)
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        MEAL_TEMPLATES_SUBCOLLECTION
+    )
 
 
 def _my_meal_ref(user_id: str, meal_id: str) -> firestore.DocumentReference:
@@ -43,7 +45,7 @@ def _my_meal_ref_for_client(
     meal_id: str,
 ) -> firestore.DocumentReference:
     return client.collection(USERS_COLLECTION).document(user_id).collection(
-        MY_MEALS_SUBCOLLECTION
+        MEAL_TEMPLATES_SUBCOLLECTION
     ).document(meal_id)
 
 
@@ -129,7 +131,7 @@ def _normalize_saved_meal_document(
         payload,
         fallback_cloud_id=fallback_cloud_id,
         fallback_updated_at=fallback_updated_at,
-        image_storage_collection="myMeals",
+        image_storage_collection="mealTemplates",
         derive_image_storage_path=False,
     )
     normalized["source"] = "saved"
@@ -388,7 +390,7 @@ async def upload_photo(
     payload = await meal_storage.upload_photo_to_storage(
         user_id,
         upload,
-        object_path=f"myMeals/{user_id}/{meal_id}-{uuid4()}.{extension}",
+        object_path=f"mealTemplates/{user_id}/{meal_id}-{uuid4()}.{extension}",
         error_message="Failed to upload saved meal photo.",
     )
     return {

@@ -378,7 +378,7 @@ def _is_backend_upload_storage_path(
     if collection == "meals":
         return stem == image_id
 
-    if collection == "myMeals":
+    if collection == "mealTemplates":
         prefix = f"{meal_id}-"
         return stem.startswith(prefix) and stem[len(prefix) :] == image_id
 

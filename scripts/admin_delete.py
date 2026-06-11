@@ -2,7 +2,7 @@
 """Admin-triggered account deletion for DSAR (right-to-erasure) requests.
 
 Permanently deletes all personal data for a given user from Fitaly systems:
-  - All Firestore subcollections (meals, myMeals, chat_threads/messages,
+  - All Firestore subcollections (meals, mealTemplates, chat_threads/messages,
     notifications, prefs, feedback, badges, streak, notif_meta)
   - Firebase Storage objects (avatars, meal photos)
   - Firestore billing subtree under users/{uid}/billing and top-level rate_limits/usernames
@@ -62,6 +62,7 @@ from app.core.firestore_constants import (  # noqa: E402
     BILLING_SUBCOLLECTION,
     BILLING_DOCUMENT_ID,
     BADGES_SUBCOLLECTION,
+    MEAL_TEMPLATES_SUBCOLLECTION,
     RATE_LIMITS_COLLECTION,
     STREAK_SUBCOLLECTION,
     USERS_COLLECTION,
@@ -140,7 +141,7 @@ def _dry_run_report(uid: str) -> None:
         print(f"  createdAt: {profile.get('createdAt', '(none)')}")
 
     subcollections = [
-        "meals", "myMeals", "chat_threads", "notifications",
+        "meals", MEAL_TEMPLATES_SUBCOLLECTION, "chat_threads", "notifications",
         "prefs", "notif_meta", "feedback", "badges", "streak",
     ]
     print()
@@ -172,7 +173,7 @@ def _dry_run_report(uid: str) -> None:
 
     # Storage
     bucket = get_storage_bucket()
-    prefixes = [f"avatars/{uid}/", f"meals/{uid}/", f"myMeals/{uid}/"]
+    prefixes = [f"avatars/{uid}/", f"meals/{uid}/", f"{MEAL_TEMPLATES_SUBCOLLECTION}/{uid}/"]
     print()
     print("  Storage objects:")
     for prefix in prefixes:

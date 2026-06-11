@@ -180,6 +180,110 @@ class TestDeleteTopLevelDocs:
         rate_limit_ref.delete.assert_not_called()
 
 
+# ── _dry_run_report ──────────────────────────────────────────────────────────
+
+class TestDryRunReport:
+    @staticmethod
+    def _build_client_for_dry_run(mocker: MockerFixture) -> tuple[MagicMock, MagicMock]:
+        user_ref = MagicMock()
+        user_ref.get.return_value = _make_doc_snap(
+            data={
+                "email": "user@example.com",
+                "username": "user",
+                "plan": "free",
+                "createdAt": "2026-01-01T00:00:00Z",
+            },
+        )
+
+        billing_ref = MagicMock()
+        billing_ref.get.return_value = _make_doc_snap(exists=False)
+        billing_ref.collection.return_value.stream.return_value = iter([])
+
+        billing_collection = MagicMock()
+        billing_collection.document.return_value = billing_ref
+
+        def _user_collection(name: str) -> MagicMock:
+            if name == admin_delete.BILLING_SUBCOLLECTION:
+                return billing_collection
+            collection = MagicMock()
+            collection.stream.return_value = iter([])
+            return collection
+
+        user_ref.collection.side_effect = _user_collection
+
+        users_collection = MagicMock()
+        users_collection.document.return_value = user_ref
+
+        rate_limit_ref = MagicMock()
+        rate_limit_ref.get.return_value = _make_doc_snap(exists=False)
+        rate_limits_collection = MagicMock()
+        rate_limits_collection.document.return_value = rate_limit_ref
+
+        client = mocker.Mock()
+
+        def _collection(name: str) -> MagicMock:
+            if name == admin_delete.USERS_COLLECTION:
+                return users_collection
+            if name == admin_delete.RATE_LIMITS_COLLECTION:
+                return rate_limits_collection
+            raise AssertionError(f"Unexpected collection: {name}")
+
+        client.collection.side_effect = _collection
+        return client, user_ref
+
+    def test_reports_meal_templates_subcollection_not_legacy_my_meals(
+        self,
+        mocker: MockerFixture,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        client, user_ref = self._build_client_for_dry_run(mocker)
+        bucket = MagicMock()
+        bucket.list_blobs.return_value = []
+        auth_user = MagicMock(email="user@example.com", disabled=False)
+
+        mocker.patch("scripts.admin_delete.get_firestore", return_value=client)
+        mocker.patch("scripts.admin_delete.get_storage_bucket", return_value=bucket)
+        mocker.patch("scripts.admin_delete.firebase_auth.get_user", return_value=auth_user)
+
+        admin_delete._dry_run_report("uid123")
+
+        audited_subcollections = [
+            call.args[0]
+            for call in user_ref.collection.call_args_list
+            if call.args[0] != admin_delete.BILLING_SUBCOLLECTION
+        ]
+        output = capsys.readouterr().out
+
+        assert admin_delete.MEAL_TEMPLATES_SUBCOLLECTION in audited_subcollections
+        assert "myMeals" not in audited_subcollections
+        assert admin_delete.MEAL_TEMPLATES_SUBCOLLECTION in output
+        assert "myMeals" not in output
+
+    def test_reports_meal_templates_storage_prefix_not_legacy_my_meals(
+        self,
+        mocker: MockerFixture,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        client, _user_ref = self._build_client_for_dry_run(mocker)
+        bucket = MagicMock()
+        bucket.list_blobs.return_value = []
+        auth_user = MagicMock(email="user@example.com", disabled=False)
+
+        mocker.patch("scripts.admin_delete.get_firestore", return_value=client)
+        mocker.patch("scripts.admin_delete.get_storage_bucket", return_value=bucket)
+        mocker.patch("scripts.admin_delete.firebase_auth.get_user", return_value=auth_user)
+
+        admin_delete._dry_run_report("uid123")
+
+        prefixes = [call.kwargs["prefix"] for call in bucket.list_blobs.call_args_list]
+        output = capsys.readouterr().out
+
+        assert f"{admin_delete.MEAL_TEMPLATES_SUBCOLLECTION}/uid123/" in prefixes
+        assert "myMeals/uid123/" not in prefixes
+        assert f"{admin_delete.MEAL_TEMPLATES_SUBCOLLECTION}/uid123/" in output
+        assert "myMeals/uid123/" not in output
+
+
 # ── _delete_auth_user ─────────────────────────────────────────────────────────
 
 class TestDeleteAuthUser:

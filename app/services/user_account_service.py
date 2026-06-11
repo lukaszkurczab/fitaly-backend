@@ -36,9 +36,9 @@ from app.core.firestore_constants import (
     BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
+    MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
-    MY_MEALS_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     USERNAMES_COLLECTION,
     USERS_COLLECTION,
@@ -50,7 +50,7 @@ AiConsentDocument = dict[str, str | None]
 
 DELETE_SUBCOLLECTIONS = (
     "meals",
-    "myMeals",
+    MEAL_TEMPLATES_SUBCOLLECTION,
     "chat_messages",
     "notifications",
     "prefs",
@@ -1214,7 +1214,7 @@ def _delete_user_storage_assets(user_id: str) -> None:
     prefixes = (
         f"avatars/{user_id}/",
         f"meals/{user_id}/",
-        f"myMeals/{user_id}/",
+        f"mealTemplates/{user_id}/",
     )
     for prefix in prefixes:
         _delete_storage_prefix(bucket, prefix)
@@ -1284,7 +1284,7 @@ async def get_user_export_data(
         user_snapshot = user_ref.get()
         profile = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else None
         meals = _read_subcollection_documents(user_ref, "meals")
-        my_meals = _read_subcollection_documents(user_ref, MY_MEALS_SUBCOLLECTION)
+        my_meals = _read_subcollection_documents(user_ref, MEAL_TEMPLATES_SUBCOLLECTION)
         chat_messages = _read_chat_thread_messages(user_ref)
         chat_memory = _read_chat_thread_memory(user_ref)
         ai_runs = _read_ai_runs(client, user_id)

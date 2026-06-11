@@ -23,7 +23,7 @@ service firebase.storage {
       allow read, write: if isOwner(userId);
     }
 
-    match /myMeals/{userId}/{filename} {
+    match /mealTemplates/{userId}/{filename} {
       allow read, write: if isOwner(userId);
     }
 

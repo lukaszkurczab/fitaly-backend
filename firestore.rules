@@ -54,7 +54,7 @@ service cloud.firestore {
       allow create, read, update, delete: if isOwner(userId);
     }
 
-    match /users/{userId}/myMeals/{mealId} {
+    match /users/{userId}/mealTemplates/{mealId} {
       allow create, read, update, delete: if isOwner(userId);
     }
 

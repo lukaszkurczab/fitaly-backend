@@ -42,7 +42,7 @@ This document maps `firestore.indexes.json` to active backend query shapes after
 - `users/{uid}/chat_threads` and nested `messages`:
   single-field ordering/range on one field (`updatedAt` / `createdAt`) only.
 - `/users/me/meals/changes` and `/users/me/meal-templates/changes` read user-scoped
-  subcollections (`users/{uid}/meals`, `users/{uid}/myMeals`) ordered by
+  subcollections (`users/{uid}/meals`, `users/{uid}/mealTemplates`) ordered by
   `updatedAt ASC` plus document id (`__name__ ASC`) for deterministic cursor
   pagination. No collection-group or cross-user composite is required; the
   active bounds come from route-level `limit` validation and service-level

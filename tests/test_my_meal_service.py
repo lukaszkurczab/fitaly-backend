@@ -69,7 +69,7 @@ def _wire_saved_meal_firestore_refs(
     users_collection.document.return_value = user_ref
 
     def collection_for_name(name: str) -> object:
-        if name == "myMeals":
+        if name == "mealTemplates":
             return my_meals_collection
         if name == "mealMutationDedupe":
             return mutations_collection
@@ -108,7 +108,7 @@ def test_normalize_saved_meal_preserves_upload_shaped_storage_path() -> None:
             {
                 "imageRef": {
                     "imageId": "image-1",
-                    "storagePath": "myMeals/user-1/saved-1-image-1.png",
+                    "storagePath": "mealTemplates/user-1/saved-1-image-1.png",
                     "downloadUrl": "https://cdn/saved.jpg",
                 },
             }
@@ -117,7 +117,7 @@ def test_normalize_saved_meal_preserves_upload_shaped_storage_path() -> None:
 
     assert document["imageRef"] == {
         "imageId": "image-1",
-        "storagePath": "myMeals/user-1/saved-1-image-1.png",
+        "storagePath": "mealTemplates/user-1/saved-1-image-1.png",
         "downloadUrl": "https://cdn/saved.jpg",
     }
 
@@ -125,13 +125,16 @@ def test_normalize_saved_meal_preserves_upload_shaped_storage_path() -> None:
 @pytest.mark.parametrize(
     "storage_path",
     [
+        "myMeals/user-1/saved-1-image-1.png",
         "myMeals/unknown/image-1.jpg",
         "myMeals/other-user/image-1.jpg",
-        "myMeals/user-1/custom-image.jpg",
-        "myMeals/user-1/other-saved-1-image-1.jpg",
-        "myMeals/user-1/saved-1-other-image-1.jpg",
-        "myMeals/user-1/saved-1-image-1",
-        "myMeals/user-1/nested/saved-1-image-1.jpg",
+        "mealTemplates/unknown/image-1.jpg",
+        "mealTemplates/other-user/image-1.jpg",
+        "mealTemplates/user-1/custom-image.jpg",
+        "mealTemplates/user-1/other-saved-1-image-1.jpg",
+        "mealTemplates/user-1/saved-1-other-image-1.jpg",
+        "mealTemplates/user-1/saved-1-image-1",
+        "mealTemplates/user-1/nested/saved-1-image-1.jpg",
         "meals/user-1/image-1.jpg",
         "images/image-1.jpg",
     ],
@@ -669,7 +672,7 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     assert payload["mealId"] == "saved-1"
     assert payload["imageId"]
     assert payload["storagePath"] == bucket.blob.call_args.args[0]
-    assert payload["storagePath"].startswith("myMeals/user-1/saved-1-")
+    assert payload["storagePath"].startswith("mealTemplates/user-1/saved-1-")
     assert payload["storagePath"].endswith(f"{payload['imageId']}.jpg")
     assert payload["photoUrl"].startswith(
         "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
