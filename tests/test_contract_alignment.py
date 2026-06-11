@@ -30,7 +30,20 @@ from app.schemas.coach import (
     CoachSource,
 )
 from app.schemas.habits import CoachPriority, TopRisk
+from app.schemas.food_library import (
+    FOOD_LIBRARY_BARCODE_RESULT_OWNERS,
+    FOOD_LIBRARY_CURRENT_SAVED_MEAL_NAMES,
+    FOOD_LIBRARY_DOMAIN_CONTRACTS,
+    FOOD_LIBRARY_DOMAINS,
+    FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS,
+    FOOD_LIBRARY_LEGACY_MARKERS_NOT_CANONICAL,
+    FOOD_LIBRARY_LOGGED_MEAL_OWNER,
+    FOOD_LIBRARY_LOGGED_MEAL_SCHEMA,
+    FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS,
+    FoodLibraryDomainsContract,
+)
 from app.schemas.meal import (
+    MealDocument,
     MealInputMethod,
     MealItem,
     MealSource,
@@ -850,6 +863,167 @@ class TestEnumParity:
         assert sorted(enums["ReminderReasonCode"]) == sorted(
             get_args(ReminderReasonCode)
         )
+
+
+# ---------------------------------------------------------------------------
+# Fixture: food_library_domains_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestFoodLibraryDomainsContract:
+    """CH-06 food-library domain split must stay separate from logged Meal."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("food_library_domains_v1.json")
+
+    def test_contract_parses_and_declares_exact_library_domains(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+
+        assert contract.contract == "food_library_domains_v1"
+        assert tuple(contract.libraryDomains) == FOOD_LIBRARY_DOMAINS
+        assert contract.libraryDomains == [
+            "MealTemplate",
+            "Recipe",
+            "Ingredient/Product",
+            "ShoppingList",
+        ]
+
+    def test_domain_contracts_declare_exact_domain_owned_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+
+        assert tuple(contract.domainContracts.keys()) == FOOD_LIBRARY_DOMAINS
+        for domain, expected in FOOD_LIBRARY_DOMAIN_CONTRACTS.items():
+            expected_owner, expected_identity_fields, expected_owned_fields = expected
+            domain_contract = contract.domainContracts[domain]
+
+            assert domain_contract.owner == expected_owner
+            assert tuple(domain_contract.identityFields) == expected_identity_fields
+            assert tuple(domain_contract.ownedFields) == expected_owned_fields
+
+    def test_meal_template_contract_excludes_logged_meal_only_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        template_contract = contract.domainContracts["MealTemplate"]
+        template_fields = {
+            *template_contract.identityFields,
+            *template_contract.ownedFields,
+        }
+
+        assert template_fields.isdisjoint(
+            FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+
+    def test_logged_meal_boundary_is_narrow_and_not_library_catch_all(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.loggedMealBoundary
+
+        assert boundary.owner == FOOD_LIBRARY_LOGGED_MEAL_OWNER
+        assert boundary.schemaName == FOOD_LIBRARY_LOGGED_MEAL_SCHEMA
+        assert boundary.mustRemainNarrow is True
+        assert boundary.mustNotServeAsLibraryCatchAll is True
+        assert tuple(boundary.mustNotGainFields) == (
+            FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+        assert "persisted eaten-meal schema" in boundary.rationale
+
+    def test_current_saved_meals_are_not_final_library_foundation(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.currentSavedMealsBoundary
+
+        assert tuple(boundary.currentNames) == FOOD_LIBRARY_CURRENT_SAVED_MEAL_NAMES
+        assert boundary.isFinalLibraryFoundation is False
+        assert boundary.laterTargetDomain == "MealTemplate"
+        assert boundary.compatibilityFallbackToOldShapeAccepted is False
+        assert tuple(boundary.legacyMarkersNotCanonicalLibraryFoundation) == (
+            FOOD_LIBRARY_LEGACY_MARKERS_NOT_CANONICAL
+        )
+        assert tuple(boundary.mustNotExpandWith) == (
+            FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+
+    def test_barcode_boundary_is_backend_adapter_draft_source_only(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.barcodeBoundary
+
+        assert tuple(boundary.resultOwnership) == FOOD_LIBRARY_BARCODE_RESULT_OWNERS
+        assert boundary.addMealDraftSourceOnly is True
+        assert boundary.createsFirstPartyProductCatalogInThisSlice is False
+        assert boundary.mustNotWriteLibraryDomains == ["Ingredient/Product"]
+
+    def test_logged_meal_models_do_not_include_forbidden_library_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        forbidden_fields = set(contract.loggedMealBoundary.mustNotGainFields)
+
+        assert forbidden_fields.isdisjoint(MealDocument.model_fields)
+        assert forbidden_fields.isdisjoint(MealUpsertRequest.model_fields)
+
+    def test_rejects_extra_fields(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["loggedMealBoundary"]["templateFieldsAllowed"] = False
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_missing_domain_contract(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        del payload["domainContracts"]["ShoppingList"]
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_extra_domain_contract(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["domainContracts"]["PantryItem"] = {
+            "owner": "ingredient_product_library",
+            "identityFields": ["ingredientProductId", "ownerUserId"],
+            "ownedFields": ["displayName"],
+        }
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_domain_drift(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["libraryDomains"] = [
+            "MealTemplate",
+            "Recipe",
+            "Recipe",
+            "ShoppingList",
+        ]
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_meal_template_logged_meal_only_field(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["domainContracts"]["MealTemplate"]["ownedFields"].append("loggedAt")
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------
