@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 import logging
+import os
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -21,6 +23,8 @@ from app.db.firebase import (
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
+SAFE_ATTACHMENT_EXTENSION_RE = re.compile(r"^[a-z0-9]{1,16}$")
+DEFAULT_ATTACHMENT_EXTENSION = "jpg"
 
 
 class FeedbackValidationError(Exception):
@@ -29,6 +33,10 @@ class FeedbackValidationError(Exception):
 
 def _utc_timestamp_ms() -> int:
     return int(datetime.now(UTC).timestamp() * 1000)
+
+
+def _storage_emulator_configured() -> bool:
+    return bool(os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "").strip())
 
 
 def _feedback_collection(user_id: str) -> firestore.CollectionReference:
@@ -62,6 +70,27 @@ def _normalize_device_info(payload: dict[str, Any] | None) -> dict[str, str | No
     }
 
 
+def _attachment_extension(filename: str | None) -> str:
+    if filename and "." in filename:
+        maybe_extension = filename.rsplit(".", 1)[-1].strip().lower()
+        if SAFE_ATTACHMENT_EXTENSION_RE.fullmatch(maybe_extension):
+            return maybe_extension
+    return DEFAULT_ATTACHMENT_EXTENSION
+
+
+def _attachment_storage_filename(filename: str | None) -> str:
+    extension = _attachment_extension(filename)
+    normalized = str(filename or "").strip()
+    if (
+        not normalized
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+    ):
+        return f"attachment.{extension}"
+    return normalized
+
+
 async def _upload_attachment(
     *,
     user_id: str,
@@ -69,13 +98,7 @@ async def _upload_attachment(
     upload: UploadFile,
 ) -> tuple[str, str]:
     bucket = get_storage_bucket()
-    extension = "jpg"
-    if upload.filename and "." in upload.filename:
-        maybe_extension = upload.filename.rsplit(".", 1)[-1].strip().lower()
-        if maybe_extension:
-            extension = maybe_extension
-
-    filename = upload.filename.rsplit("/", 1)[-1] if upload.filename else f"attachment.{extension}"
+    filename = _attachment_storage_filename(upload.filename)
     object_path = f"feedback/{user_id}/{feedback_id}/{filename}"
     token = str(uuid4())
     blob = bucket.blob(object_path)
@@ -87,7 +110,8 @@ async def _upload_attachment(
             upload.file,
             content_type=upload.content_type or "image/jpeg",
         )
-        blob.patch()
+        if not _storage_emulator_configured():
+            blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(
             "Failed to upload feedback attachment.",
@@ -132,7 +156,7 @@ async def create_feedback(
         "updatedAt": None,
         "status": "new",
         "attachmentUrl": None,
-        "attachmentPath": None,
+        "attachmentRef": None,
     }
 
     try:
@@ -143,7 +167,7 @@ async def create_feedback(
                 upload=attachment,
             )
             payload["attachmentUrl"] = attachment_url
-            payload["attachmentPath"] = attachment_path
+            payload["attachmentRef"] = {"storagePath": attachment_path}
             payload["updatedAt"] = _utc_timestamp_ms()
 
         document_ref.set(payload, merge=True)

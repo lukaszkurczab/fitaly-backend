@@ -337,6 +337,129 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     my_meal_blob.delete.assert_called_once_with()
 
 
+def test_delete_feedback_attachments_uses_canonical_attachment_ref(
+    mocker: MockerFixture,
+) -> None:
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+        },
+    }
+    bucket = mocker.Mock()
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    user_account_service._delete_feedback_attachments(
+        feedback_documents=[feedback_doc],
+        user_id="user-1",
+    )
+
+    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/feedback.jpg")
+    blob.delete.assert_called_once_with()
+
+
+def test_delete_feedback_attachments_handles_legacy_attachment_path(
+    mocker: MockerFixture,
+) -> None:
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = {
+        "attachmentPath": "feedback/user-1/feedback-1/legacy.jpg",
+    }
+    bucket = mocker.Mock()
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    user_account_service._delete_feedback_attachments(
+        feedback_documents=[feedback_doc],
+        user_id="user-1",
+    )
+
+    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/legacy.jpg")
+    blob.delete.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "attachmentRef": {
+                "storagePath": "feedback/other-user/feedback-1/feedback.jpg",
+            },
+        },
+        {
+            "attachmentPath": "feedback/other-user/feedback-1/legacy.jpg",
+        },
+        {
+            "attachmentRef": {
+                "storagePath": "feedbacks/user-1/feedback-1/feedback.jpg",
+            },
+        },
+        {
+            "attachmentPath": "meals/user-1/meal-1/photo.jpg",
+        },
+        {
+            "attachmentRef": {
+                "storagePath": "",
+            },
+        },
+        {
+            "attachmentPath": "feedback/user-1/feedback-1",
+        },
+        {
+            "attachmentRef": {
+                "storagePath": "feedback/user-1/feedback-1/../feedback.jpg",
+            },
+        },
+    ],
+)
+def test_delete_feedback_attachments_ignores_out_of_scope_paths(
+    mocker: MockerFixture,
+    payload: dict[str, object],
+) -> None:
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = payload
+    bucket = mocker.Mock()
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    user_account_service._delete_feedback_attachments(
+        feedback_documents=[feedback_doc],
+        user_id="user-1",
+    )
+
+    bucket.blob.assert_not_called()
+
+
+def test_delete_feedback_attachments_does_not_delete_duplicate_path_twice(
+    mocker: MockerFixture,
+) -> None:
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+        },
+        "attachmentPath": "feedback/user-1/feedback-1/feedback.jpg",
+    }
+    bucket = mocker.Mock()
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    user_account_service._delete_feedback_attachments(
+        feedback_documents=[feedback_doc],
+        user_id="user-1",
+    )
+
+    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/feedback.jpg")
+    blob.delete.assert_called_once_with()
+
+
 def test_delete_billing_data_deletes_main_children_when_parent_doc_is_missing(
     mocker: MockerFixture,
 ) -> None:

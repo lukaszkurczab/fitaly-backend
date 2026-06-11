@@ -29,7 +29,9 @@ def test_post_feedback_returns_created_payload(
             "updatedAt": 2,
             "status": "new",
             "attachmentUrl": "https://cdn/feedback.jpg",
-            "attachmentPath": "feedback/user-1/feedback-1/feedback.jpg",
+            "attachmentRef": {
+                "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+            },
         },
     )
 
@@ -61,10 +63,13 @@ def test_post_feedback_returns_created_payload(
             "updatedAt": 2,
             "status": "new",
             "attachmentUrl": "https://cdn/feedback.jpg",
-            "attachmentPath": "feedback/user-1/feedback-1/feedback.jpg",
+            "attachmentRef": {
+                "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+            },
         },
         "created": True,
     }
+    assert "attachmentPath" not in response.json()["feedback"]
     create_feedback.assert_called_once_with(
         user_id="user-1",
         message="App is great",

@@ -1061,23 +1061,75 @@ def _read_ai_runs(
     return runs
 
 
-def _delete_feedback_attachments(feedback_documents: list[firestore.DocumentSnapshot]) -> None:
+def _is_feedback_attachment_storage_path_for_user(
+    *,
+    user_id: str,
+    storage_path: str,
+) -> bool:
+    parts = storage_path.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == "feedback"
+        and parts[1] == user_id
+        and all(part.strip() and part != ".." for part in parts)
+    )
+
+
+def _feedback_attachment_storage_paths(
+    *,
+    payload: dict[str, Any],
+    user_id: str,
+) -> list[str]:
+    storage_paths: list[str] = []
+    attachment_ref = payload.get("attachmentRef")
+    if isinstance(attachment_ref, dict):
+        attachment_ref_payload = cast("dict[str, Any]", attachment_ref)
+        storage_path = attachment_ref_payload.get("storagePath")
+        if (
+            isinstance(storage_path, str)
+            and _is_feedback_attachment_storage_path_for_user(
+                user_id=user_id,
+                storage_path=storage_path,
+            )
+        ):
+            storage_paths.append(storage_path)
+
+    legacy_attachment_path = payload.get("attachmentPath")
+    if (
+        isinstance(legacy_attachment_path, str)
+        and _is_feedback_attachment_storage_path_for_user(
+            user_id=user_id,
+            storage_path=legacy_attachment_path,
+        )
+        and legacy_attachment_path not in storage_paths
+    ):
+        storage_paths.append(legacy_attachment_path)
+
+    return storage_paths
+
+
+def _delete_feedback_attachments(
+    *,
+    feedback_documents: list[firestore.DocumentSnapshot],
+    user_id: str,
+) -> None:
     if not feedback_documents:
         return
 
     bucket = get_storage_bucket()
     for document in feedback_documents:
         payload = dict(document.to_dict() or {})
-        attachment_path = payload.get("attachmentPath")
-        if not isinstance(attachment_path, str) or not attachment_path.strip():
-            continue
-        try:
-            bucket.blob(attachment_path).delete()
-        except Exception:
-            logger.exception(
-                "Failed to delete feedback attachment.",
-                extra={"feedback_id": document.id},
-            )
+        for storage_path in _feedback_attachment_storage_paths(
+            payload=payload,
+            user_id=user_id,
+        ):
+            try:
+                bucket.blob(storage_path).delete()
+            except Exception:
+                logger.exception(
+                    "Failed to delete feedback attachment.",
+                    extra={"feedback_id": document.id},
+                )
 
 
 def _delete_billing_data(
@@ -1151,7 +1203,10 @@ async def delete_account_data(user_id: str) -> None:
             username = normalize_username(user_data.get("username"))
 
         feedback_documents = list(user_ref.collection(FEEDBACK_SUBCOLLECTION).stream())
-        _delete_feedback_attachments(feedback_documents)
+        _delete_feedback_attachments(
+            feedback_documents=feedback_documents,
+            user_id=user_id,
+        )
         _delete_user_storage_assets(user_id)
         _delete_billing_data(client, user_ref)
         _delete_ai_runs(client, user_id)
