@@ -588,7 +588,7 @@ def test_upload_avatar_persists_file_and_avatar_ref_metadata(
             "avatarRef": {"storagePath": expected_path},
             "avatarUrl": avatar_url,
             "avatarlastSyncedAt": synced_at,
-            "avatarLocalPath": ANY,
+            "avatarLocalPath": user_account_service.firestore.DELETE_FIELD,
         },
         merge=True,
     )
@@ -837,6 +837,50 @@ def test_get_user_profile_data_can_touch_last_login_for_session_bootstrap(
         merge=True,
     )
     assert profile == {"uid": "user-1", "lastLogin": "2026-05-17T10:30:00Z"}
+
+
+def test_get_user_profile_data_omits_stale_backend_avatar_local_path(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "uid": "user-1",
+            "username": "neo",
+            "avatarUrl": "https://cdn/avatar.jpg",
+            "avatarLocalPath": "file:///stale-backend-avatar.jpg",
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-17T10:30:00Z",
+    )
+
+    profile = asyncio.run(
+        user_account_service.get_user_profile_data(
+            "user-1",
+            touch_last_login=True,
+        )
+    )
+
+    user_ref.set.assert_called_once_with(
+        {
+            "lastLogin": "2026-05-17T10:30:00Z",
+            "avatarLocalPath": user_account_service.firestore.DELETE_FIELD,
+        },
+        merge=True,
+    )
+    assert profile == {
+        "uid": "user-1",
+        "username": "neo",
+        "avatarUrl": "https://cdn/avatar.jpg",
+        "lastLogin": "2026-05-17T10:30:00Z",
+    }
 
 
 def test_get_user_profile_data_clears_confirmed_email_pending(

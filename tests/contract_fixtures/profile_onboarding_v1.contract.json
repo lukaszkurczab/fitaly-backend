@@ -16,7 +16,6 @@
       "syncState",
       "lastSyncedAt",
       "avatarUrl",
-      "avatarLocalPath",
       "avatarlastSyncedAt"
     ],
     "defaults": {
@@ -56,7 +55,6 @@
       "syncState": "pending",
       "lastSyncedAt": "",
       "avatarUrl": "",
-      "avatarLocalPath": "",
       "avatarlastSyncedAt": ""
     }
   },

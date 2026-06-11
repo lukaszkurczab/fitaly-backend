@@ -77,6 +77,7 @@ EDITABLE_PROFILE_DOCUMENT_FIELDS = frozenset(
 )
 
 LEGACY_PROFILE_FIELDS = (
+    "avatarLocalPath",
     "unitsSystem",
     "age",
     "sex",
@@ -274,6 +275,15 @@ def _apply_confirmed_auth_email(
         document["emailPending"] = firestore.DELETE_FIELD
 
 
+def _apply_local_only_profile_cleanup(
+    document: dict[str, Any],
+    *,
+    existing: dict[str, Any],
+) -> None:
+    if "avatarLocalPath" in existing:
+        document["avatarLocalPath"] = firestore.DELETE_FIELD
+
+
 def _merge_document_for_response(
     existing: dict[str, Any],
     document: dict[str, Any],
@@ -322,7 +332,6 @@ def _build_onboarding_profile_document(
     profile.setdefault("syncState", "pending")
     profile.setdefault("lastSyncedAt", "")
     profile.setdefault("avatarUrl", "")
-    profile.setdefault("avatarLocalPath", "")
     profile.setdefault("avatarlastSyncedAt", "")
 
     return _remove_legacy_fields(profile)
@@ -694,6 +703,7 @@ async def get_user_profile_data(
         existing=profile,
         auth_email=auth_email,
     )
+    _apply_local_only_profile_cleanup(document, existing=profile)
 
     if document:
         try:
