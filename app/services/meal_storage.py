@@ -50,13 +50,13 @@ def _detect_image_content_type(header: bytes) -> str | None:
     return None
 
 
-def _validate_upload(upload: UploadFile) -> str:
+def _validate_upload(upload: UploadFile, *, require_detected_image: bool = False) -> str:
     declared_content_type = str(upload.content_type or "").strip().lower()
     normalized_declared = (
         declared_content_type if declared_content_type in _ALLOWED_IMAGE_CONTENT_TYPES else None
     )
     if isinstance(upload.file, Mock):
-        if normalized_declared is not None:
+        if normalized_declared is not None and not require_detected_image:
             return normalized_declared
         raise ValueError("Unsupported or unrecognized file type")
 
@@ -70,7 +70,7 @@ def _validate_upload(upload: UploadFile) -> str:
     detected = _detect_image_content_type(header) if isinstance(header, bytes) else None
     if detected is not None:
         return detected
-    if normalized_declared is not None:
+    if normalized_declared is not None and not require_detected_image:
         return normalized_declared
     raise ValueError("Unsupported or unrecognized file type")
 

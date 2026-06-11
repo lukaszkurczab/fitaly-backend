@@ -20,6 +20,7 @@ from app.db.firebase import (
     get_storage_bucket,
     get_storage_bucket_name,
 )
+from app.services.meal_storage import _validate_upload
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -91,27 +92,36 @@ def _attachment_storage_filename(filename: str | None) -> str:
     return normalized
 
 
+def _validate_attachment_upload(upload: UploadFile) -> str:
+    try:
+        return _validate_upload(upload, require_detected_image=True)
+    except ValueError as exc:
+        raise FeedbackValidationError(str(exc)) from exc
+
+
 async def _upload_attachment(
     *,
     user_id: str,
     feedback_id: str,
     upload: UploadFile,
 ) -> tuple[str, str]:
-    bucket = get_storage_bucket()
-    filename = _attachment_storage_filename(upload.filename)
-    object_path = f"feedback/{user_id}/{feedback_id}/{filename}"
-    token = str(uuid4())
-    blob = bucket.blob(object_path)
-
     try:
+        safe_content_type = _validate_attachment_upload(upload)
+        bucket = get_storage_bucket()
+        filename = _attachment_storage_filename(upload.filename)
+        object_path = f"feedback/{user_id}/{feedback_id}/{filename}"
+        token = str(uuid4())
+        blob = bucket.blob(object_path)
         upload.file.seek(0)
         blob.metadata = {"firebaseStorageDownloadTokens": token}
         blob.upload_from_file(
             upload.file,
-            content_type=upload.content_type or "image/jpeg",
+            content_type=safe_content_type,
         )
         if not _storage_emulator_configured():
             blob.patch()
+    except FeedbackValidationError:
+        raise
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
         logger.exception(
             "Failed to upload feedback attachment.",
