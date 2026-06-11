@@ -56,6 +56,40 @@
         "displayMetadata",
         "savedMealDomainMetadata"
       ],
+      "futureLibraryBridge": {
+        "currentDomain": "saved_meal",
+        "stableMediaIdentity": [
+          "imageRef",
+          "imageRef.storagePath"
+        ],
+        "bridgesToDomains": [
+          "MealTemplate",
+          "Recipe"
+        ],
+        "bridgeMechanism": "reuse_imageRef_storagePath_without_storage_rewrite",
+        "requiresSeparateMediaMigration": false,
+        "nonMigrationTargets": [
+          {
+            "domain": "Ingredient/Product",
+            "boundaryMechanism": "excluded_from_saved_meal_photo_media_bridge",
+            "reason": "product_media_is_product_owned_not_derived_from_saved_meal_photo_asset"
+          },
+          {
+            "domain": "ShoppingList",
+            "boundaryMechanism": "excluded_from_saved_meal_photo_media_bridge",
+            "reason": "shopping_list_references_items_without_transforming_saved_meal_photo_assets"
+          }
+        ],
+        "loggedMealMustRemainNarrow": true,
+        "currentSavedMealMustNotExpandWith": [
+          "recipeLifecycleState",
+          "productLifecycleState",
+          "shoppingListLifecycleState",
+          "recipeMediaLifecycle",
+          "productMediaLifecycle",
+          "shoppingListMediaLifecycle"
+        ]
+      },
       "domainDocumentMustNotOwn": [
         "localFilePath",
         "opId",

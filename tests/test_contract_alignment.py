@@ -43,6 +43,10 @@ from app.schemas.media_asset import (
     MEDIA_ASSET_LIFECYCLE_OWNER,
     MEDIA_ASSET_STATES,
     MEDIA_ASSET_SURFACES,
+    SAVED_MEAL_PHOTO_LIBRARY_BRIDGE_DOMAINS,
+    SAVED_MEAL_PHOTO_LIBRARY_NON_MIGRATION_TARGETS,
+    SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN,
+    SAVED_MEAL_PHOTO_STABLE_MEDIA_IDENTITY,
     MediaAssetLifecycleContract,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
@@ -902,6 +906,105 @@ class TestMediaAssetLifecycleContract:
                 field.endswith(("Url", "URL"))
                 for field in surface_contract.domainDocumentOwns
             )
+
+    def test_saved_meal_photo_bridges_to_future_library_domains(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        bridge = contract.surfaces["saved_meal_photo"].futureLibraryBridge
+
+        assert bridge is not None
+        assert bridge.currentDomain == "saved_meal"
+        assert tuple(bridge.stableMediaIdentity) == (
+            SAVED_MEAL_PHOTO_STABLE_MEDIA_IDENTITY
+        )
+        assert tuple(bridge.bridgesToDomains) == (
+            SAVED_MEAL_PHOTO_LIBRARY_BRIDGE_DOMAINS
+        )
+        assert (
+            bridge.bridgeMechanism
+            == "reuse_imageRef_storagePath_without_storage_rewrite"
+        )
+        assert bridge.requiresSeparateMediaMigration is False
+
+    def test_saved_meal_photo_excludes_product_and_shopping_list_migration_targets(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        bridge = contract.surfaces["saved_meal_photo"].futureLibraryBridge
+
+        assert bridge is not None
+        assert tuple(
+            (target.domain, target.boundaryMechanism, target.reason)
+            for target in bridge.nonMigrationTargets
+        ) == SAVED_MEAL_PHOTO_LIBRARY_NON_MIGRATION_TARGETS
+        assert "Ingredient/Product" not in bridge.bridgesToDomains
+        assert "ShoppingList" not in bridge.bridgesToDomains
+
+    def test_saved_meal_photo_non_migration_boundary_rejects_drift(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = dict(fixture)
+        payload["surfaces"] = dict(cast(JSONDict, fixture["surfaces"]))
+        payload["surfaces"]["saved_meal_photo"] = dict(
+            payload["surfaces"]["saved_meal_photo"]
+        )
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"] = dict(
+            payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"]
+        )
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"][
+            "nonMigrationTargets"
+        ] = [
+            dict(target)
+            for target in payload["surfaces"]["saved_meal_photo"][
+                "futureLibraryBridge"
+            ]["nonMigrationTargets"]
+        ]
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"][
+            "nonMigrationTargets"
+        ][0]["domain"] = "Recipe"
+
+        with pytest.raises(ValidationError):
+            MediaAssetLifecycleContract.model_validate(payload)
+
+    def test_saved_meal_bridge_does_not_expand_current_domain_documents(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        saved_meal_photo = contract.surfaces["saved_meal_photo"]
+        bridge = saved_meal_photo.futureLibraryBridge
+
+        assert bridge is not None
+        assert bridge.loggedMealMustRemainNarrow is True
+        assert saved_meal_photo.domainDocumentOwns == [
+            "imageRef",
+            "displayMetadata",
+            "savedMealDomainMetadata",
+        ]
+        assert not set(SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN).intersection(
+            saved_meal_photo.domainDocumentOwns
+        )
+        assert tuple(bridge.currentSavedMealMustNotExpandWith) == (
+            SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN
+        )
+
+    def test_library_bridge_is_only_valid_for_saved_meal_photo(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = dict(fixture)
+        payload["surfaces"] = dict(cast(JSONDict, fixture["surfaces"]))
+        payload["surfaces"]["meal_photo"] = dict(payload["surfaces"]["meal_photo"])
+        payload["surfaces"]["meal_photo"]["futureLibraryBridge"] = dict(
+            payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"]
+        )
+
+        with pytest.raises(ValidationError):
+            MediaAssetLifecycleContract.model_validate(payload)
 
 
 class TestCoachContractEnums:
