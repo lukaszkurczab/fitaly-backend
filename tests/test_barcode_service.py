@@ -15,6 +15,14 @@ from app.services.barcode_service import (
     OpenFoodFactsBarcodeProvider,
 )
 
+PRODUCT_LIBRARY_FIELDS = {
+    "libraryDomain",
+    "productId",
+    "productRef",
+    "catalogId",
+    "barcodeIdentities",
+}
+
 
 @dataclass(frozen=True)
 class FakeBarcodeProvider:
@@ -51,6 +59,15 @@ async def test_barcode_lookup_service_returns_found_response() -> None:
     assert result.kind == "found"
     assert result.name == "Greek yogurt"
     assert result.ingredient.id == "5901234123457"
+    assert PRODUCT_LIBRARY_FIELDS.isdisjoint(result.model_dump())
+    assert PRODUCT_LIBRARY_FIELDS.isdisjoint(result.ingredient.model_dump())
+
+
+def test_barcode_lookup_service_only_depends_on_provider_adapter() -> None:
+    provider = FakeBarcodeProvider(product=None)
+    service = BarcodeLookupService(provider)
+
+    assert service.__dict__ == {"_provider": provider}
 
 
 async def test_barcode_lookup_service_raises_for_missing_product() -> None:

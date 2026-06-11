@@ -17,6 +17,14 @@ from tests.types import AuthHeaders
 
 client = TestClient(app)
 
+PRODUCT_LIBRARY_FIELDS = {
+    "libraryDomain",
+    "productId",
+    "productRef",
+    "catalogId",
+    "barcodeIdentities",
+}
+
 
 @pytest.fixture(autouse=True)
 def _clear_dependency_overrides() -> Generator[None, None, None]:
@@ -74,7 +82,8 @@ def test_lookup_barcode_returns_found_payload(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert payload == {
         "kind": "found",
         "name": "Greek yogurt",
         "ingredient": {
@@ -88,6 +97,8 @@ def test_lookup_barcode_returns_found_payload(
             "carbs": 8,
         },
     }
+    assert PRODUCT_LIBRARY_FIELDS.isdisjoint(payload)
+    assert PRODUCT_LIBRARY_FIELDS.isdisjoint(payload["ingredient"])
 
 
 def test_lookup_barcode_returns_404_for_not_found(
