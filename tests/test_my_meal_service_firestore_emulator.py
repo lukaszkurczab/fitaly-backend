@@ -6,6 +6,7 @@ import pytest
 from google.cloud import firestore
 from pytest_mock import MockerFixture
 
+from app.core.exceptions import FirestoreServiceError
 from app.services import my_meal_service
 
 
@@ -32,17 +33,13 @@ def _saved_meal_payload(
     image_id: str,
 ) -> dict[str, object]:
     return {
-        "id": meal_id,
-        "mealId": meal_id,
-        "cloudId": meal_id,
-        "userUid": "legacy-user-field",
-        "timestamp": logged_at,
-        "photoUrl": "https://legacy.example.invalid/saved.jpg",
-        "loggedAt": logged_at,
-        "dayKey": day_key,
-        "type": "dinner",
-        "name": "Saved emulator dinner",
-        "ingredients": [
+        "templateId": meal_id,
+        "ownerUserId": "ignored-client-owner",
+        "templateVersion": 1,
+        "displayName": "Saved emulator dinner",
+        "description": "Reusable dinner",
+        "mealTypeHint": "dinner",
+        "draftItems": [
             {
                 "id": "ingredient-1",
                 "name": "Salmon bowl",
@@ -56,21 +53,13 @@ def _saved_meal_payload(
         ],
         "createdAt": logged_at,
         "updatedAt": updated_at,
-        "source": "ai",
-        "inputMethod": "photo",
-        "aiMeta": {
-            "model": "gpt-4o-mini",
-            "runId": f"run-{meal_id}",
-            "confidence": 0.91,
-            "warnings": ["estimated_portion"],
-        },
+        "draftTotals": {"kcal": 510, "protein": 42, "carbs": 36, "fat": 18},
+        "nutritionSnapshot": {"kcal": 510, "protein": 42, "carbs": 36, "fat": 18},
         "imageRef": {
             "imageId": image_id,
             "storagePath": f"mealTemplates/{user_id}/{meal_id}-{image_id}.jpg",
             "downloadUrl": "https://cdn.example.invalid/saved-canonical.jpg",
         },
-        "notes": "Reusable dinner",
-        "tags": ["favorite", "high protein"],
         "deleted": False,
     }
 
@@ -128,9 +117,33 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             | {"clientMutationId": f"mutation-saved-user-b-{run_id}"},
         )
 
-        assert result["id"] == main_meal_id
-        assert result["source"] == "saved"
-        assert result["userUid"] is None
+        assert result["templateId"] == main_meal_id
+        assert result["ownerUserId"] == user_a
+        for legacy_field in (
+            "id",
+            "mealId",
+            "cloudId",
+            "loggedAt",
+            "timestamp",
+            "dayKey",
+            "loggedAtLocalMin",
+            "tzOffsetMin",
+            "type",
+            "name",
+            "ingredients",
+            "syncState",
+            "source",
+            "inputMethod",
+            "aiMeta",
+            "notes",
+            "tags",
+            "totals",
+            "userUid",
+            "imageId",
+            "photoUrl",
+            "savedMealRefId",
+        ):
+            assert legacy_field not in result
 
         stored_snapshot = (
             client.collection("users")
@@ -142,13 +155,13 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         assert stored_snapshot.exists is True
         stored_doc = stored_snapshot.to_dict() or {}
         assert stored_doc == {
-            "loggedAt": "2026-04-20T18:00:00.000Z",
-            "dayKey": "2026-04-20",
-            "loggedAtLocalMin": None,
-            "tzOffsetMin": None,
-            "type": "dinner",
-            "name": "Saved emulator dinner",
-            "ingredients": [
+            "templateId": main_meal_id,
+            "ownerUserId": user_a,
+            "templateVersion": 1,
+            "displayName": "Saved emulator dinner",
+            "description": "Reusable dinner",
+            "mealTypeHint": "dinner",
+            "draftItems": [
                 {
                     "id": "ingredient-1",
                     "name": "Salmon bowl",
@@ -160,16 +173,20 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
                     "carbs": 36.0,
                 }
             ],
+            "draftTotals": {
+                "protein": 42.0,
+                "fat": 18.0,
+                "carbs": 36.0,
+                "kcal": 510.0,
+            },
+            "nutritionSnapshot": {
+                "protein": 42.0,
+                "fat": 18.0,
+                "carbs": 36.0,
+                "kcal": 510.0,
+            },
             "createdAt": "2026-04-20T18:00:00.000Z",
             "updatedAt": shared_updated_at,
-            "source": "saved",
-            "inputMethod": "photo",
-            "aiMeta": {
-                "model": "gpt-4o-mini",
-                "runId": f"run-{main_meal_id}",
-                "confidence": 0.91,
-                "warnings": ["estimated_portion"],
-            },
             "imageRef": {
                 "imageId": f"image-main-{run_id}",
                 "storagePath": (
@@ -177,17 +194,23 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
                 ),
                 "downloadUrl": "https://cdn.example.invalid/saved-canonical.jpg",
             },
-            "notes": "Reusable dinner",
-            "tags": ["favorite", "high protein"],
             "deleted": False,
-            "totals": {
-                "protein": 42.0,
-                "fat": 18.0,
-                "carbs": 36.0,
-                "kcal": 510.0,
-            },
         }
-        for legacy_field in ("userUid", "cloudId", "timestamp", "photoUrl", "mealId"):
+        for legacy_field in (
+            "userUid",
+            "cloudId",
+            "timestamp",
+            "photoUrl",
+            "mealId",
+            "loggedAt",
+            "dayKey",
+            "loggedAtLocalMin",
+            "tzOffsetMin",
+            "syncState",
+            "source",
+            "inputMethod",
+            "savedMealRefId",
+        ):
             assert legacy_field not in stored_doc
 
         first_changes_page, first_cursor = await my_meal_service.list_changes(
@@ -200,12 +223,12 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             after_cursor=first_cursor,
         )
         expected_change_ids = sorted([main_meal_id, side_meal_id])
-        assert [item["id"] for item in first_changes_page] == [expected_change_ids[0]]
+        assert [item["templateId"] for item in first_changes_page] == [expected_change_ids[0]]
         assert first_cursor == f"{shared_updated_at}|{expected_change_ids[0]}"
-        assert [item["id"] for item in second_changes_page] == [expected_change_ids[1]]
+        assert [item["templateId"] for item in second_changes_page] == [expected_change_ids[1]]
         assert second_cursor == f"{shared_updated_at}|{expected_change_ids[1]}"
         assert user_b_meal_id not in {
-            item["id"] for item in [*first_changes_page, *second_changes_page]
+            item["templateId"] for item in [*first_changes_page, *second_changes_page]
         }
 
         deleted = await my_meal_service.mark_deleted(
@@ -217,13 +240,35 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
         assert deleted["deleted"] is True
 
         changes_after_delete, _ = await my_meal_service.list_changes(user_a, limit_count=10)
-        changes_by_id = {item["id"]: item for item in changes_after_delete}
+        changes_by_id = {item["templateId"]: item for item in changes_after_delete}
         assert set(changes_by_id) == {main_meal_id, side_meal_id}
         assert changes_by_id[main_meal_id]["deleted"] is True
         assert changes_by_id[main_meal_id]["updatedAt"] == deleted_updated_at
-        assert changes_by_id[main_meal_id]["source"] == "saved"
         assert changes_by_id[side_meal_id]["deleted"] is False
         assert user_b_meal_id not in changes_by_id
+
+        deleted_snapshot = (
+            client.collection("users")
+            .document(user_a)
+            .collection("mealTemplates")
+            .document(main_meal_id)
+            .get()
+        )
+        deleted_doc = deleted_snapshot.to_dict() or {}
+        assert deleted_doc["templateId"] == main_meal_id
+        assert deleted_doc["ownerUserId"] == user_a
+        assert deleted_doc["deleted"] is True
+        for legacy_field in (
+            "loggedAt",
+            "dayKey",
+            "loggedAtLocalMin",
+            "tzOffsetMin",
+            "syncState",
+            "source",
+            "inputMethod",
+            "savedMealRefId",
+        ):
+            assert legacy_field not in deleted_doc
     finally:
         for uid, meal_ids in (
             (user_a, (main_meal_id, side_meal_id)),
@@ -235,3 +280,49 @@ async def test_pr3_my_meals_saved_meal_sync_uses_canonical_firestore_documents(
             for mutation in user_ref.collection("mealMutationDedupe").stream():
                 mutation.reference.delete()
             user_ref.delete()
+
+
+async def test_meal_template_list_rejects_legacy_logged_meal_shaped_doc(
+    mocker: MockerFixture,
+) -> None:
+    client = _emulator_client()
+    run_id = uuid4().hex
+    user_id = f"template-legacy-user-{run_id}"
+    template_id = f"legacy-template-{run_id}"
+    user_ref = client.collection("users").document(user_id)
+    template_ref = user_ref.collection("mealTemplates").document(template_id)
+
+    mocker.patch("app.services.my_meal_service.get_firestore", return_value=client)
+
+    try:
+        template_ref.set(
+            {
+                "templateId": template_id,
+                "ownerUserId": user_id,
+                "templateVersion": 1,
+                "displayName": "Legacy saved meal",
+                "description": None,
+                "mealTypeHint": "lunch",
+                "draftItems": [],
+                "draftTotals": {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0},
+                "nutritionSnapshot": {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0},
+                "imageRef": None,
+                "createdAt": "2026-04-20T09:00:00.000Z",
+                "updatedAt": "2026-04-20T10:00:00.000Z",
+                "deleted": False,
+                "loggedAt": "2026-04-20T09:00:00.000Z",
+                "timestamp": "2026-04-20T09:00:00.000Z",
+                "dayKey": "2026-04-20",
+                "type": "lunch",
+                "ingredients": [],
+                "source": "saved",
+                "inputMethod": "manual",
+                "savedMealRefId": template_id,
+            }
+        )
+
+        with pytest.raises(FirestoreServiceError, match="logged-meal-only fields"):
+            await my_meal_service.list_changes(user_id, limit_count=10)
+    finally:
+        template_ref.delete()
+        user_ref.delete()

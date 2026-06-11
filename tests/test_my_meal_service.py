@@ -1,10 +1,11 @@
 import asyncio
 from io import BytesIO
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
 
+from app.core.exceptions import FirestoreServiceError
 from app.services import meal_service, my_meal_service
 
 
@@ -44,7 +45,7 @@ def _build_snapshot(
 ):
     snapshot = mocker.Mock()
     snapshot.exists = exists
-    snapshot.id = str((data or {}).get("cloudId") or (data or {}).get("mealId") or "saved-1")
+    snapshot.id = str((data or {}).get("templateId") or "saved-1")
     snapshot.to_dict.return_value = data or {}
     return snapshot
 
@@ -87,18 +88,49 @@ def _base_saved_meal_payload(
     overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
-        "cloudId": "saved-1",
-        "mealId": "saved-1",
-        "timestamp": "2026-03-03T12:00:00.000Z",
-        "type": "lunch",
-        "ingredients": [],
+        "templateId": "saved-1",
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
         "createdAt": "2026-03-03T12:00:00.000Z",
         "updatedAt": "2026-03-03T12:30:00.000Z",
-        "source": "saved",
         "deleted": False,
-        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "draftTotals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "nutritionSnapshot": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "imageRef": None,
         **(overrides or {}),
     }
+
+
+def _assert_no_logged_meal_response_fields(payload: dict[str, object]) -> None:
+    for forbidden_field in (
+        "id",
+        "mealId",
+        "cloudId",
+        "loggedAt",
+        "timestamp",
+        "dayKey",
+        "loggedAtLocalMin",
+        "tzOffsetMin",
+        "type",
+        "name",
+        "ingredients",
+        "syncState",
+        "source",
+        "inputMethod",
+        "aiMeta",
+        "notes",
+        "tags",
+        "totals",
+        "userUid",
+        "imageId",
+        "photoUrl",
+        "savedMealRefId",
+    ):
+        assert forbidden_field not in payload
 
 
 def test_normalize_saved_meal_preserves_upload_shaped_storage_path() -> None:
@@ -179,17 +211,7 @@ def test_upsert_saved_meal_keeps_newer_remote_document(mocker: MockerFixture) ->
             mocker,
             exists=True,
             data={
-                "cloudId": "saved-1",
-                "mealId": "saved-1",
-                "userUid": "user-1",
-                "timestamp": "2026-03-03T12:00:00.000Z",
-                "type": "lunch",
-                "ingredients": [],
-                "createdAt": "2026-03-03T12:00:00.000Z",
-                "updatedAt": "2026-03-03T13:00:00.000Z",
-                "source": "saved",
-                "deleted": False,
-                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+                **_base_saved_meal_payload({"updatedAt": "2026-03-03T13:00:00.000Z"})
             },
         ),
     )
@@ -198,17 +220,7 @@ def test_upsert_saved_meal_keeps_newer_remote_document(mocker: MockerFixture) ->
     result = asyncio.run(
         my_meal_service.upsert_saved_meal(
             "user-1",
-            {
-                "cloudId": "saved-1",
-                "mealId": "saved-1",
-                "timestamp": "2026-03-03T12:00:00.000Z",
-                "type": "lunch",
-                "ingredients": [],
-                "createdAt": "2026-03-03T12:00:00.000Z",
-                "updatedAt": "2026-03-03T12:30:00.000Z",
-                "deleted": False,
-                "clientMutationId": "mutation-saved-upsert-stale",
-            },
+            _base_saved_meal_payload({"clientMutationId": "mutation-saved-upsert-stale"}),
         ),
     )
 
@@ -228,20 +240,20 @@ def test_upsert_saved_meal_duplicate_replay_uses_dedupe_record_without_second_wr
         "app.services.my_meal_service.get_firestore",
         return_value=first_client,
     )
-    payload: dict[str, object] = {
-        "cloudId": "saved-1",
-        "mealId": "saved-1",
-        "timestamp": "2026-03-03T12:00:00.000Z",
-        "type": "lunch",
-        "ingredients": [],
-        "createdAt": "2026-03-03T12:00:00.000Z",
-        "updatedAt": "2026-03-03T12:30:00.000Z",
-        "deleted": False,
-        "clientMutationId": "mutation-saved-upsert-replay",
-    }
+    payload = _base_saved_meal_payload(
+        {"clientMutationId": "mutation-saved-upsert-replay"}
+    )
 
     first_result = asyncio.run(my_meal_service.upsert_saved_meal("user-1", payload))
+    stored_doc = first_transaction.set_calls[0][1]
     mutation_record = first_transaction.set_calls[1][1]
+    assert mutation_record["kind"] == "meal_template_upsert"
+    assert mutation_record["templateId"] == "saved-1"
+    assert "mealId" not in mutation_record
+    assert "resultMeal" not in mutation_record
+    result_template = cast(dict[str, object], mutation_record["resultTemplate"])
+    assert result_template["templateId"] == "saved-1"
+    _assert_no_logged_meal_response_fields(result_template)
 
     second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
         _wire_saved_meal_firestore_refs(
@@ -259,8 +271,125 @@ def test_upsert_saved_meal_duplicate_replay_uses_dedupe_record_without_second_wr
     second_result = asyncio.run(my_meal_service.upsert_saved_meal("user-1", payload))
 
     assert first_result == second_result
+    assert first_result["templateId"] == "saved-1"
+    assert first_result["ownerUserId"] == "user-1"
+    _assert_no_logged_meal_response_fields(first_result)
+    assert stored_doc["templateId"] == "saved-1"
+    assert stored_doc["ownerUserId"] == "user-1"
+    for forbidden_field in (
+        "loggedAt",
+        "timestamp",
+        "dayKey",
+        "loggedAtLocalMin",
+        "tzOffsetMin",
+        "syncState",
+        "source",
+        "inputMethod",
+        "savedMealRefId",
+    ):
+        assert forbidden_field not in stored_doc
+    assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
+    assert first_transaction.set_calls[0][2] is False
+    assert second_transaction.set_calls == []
+
+
+def test_upsert_saved_meal_timestampless_duplicate_replay_uses_stable_hash(
+    mocker: MockerFixture,
+) -> None:
+    first_client, meal_ref, mutation_ref, first_transaction = _wire_saved_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    get_firestore = mocker.patch(
+        "app.services.my_meal_service.get_firestore",
+        return_value=first_client,
+    )
+    mocker.patch(
+        "app.services.my_meal_service._now_iso",
+        side_effect=[
+            "2026-03-03T12:30:00.001Z",
+            "2026-03-03T12:30:00.002Z",
+            "2026-03-03T12:30:00.999Z",
+        ],
+    )
+    payload = _base_saved_meal_payload(
+        {"clientMutationId": "mutation-saved-upsert-timestampless-replay"}
+    )
+    payload.pop("createdAt")
+    payload.pop("updatedAt")
+
+    first_result = asyncio.run(my_meal_service.upsert_saved_meal("user-1", payload))
+    stored_doc = first_transaction.set_calls[0][1]
+    mutation_record = first_transaction.set_calls[1][1]
+    assert stored_doc["createdAt"] == "2026-03-03T12:30:00.001Z"
+    assert stored_doc["updatedAt"] == "2026-03-03T12:30:00.001Z"
+
+    second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
+        _wire_saved_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(my_meal_service.upsert_saved_meal("user-1", payload))
+
+    assert first_result == second_result
+    assert first_result["createdAt"] == "2026-03-03T12:30:00.001Z"
+    assert first_result["updatedAt"] == "2026-03-03T12:30:00.001Z"
     assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
     assert second_transaction.set_calls == []
+
+
+def test_upsert_saved_meal_rejects_existing_logged_meal_shaped_document(
+    mocker: MockerFixture,
+) -> None:
+    client, meal_ref, mutation_ref, transaction = _wire_saved_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                **_base_saved_meal_payload({"updatedAt": "2026-03-03T12:00:00.000Z"}),
+                "loggedAt": "2026-03-03T12:00:00.000Z",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "loggedAtLocalMin": 720,
+                "tzOffsetMin": 60,
+                "source": "saved",
+                "inputMethod": "manual",
+                "savedMealRefId": "saved-1",
+                "syncState": "synced",
+            },
+        ),
+    )
+    mocker.patch("app.services.my_meal_service.get_firestore", return_value=client)
+
+    with pytest.raises(FirestoreServiceError, match="logged-meal-only fields"):
+        asyncio.run(
+            my_meal_service.upsert_saved_meal(
+                "user-1",
+                _base_saved_meal_payload({"clientMutationId": "mutation-template-replace"}),
+            )
+        )
+
+    meal_ref.set.assert_not_called()
+    assert transaction.set_calls == []
+    assert mutation_ref.get.called is True
+
+
+def test_meal_template_from_document_rejects_extra_stored_fields() -> None:
+    with pytest.raises(FirestoreServiceError, match="non-canonical fields: legacyField"):
+        my_meal_service._meal_template_from_document(
+            "user-1",
+            "saved-1",
+            _base_saved_meal_payload({"legacyField": "unexpected"}),
+        )
 
 
 def test_upsert_saved_meal_rejects_reused_client_mutation_id_for_different_payload(
@@ -274,10 +403,10 @@ def test_upsert_saved_meal_rejects_reused_client_mutation_id_for_different_paylo
             exists=True,
             data={
                 "clientMutationId": "mutation-saved-reused",
-                "kind": "saved_meal_upsert",
-                "mealId": "saved-1",
+                "kind": "meal_template_upsert",
+                "templateId": "saved-1",
                 "payloadHash": "different-payload",
-                "resultMeal": {"id": "saved-1"},
+                "resultTemplate": _base_saved_meal_payload(),
             },
         ),
     )
@@ -287,17 +416,7 @@ def test_upsert_saved_meal_rejects_reused_client_mutation_id_for_different_paylo
         asyncio.run(
             my_meal_service.upsert_saved_meal(
                 "user-1",
-                {
-                    "cloudId": "saved-1",
-                    "mealId": "saved-1",
-                    "timestamp": "2026-03-03T12:00:00.000Z",
-                    "type": "lunch",
-                    "ingredients": [],
-                    "createdAt": "2026-03-03T12:00:00.000Z",
-                    "updatedAt": "2026-03-03T12:30:00.000Z",
-                    "deleted": False,
-                    "clientMutationId": "mutation-saved-reused",
-                },
+                _base_saved_meal_payload({"clientMutationId": "mutation-saved-reused"}),
             )
         )
 
@@ -356,21 +475,25 @@ class _FakeChangesQuery:
 
 def _changes_doc(
     *,
+    template_id: str,
     timestamp: str,
     updated_at: str,
     deleted: bool = False,
 ) -> dict[str, Any]:
     return {
-        "loggedAt": timestamp,
-        "timestamp": timestamp,
-        "dayKey": timestamp[:10],
-        "type": "lunch",
-        "ingredients": [],
+        "templateId": template_id,
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
         "createdAt": timestamp,
         "updatedAt": updated_at,
-        "source": "saved",
         "deleted": deleted,
-        "totals": {"kcal": 300, "protein": 20, "carbs": 30, "fat": 10},
+        "draftTotals": {"kcal": 300, "protein": 20, "carbs": 30, "fat": 10},
+        "nutritionSnapshot": {"kcal": 300, "protein": 20, "carbs": 30, "fat": 10},
+        "imageRef": None,
     }
 
 
@@ -396,6 +519,7 @@ def test_list_changes_paginates_same_updated_at_without_duplicates_or_gaps(
             _FakeChangesSnapshot(
                 "saved-c",
                 _changes_doc(
+                    template_id="saved-c",
                     timestamp="2026-04-20T09:00:00.000Z",
                     updated_at=same_updated_at,
                 ),
@@ -403,6 +527,7 @@ def test_list_changes_paginates_same_updated_at_without_duplicates_or_gaps(
             _FakeChangesSnapshot(
                 "saved-a",
                 _changes_doc(
+                    template_id="saved-a",
                     timestamp="2026-04-20T07:00:00.000Z",
                     updated_at=same_updated_at,
                 ),
@@ -410,6 +535,7 @@ def test_list_changes_paginates_same_updated_at_without_duplicates_or_gaps(
             _FakeChangesSnapshot(
                 "saved-b",
                 _changes_doc(
+                    template_id="saved-b",
                     timestamp="2026-04-20T08:00:00.000Z",
                     updated_at=same_updated_at,
                 ),
@@ -417,6 +543,7 @@ def test_list_changes_paginates_same_updated_at_without_duplicates_or_gaps(
             _FakeChangesSnapshot(
                 "saved-d",
                 _changes_doc(
+                    template_id="saved-d",
                     timestamp="2026-04-20T11:00:00.000Z",
                     updated_at="2026-04-20T11:00:00.000Z",
                 ),
@@ -430,7 +557,7 @@ def test_list_changes_paginates_same_updated_at_without_duplicates_or_gaps(
         my_meal_service.list_changes("user-1", limit_count=2, after_cursor=cursor1)
     )
 
-    ids = [item["cloudId"] for item in [*page1, *page2]]
+    ids = [item["templateId"] for item in [*page1, *page2]]
     assert ids == ["saved-a", "saved-b", "saved-c", "saved-d"]
     assert len(ids) == len(set(ids))
     assert cursor1 == "2026-04-20T10:00:00.000Z|saved-b"
@@ -445,6 +572,7 @@ def test_list_changes_returns_deleted_tombstones(
             _FakeChangesSnapshot(
                 "saved-deleted",
                 _changes_doc(
+                    template_id="saved-deleted",
                     timestamp="2026-04-20T09:00:00.000Z",
                     updated_at="2026-04-20T10:00:00.000Z",
                     deleted=True,
@@ -456,10 +584,97 @@ def test_list_changes_returns_deleted_tombstones(
 
     items, next_cursor = asyncio.run(my_meal_service.list_changes("user-1", limit_count=10))
 
-    assert [item["cloudId"] for item in items] == ["saved-deleted"]
+    assert [item["templateId"] for item in items] == ["saved-deleted"]
     assert items[0]["deleted"] is True
-    assert items[0]["source"] == "saved"
+    _assert_no_logged_meal_response_fields(items[0])
     assert next_cursor is None
+
+
+def test_list_changes_rejects_logged_meal_shaped_stored_template(
+    mocker: MockerFixture,
+) -> None:
+    query = _FakeChangesQuery(
+        [
+            _FakeChangesSnapshot(
+                "legacy-saved",
+                {
+                    "templateId": "legacy-saved",
+                    "ownerUserId": "user-1",
+                    "templateVersion": 1,
+                    "displayName": "Legacy saved meal",
+                    "description": None,
+                    "mealTypeHint": "lunch",
+                    "draftItems": [],
+                    "draftTotals": {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0},
+                    "nutritionSnapshot": {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0},
+                    "imageRef": None,
+                    "createdAt": "2026-04-20T09:00:00.000Z",
+                    "updatedAt": "2026-04-20T10:00:00.000Z",
+                    "deleted": False,
+                    "loggedAt": "2026-04-20T09:00:00.000Z",
+                    "timestamp": "2026-04-20T09:00:00.000Z",
+                    "dayKey": "2026-04-20",
+                    "type": "lunch",
+                    "ingredients": [],
+                    "source": "saved",
+                    "inputMethod": "manual",
+                    "savedMealRefId": "legacy-saved",
+                },
+            ),
+        ]
+    )
+    _wire_changes_collection(mocker, query)
+
+    with pytest.raises(FirestoreServiceError, match="logged-meal-only fields"):
+        asyncio.run(my_meal_service.list_changes("user-1", limit_count=10))
+
+
+def test_list_changes_rejects_stored_template_missing_required_fields(
+    mocker: MockerFixture,
+) -> None:
+    query = _FakeChangesQuery(
+        [
+            _FakeChangesSnapshot(
+                "blank-template",
+                {
+                    "templateId": "blank-template",
+                    "ownerUserId": "user-1",
+                    "templateVersion": 1,
+                    "createdAt": "2026-04-20T09:00:00.000Z",
+                    "updatedAt": "2026-04-20T10:00:00.000Z",
+                    "deleted": False,
+                },
+            ),
+        ]
+    )
+    _wire_changes_collection(mocker, query)
+
+    with pytest.raises(FirestoreServiceError, match="missing canonical fields"):
+        asyncio.run(my_meal_service.list_changes("user-1", limit_count=10))
+
+
+def test_list_changes_rejects_stored_template_extra_fields(
+    mocker: MockerFixture,
+) -> None:
+    query = _FakeChangesQuery(
+        [
+            _FakeChangesSnapshot(
+                "extra-template",
+                {
+                    **_changes_doc(
+                        template_id="extra-template",
+                        timestamp="2026-04-20T09:00:00.000Z",
+                        updated_at="2026-04-20T10:00:00.000Z",
+                    ),
+                    "legacyField": "unexpected",
+                },
+            ),
+        ]
+    )
+    _wire_changes_collection(mocker, query)
+
+    with pytest.raises(FirestoreServiceError, match="non-canonical fields: legacyField"):
+        asyncio.run(my_meal_service.list_changes("user-1", limit_count=10))
 
 
 def test_list_changes_rejects_timestamp_only_cursor_without_streaming(
@@ -498,38 +713,30 @@ def test_mark_deleted_creates_tombstone_when_saved_meal_is_missing(
         )
     )
 
-    assert result["id"] == "saved-1"
-    assert result["mealId"] == "saved-1"
-    assert result["cloudId"] == "saved-1"
-    assert result["loggedAt"] == "2026-03-03T12:30:00.000Z"
-    assert result["timestamp"] == "2026-03-03T12:30:00.000Z"
-    assert result["dayKey"] == "2026-03-03"
-    assert result["source"] == "saved"
+    assert result["templateId"] == "saved-1"
+    assert result["ownerUserId"] == "user-1"
     assert result["deleted"] is True
+    _assert_no_logged_meal_response_fields(result)
     meal_ref.set.assert_not_called()
     assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
     assert transaction.set_calls[0] == (
         meal_ref,
         {
-            "loggedAt": "2026-03-03T12:30:00.000Z",
-            "dayKey": "2026-03-03",
-            "loggedAtLocalMin": None,
-            "tzOffsetMin": None,
-            "type": "other",
-            "name": None,
-            "ingredients": [],
+            "templateId": "saved-1",
+            "ownerUserId": "user-1",
+            "templateVersion": 1,
+            "displayName": None,
+            "description": None,
+            "mealTypeHint": "other",
+            "draftItems": [],
+            "draftTotals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
+            "nutritionSnapshot": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
+            "imageRef": None,
             "createdAt": "2026-03-03T12:30:00.000Z",
             "updatedAt": "2026-03-03T12:30:00.000Z",
-            "source": "saved",
-            "inputMethod": None,
-            "aiMeta": None,
-            "imageRef": None,
-            "notes": None,
-            "tags": [],
             "deleted": True,
-            "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
         },
-        True,
+        False,
     )
 
 
@@ -539,18 +746,7 @@ def test_mark_deleted_keeps_newer_remote_saved_meal(mocker: MockerFixture) -> No
         meal_snapshot=_build_snapshot(
             mocker,
             exists=True,
-            data={
-                "cloudId": "saved-1",
-                "mealId": "saved-1",
-                "timestamp": "2026-03-03T12:00:00.000Z",
-                "type": "lunch",
-                "ingredients": [],
-                "createdAt": "2026-03-03T12:00:00.000Z",
-                "updatedAt": "2026-03-03T13:00:00.000Z",
-                "source": "saved",
-                "deleted": False,
-                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
-            },
+            data=_base_saved_meal_payload({"updatedAt": "2026-03-03T13:00:00.000Z"}),
         ),
     )
     mocker.patch("app.services.my_meal_service.get_firestore", return_value=client)
@@ -591,6 +787,13 @@ def test_mark_deleted_duplicate_replay_uses_dedupe_record_without_second_write(
         )
     )
     mutation_record = first_transaction.set_calls[1][1]
+    assert mutation_record["kind"] == "meal_template_delete"
+    assert mutation_record["templateId"] == "saved-1"
+    assert "mealId" not in mutation_record
+    assert "resultMeal" not in mutation_record
+    result_template = cast(dict[str, object], mutation_record["resultTemplate"])
+    assert result_template["templateId"] == "saved-1"
+    _assert_no_logged_meal_response_fields(result_template)
 
     second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
         _wire_saved_meal_firestore_refs(
@@ -630,10 +833,10 @@ def test_mark_deleted_rejects_reused_client_mutation_id_for_different_kind(
             exists=True,
             data={
                 "clientMutationId": "mutation-saved-kind-reused",
-                "kind": "saved_meal_upsert",
-                "mealId": "saved-1",
+                "kind": "meal_template_upsert",
+                "templateId": "saved-1",
                 "payloadHash": "different-payload",
-                "resultMeal": {"id": "saved-1"},
+                "resultTemplate": _base_saved_meal_payload(),
             },
         ),
     )
@@ -669,7 +872,7 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     bucket.blob.assert_called_once()
     blob.upload_from_file.assert_called_once()
     blob.patch.assert_called_once_with()
-    assert payload["mealId"] == "saved-1"
+    assert payload["templateId"] == "saved-1"
     assert payload["imageId"]
     assert payload["storagePath"] == bucket.blob.call_args.args[0]
     assert payload["storagePath"].startswith("mealTemplates/user-1/saved-1-")

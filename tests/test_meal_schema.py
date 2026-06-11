@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.schemas.meal import (
     MealAiMeta,
     MealItem,
+    MealTemplate,
     MealTotals,
     MealUpsertRequest,
     SavedMealDeleteRequest,
@@ -112,10 +113,9 @@ def test_meal_upsert_request_is_backward_compatible_without_new_fields() -> None
 
 def test_saved_meal_upsert_request_requires_non_empty_client_mutation_id() -> None:
     base: dict[str, Any] = {
-        "mealId": "saved-1",
-        "timestamp": "2026-03-18T12:00:00.000Z",
-        "type": "lunch",
-        "ingredients": [],
+        "templateId": "saved-1",
+        "mealTypeHint": "lunch",
+        "draftItems": [],
     }
 
     with pytest.raises(ValidationError):
@@ -128,6 +128,112 @@ def test_saved_meal_upsert_request_requires_non_empty_client_mutation_id() -> No
         {**base, "clientMutationId": " mutation-saved-schema "}
     )
     assert payload.clientMutationId == "mutation-saved-schema"
+
+
+def test_saved_meal_upsert_request_rejects_logged_meal_only_fields() -> None:
+    base: dict[str, Any] = {
+        "clientMutationId": "mutation-template-old-shape",
+        "templateId": "saved-1",
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+    }
+
+    forbidden_fields: dict[str, object] = {
+        "loggedAt": "2026-03-18T12:00:00.000Z",
+        "timestamp": "2026-03-18T12:00:00.000Z",
+        "dayKey": "2026-03-18",
+        "loggedAtLocalMin": 720,
+        "tzOffsetMin": 60,
+        "source": "saved",
+        "inputMethod": "manual",
+        "savedMealRefId": "saved-1",
+        "syncState": "synced",
+    }
+    for forbidden_field, value in forbidden_fields.items():
+        with pytest.raises(ValidationError):
+            SavedMealUpsertRequest.model_validate({**base, forbidden_field: value})
+        with pytest.raises(ValidationError):
+            SavedMealUpsertRequest.model_validate({**base, forbidden_field: None})
+
+
+def test_meal_template_response_rejects_logged_meal_only_fields() -> None:
+    base: dict[str, Any] = {
+        "templateId": "saved-1",
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+        "draftTotals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "nutritionSnapshot": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "imageRef": None,
+        "createdAt": "2026-03-18T12:00:00.000Z",
+        "updatedAt": "2026-03-18T12:05:00.000Z",
+        "deleted": False,
+    }
+    forbidden_fields: dict[str, object] = {
+        "id": "saved-1",
+        "mealId": "saved-1",
+        "cloudId": "saved-1",
+        "loggedAt": "2026-03-18T12:00:00.000Z",
+        "timestamp": "2026-03-18T12:00:00.000Z",
+        "dayKey": "2026-03-18",
+        "loggedAtLocalMin": 720,
+        "tzOffsetMin": 60,
+        "type": "lunch",
+        "name": "Saved meal",
+        "ingredients": [],
+        "syncState": "synced",
+        "source": "saved",
+        "inputMethod": "manual",
+        "aiMeta": None,
+        "notes": None,
+        "tags": [],
+        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "userUid": "user-1",
+        "imageId": "image-1",
+        "photoUrl": "https://cdn/meal.jpg",
+        "savedMealRefId": "saved-1",
+    }
+
+    assert MealTemplate.model_validate(base).model_dump() == base
+    for forbidden_field, value in forbidden_fields.items():
+        with pytest.raises(ValidationError):
+            MealTemplate.model_validate({**base, forbidden_field: value})
+
+
+def test_meal_template_response_requires_owned_fields_without_defaults() -> None:
+    base: dict[str, Any] = {
+        "templateId": "saved-1",
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+        "draftTotals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "nutritionSnapshot": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "imageRef": None,
+        "createdAt": "2026-03-18T12:00:00.000Z",
+        "updatedAt": "2026-03-18T12:05:00.000Z",
+        "deleted": False,
+    }
+
+    for required_field in (
+        "displayName",
+        "description",
+        "mealTypeHint",
+        "draftItems",
+        "draftTotals",
+        "nutritionSnapshot",
+        "imageRef",
+        "deleted",
+    ):
+        payload = dict(base)
+        payload.pop(required_field)
+        with pytest.raises(ValidationError):
+            MealTemplate.model_validate(payload)
 
 
 def test_saved_meal_delete_request_requires_non_empty_client_mutation_id() -> None:
