@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from typing import Any
 from unittest.mock import ANY
 
@@ -9,7 +10,6 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.services import user_account_service
 from app.services.user_account_service import (
-    AvatarMetadataValidationError,
     EmailValidationError,
     OnboardingUsernameUnavailableError,
     OnboardingValidationError,
@@ -526,55 +526,35 @@ def test_delete_account_data_wraps_firestore_errors(mocker: MockerFixture) -> No
         asyncio.run(user_account_service.delete_account_data("user-1"))
 
 
-def test_set_avatar_metadata_updates_shared_profile_fields(
-    mocker: MockerFixture,
-) -> None:
+def test_upload_avatar_persists_file_and_avatar_ref_metadata(mocker: MockerFixture) -> None:
     client, users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
         _build_client(mocker)
     )
-    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
-
-    avatar_url, synced_at = asyncio.run(
-        user_account_service.set_avatar_metadata("user-1", "https://cdn/avatar.jpg")
-    )
-
-    users_collection_ref.document.assert_any_call("user-1")
-    user_ref.set.assert_called_once_with(
-        {
-            "avatarUrl": "https://cdn/avatar.jpg",
-            "avatarlastSyncedAt": synced_at,
-            "avatarLocalPath": ANY,
-        },
-        merge=True,
-    )
-    assert avatar_url == "https://cdn/avatar.jpg"
-    assert synced_at.endswith("Z")
-
-
-def test_set_avatar_metadata_raises_for_invalid_url() -> None:
-    with pytest.raises(AvatarMetadataValidationError):
-        asyncio.run(user_account_service.set_avatar_metadata("user-1", "file:///avatar.jpg"))
-
-
-def test_upload_avatar_persists_file_and_metadata(mocker: MockerFixture) -> None:
     bucket = mocker.Mock()
     bucket.name = "bucket-name"
     blob = mocker.Mock()
     bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
-    set_avatar_metadata = mocker.patch(
-        "app.services.user_account_service.set_avatar_metadata",
-        return_value=("https://cdn/avatar.jpg", "2026-03-03T12:00:00Z"),
+    mocker.patch(
+        "app.services.user_account_service.uuid4",
+        return_value="download-token",
     )
     upload = mocker.Mock()
     upload.file = mocker.Mock()
     upload.content_type = "image/jpeg"
+    expected_hash = hashlib.sha256(b"avatar-mutation-1").hexdigest()
+    expected_path = f"avatars/user-1/avatar.{expected_hash}"
 
-    avatar_url, synced_at = asyncio.run(
-        user_account_service.upload_avatar("user-1", upload)
+    avatar_url, synced_at, avatar_ref = asyncio.run(
+        user_account_service.upload_avatar(
+            "user-1",
+            upload,
+            client_mutation_id=" avatar-mutation-1 ",
+        )
     )
 
-    bucket.blob.assert_called_once_with("avatars/user-1/avatar.jpg")
+    bucket.blob.assert_called_once_with(expected_path)
     blob.upload_from_file.assert_called_once_with(
         upload.file,
         content_type="image/jpeg",
@@ -582,9 +562,102 @@ def test_upload_avatar_persists_file_and_metadata(mocker: MockerFixture) -> None
     blob.patch.assert_called_once_with()
     upload.file.seek.assert_called_once_with(0)
     upload.file.close.assert_called_once_with()
-    set_avatar_metadata.assert_called_once_with("user-1", ANY)
-    assert avatar_url == "https://cdn/avatar.jpg"
-    assert synced_at == "2026-03-03T12:00:00Z"
+    users_collection_ref.document.assert_any_call("user-1")
+    user_ref.set.assert_called_once_with(
+        {
+            "avatarRef": {"storagePath": expected_path},
+            "avatarUrl": avatar_url,
+            "avatarlastSyncedAt": synced_at,
+            "avatarLocalPath": ANY,
+        },
+        merge=True,
+    )
+    assert f"avatars%2Fuser-1%2Favatar.{expected_hash}" in avatar_url
+    assert "download-token" in avatar_url
+    assert synced_at.endswith("Z")
+    assert avatar_ref == {"storagePath": expected_path}
+
+
+def test_upload_avatar_rejects_blank_client_mutation_id(mocker: MockerFixture) -> None:
+    upload = mocker.Mock()
+    upload.file = mocker.Mock()
+
+    with pytest.raises(ValueError, match="Missing clientMutationId"):
+        asyncio.run(
+            user_account_service.upload_avatar(
+                "user-1",
+                upload,
+                client_mutation_id="   ",
+            )
+        )
+
+    upload.file.close.assert_not_called()
+
+
+def test_upload_avatar_validation_failure_does_not_persist_avatar_metadata(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    bucket = mocker.Mock()
+    bucket.name = "bucket-name"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+    upload = mocker.Mock()
+    upload.file = mocker.Mock()
+    upload.content_type = "text/plain"
+
+    with pytest.raises(ValueError, match="Unsupported or unrecognized file type"):
+        asyncio.run(
+            user_account_service.upload_avatar(
+                "user-1",
+                upload,
+                client_mutation_id="avatar-mutation-1",
+            )
+        )
+
+    blob.upload_from_file.assert_not_called()
+    blob.patch.assert_not_called()
+    user_ref.set.assert_not_called()
+    upload.file.close.assert_called_once_with()
+
+
+def test_upload_avatar_storage_failure_does_not_persist_avatar_metadata(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    bucket = mocker.Mock()
+    bucket.name = "bucket-name"
+    blob = mocker.Mock()
+    blob.upload_from_file.side_effect = GoogleAPICallError("storage unavailable")
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+    upload = mocker.Mock()
+    upload.file = mocker.Mock()
+    upload.content_type = "image/jpeg"
+
+    with pytest.raises(FirestoreServiceError, match="Failed to upload avatar"):
+        asyncio.run(
+            user_account_service.upload_avatar(
+                "user-1",
+                upload,
+                client_mutation_id="avatar-mutation-1",
+            )
+        )
+
+    blob.upload_from_file.assert_called_once_with(
+        upload.file,
+        content_type="image/jpeg",
+    )
+    blob.patch.assert_not_called()
+    user_ref.set.assert_not_called()
+    upload.file.close.assert_called_once_with()
 
 
 def test_get_user_profile_data_returns_profile_document(

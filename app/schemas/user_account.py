@@ -17,13 +17,14 @@ class DeleteAccountResponse(BaseModel):
     deleted: bool
 
 
-class AvatarMetadataRequest(BaseModel):
-    avatarUrl: str = Field(min_length=1)
+class AvatarRefResponse(BaseModel):
+    storagePath: str
 
 
 class AvatarMetadataResponse(BaseModel):
     avatarUrl: str
     avatarlastSyncedAt: str
+    avatarRef: AvatarRefResponse
     updated: bool
 
 

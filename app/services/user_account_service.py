@@ -101,10 +101,6 @@ class EmailValidationError(Exception):
     """Raised when the email pending payload is invalid."""
 
 
-class AvatarMetadataValidationError(Exception):
-    """Raised when avatar metadata payload is invalid."""
-
-
 class UserProfileValidationError(Exception):
     """Raised when the user profile payload contains forbidden fields."""
 
@@ -139,11 +135,6 @@ def _is_valid_username(username: str) -> bool:
 def _validate_email(email: str) -> None:
     if not EMAIL_RE.match(email):
         raise EmailValidationError("Invalid email address.")
-
-
-def _validate_avatar_url(avatar_url: str) -> None:
-    if not avatar_url.startswith(("http://", "https://")):
-        raise AvatarMetadataValidationError("Invalid avatar URL.")
 
 
 def _utc_timestamp() -> str:
@@ -430,6 +421,11 @@ def _profile_mutation_ref(
     ).document(mutation_hash)
 
 
+def _avatar_object_path(user_id: str, client_mutation_id: str) -> str:
+    mutation_hash = hashlib.sha256(client_mutation_id.encode("utf-8")).hexdigest()
+    return f"avatars/{user_id}/avatar.{mutation_hash}"
+
+
 def _profile_mutation_record(
     *,
     user_id: str,
@@ -588,10 +584,14 @@ async def set_email_pending(user_id: str, email: str) -> str:
     return normalized_email
 
 
-async def set_avatar_metadata(user_id: str, avatar_url: str) -> tuple[str, str]:
-    normalized_avatar_url = str(avatar_url or "").strip()
-    _validate_avatar_url(normalized_avatar_url)
+async def _set_avatar_upload_metadata(
+    user_id: str,
+    *,
+    avatar_url: str,
+    storage_path: str,
+) -> tuple[str, str, dict[str, str]]:
     synced_at = _utc_timestamp()
+    avatar_ref = {"storagePath": storage_path}
 
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -599,7 +599,8 @@ async def set_avatar_metadata(user_id: str, avatar_url: str) -> tuple[str, str]:
     try:
         user_ref.set(
             {
-                "avatarUrl": normalized_avatar_url,
+                "avatarRef": avatar_ref,
+                "avatarUrl": avatar_url,
                 "avatarlastSyncedAt": synced_at,
                 "avatarLocalPath": firestore.DELETE_FIELD,
             },
@@ -612,13 +613,21 @@ async def set_avatar_metadata(user_id: str, avatar_url: str) -> tuple[str, str]:
         )
         raise FirestoreServiceError("Failed to persist avatar metadata.") from exc
 
-    return normalized_avatar_url, synced_at
+    return avatar_url, synced_at, avatar_ref
 
 
-async def upload_avatar(user_id: str, upload: UploadFile) -> tuple[str, str]:
+async def upload_avatar(
+    user_id: str,
+    upload: UploadFile,
+    *,
+    client_mutation_id: str,
+) -> tuple[str, str, dict[str, str]]:
+    normalized_client_mutation_id = _require_profile_client_mutation_id(
+        client_mutation_id
+    )
     bucket = get_storage_bucket()
     token = str(uuid4())
-    object_path = f"avatars/{user_id}/avatar.jpg"
+    object_path = _avatar_object_path(user_id, normalized_client_mutation_id)
     blob = bucket.blob(object_path)
 
     try:
@@ -641,7 +650,11 @@ async def upload_avatar(user_id: str, upload: UploadFile) -> tuple[str, str]:
         object_path,
         token,
     )
-    return await set_avatar_metadata(user_id, avatar_url)
+    return await _set_avatar_upload_metadata(
+        user_id,
+        avatar_url=avatar_url,
+        storage_path=object_path,
+    )
 
 
 async def get_user_profile_data(

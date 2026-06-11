@@ -7,7 +7,6 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.services.user_account_service import (
-    AvatarMetadataValidationError,
     EmailValidationError,
     UserProfileMutationDedupeConflictError,
 )
@@ -600,47 +599,16 @@ def test_post_delete_user_returns_success(mocker: MockerFixture, auth_headers: A
     delete_account_data.assert_called_once_with("user-1")
 
 
-def test_post_avatar_metadata_returns_updated_payload(
-    mocker: MockerFixture,
+def test_post_avatar_metadata_route_is_not_active(
     auth_headers: AuthHeaders,
 ) -> None:
-    set_avatar_metadata = mocker.patch(
-        "app.api.routes.users.user_account_service.set_avatar_metadata",
-        return_value=("https://cdn/avatar.jpg", "2026-03-03T12:00:00Z"),
-    )
-
     response = client.post(
         "/api/v1/users/me/avatar-metadata",
         json={"avatarUrl": "https://cdn/avatar.jpg"},
         headers=auth_headers("user-1"),
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "avatarUrl": "https://cdn/avatar.jpg",
-        "avatarlastSyncedAt": "2026-03-03T12:00:00Z",
-        "updated": True,
-    }
-    set_avatar_metadata.assert_called_once_with("user-1", "https://cdn/avatar.jpg")
-
-
-def test_post_avatar_metadata_returns_400_for_invalid_url(
-    mocker: MockerFixture,
-    auth_headers: AuthHeaders,
-) -> None:
-    mocker.patch(
-        "app.api.routes.users.user_account_service.set_avatar_metadata",
-        side_effect=AvatarMetadataValidationError("Invalid avatar URL."),
-    )
-
-    response = client.post(
-        "/api/v1/users/me/avatar-metadata",
-        json={"avatarUrl": "file:///avatar.jpg"},
-        headers=auth_headers("user-1"),
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid avatar URL."}
+    assert response.status_code == 404
 
 
 def test_post_avatar_upload_returns_updated_payload(
@@ -649,11 +617,16 @@ def test_post_avatar_upload_returns_updated_payload(
 ) -> None:
     upload_avatar = mocker.patch(
         "app.api.routes.users.user_account_service.upload_avatar",
-        return_value=("https://cdn/avatar.jpg", "2026-03-03T12:00:00Z"),
+        return_value=(
+            "https://cdn/avatar.jpg",
+            "2026-03-03T12:00:00Z",
+            {"storagePath": "avatars/user-1/avatar.abc123"},
+        ),
     )
 
     response = client.post(
         "/api/v1/users/me/avatar",
+        data={"clientMutationId": " avatar-mutation-1 "},
         files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
         headers=auth_headers("user-1"),
     )
@@ -662,10 +635,61 @@ def test_post_avatar_upload_returns_updated_payload(
     assert response.json() == {
         "avatarUrl": "https://cdn/avatar.jpg",
         "avatarlastSyncedAt": "2026-03-03T12:00:00Z",
+        "avatarRef": {"storagePath": "avatars/user-1/avatar.abc123"},
         "updated": True,
     }
     upload_avatar.assert_called_once()
     assert upload_avatar.call_args.args[0] == "user-1"
+    assert upload_avatar.call_args.kwargs["client_mutation_id"] == " avatar-mutation-1 "
+
+
+def test_post_avatar_upload_rejects_missing_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_avatar_upload_rejects_blank_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        data={"clientMutationId": "   "},
+        files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Missing clientMutationId"}
+
+
+def test_post_avatar_upload_maps_service_value_error_to_400_without_metadata(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upload_avatar = mocker.patch(
+        "app.api.routes.users.user_account_service.upload_avatar",
+        side_effect=ValueError("Unsupported or unrecognized file type"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        data={"clientMutationId": "avatar-mutation-1"},
+        files={"file": ("avatar.txt", b"not-an-image", "text/plain")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unsupported or unrecognized file type"}
+    assert "avatarUrl" not in response.json()
+    assert "avatarRef" not in response.json()
+    upload_avatar.assert_called_once()
 
 
 def test_post_avatar_upload_returns_500_for_firestore_errors(
@@ -679,6 +703,7 @@ def test_post_avatar_upload_returns_500_for_firestore_errors(
 
     response = client.post(
         "/api/v1/users/me/avatar",
+        data={"clientMutationId": "avatar-mutation-1"},
         files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
         headers=auth_headers("user-1"),
     )

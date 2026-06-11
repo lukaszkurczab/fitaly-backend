@@ -1,6 +1,6 @@
 from typing import cast
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
@@ -10,7 +10,7 @@ from app.schemas.user_account import (
     AiConsentActionResponse,
     AiConsentState,
     AiConsentStatusValue,
-    AvatarMetadataRequest,
+    AvatarRefResponse,
     AvatarMetadataResponse,
     DeleteAccountResponse,
     EmailPendingRequest,
@@ -26,7 +26,6 @@ from app.schemas.user_account import (
 )
 from app.services import user_account_service
 from app.services.user_account_service import (
-    AvatarMetadataValidationError,
     EmailValidationError,
     OnboardingUsernameUnavailableError,
     OnboardingValidationError,
@@ -192,39 +191,27 @@ async def set_email_pending_me(
     return EmailPendingResponse(emailPending=normalized_email, updated=True)
 
 
-@router.post("/users/me/avatar-metadata", response_model=AvatarMetadataResponse)
-async def set_avatar_metadata_me(
-    request: AvatarMetadataRequest,
+@router.post("/users/me/avatar", response_model=AvatarMetadataResponse)
+async def upload_avatar_me(
+    file: UploadFile = File(...),
+    client_mutation_id: str = Form(..., alias="clientMutationId"),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AvatarMetadataResponse:
     try:
-        normalized_avatar_url, synced_at = await user_account_service.set_avatar_metadata(
-            current_user.uid,
-            request.avatarUrl,
+        normalized_avatar_url, synced_at, avatar_ref = (
+            await user_account_service.upload_avatar(
+                current_user.uid,
+                file,
+                client_mutation_id=client_mutation_id,
+            )
         )
-    except AvatarMetadataValidationError as exc:
+    except ValueError as exc:
         raise_bad_request(exc)
 
     return AvatarMetadataResponse(
         avatarUrl=normalized_avatar_url,
         avatarlastSyncedAt=synced_at,
-        updated=True,
-    )
-
-
-@router.post("/users/me/avatar", response_model=AvatarMetadataResponse)
-async def upload_avatar_me(
-    file: UploadFile = File(...),
-    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
-) -> AvatarMetadataResponse:
-    normalized_avatar_url, synced_at = await user_account_service.upload_avatar(
-        current_user.uid,
-        file,
-    )
-
-    return AvatarMetadataResponse(
-        avatarUrl=normalized_avatar_url,
-        avatarlastSyncedAt=synced_at,
+        avatarRef=AvatarRefResponse(**avatar_ref),
         updated=True,
     )
 
