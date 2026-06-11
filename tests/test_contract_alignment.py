@@ -21,6 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 from pydantic import ValidationError
 
+from app.schemas.barcode import BarcodeLookupFoundResponse
 from app.schemas.coach import (
     CoachMeta,
     CoachActionType,
@@ -1024,6 +1025,76 @@ class TestFoodLibraryDomainsContract:
 
         with pytest.raises(ValidationError):
             FoodLibraryDomainsContract.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Fixture: barcode_lookup_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestBarcodeLookupContract:
+    """CH-06 barcode lookup response is backend-owned and mobile-consumable."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("barcode_lookup_v1.json")
+
+    def test_found_response_parses_through_backend_schema(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        response = BarcodeLookupFoundResponse.model_validate(fixture["found"])
+
+        assert response.kind == "found"
+        assert response.name == "Greek yogurt"
+        assert response.ingredient.id == "5901234123457"
+        assert response.ingredient.amount == 100
+        assert response.ingredient.unit == "g"
+        assert response.ingredient.kcal == 120
+        assert response.ingredient.protein == 12
+        assert response.ingredient.fat == 4
+        assert response.ingredient.carbs == 8
+
+    def test_declares_exact_route_and_error_mapping(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        assert fixture["contract"] == "barcode_lookup_v1"
+        assert fixture["route"] == {
+            "method": "GET",
+            "path": "/users/me/barcode/lookup",
+            "query": {"barcode": "5901234123457"},
+        }
+        assert fixture["errors"] == {
+            "invalid": {
+                "status": 400,
+                "detail": {
+                    "code": "BARCODE_INVALID",
+                    "message": "Barcode must be 8, 12, or 13 digits",
+                },
+            },
+            "not_found": {
+                "status": 404,
+                "detail": {
+                    "code": "BARCODE_NOT_FOUND",
+                    "message": "Barcode product not found",
+                },
+            },
+            "timeout": {
+                "status": 504,
+                "detail": {
+                    "code": "BARCODE_PROVIDER_TIMEOUT",
+                    "message": "Barcode provider timed out",
+                },
+            },
+            "provider_error": {
+                "status": 502,
+                "detail": {
+                    "code": "BARCODE_PROVIDER_FAILURE",
+                    "message": "Barcode provider unavailable",
+                },
+            },
+        }
 
 
 # ---------------------------------------------------------------------------

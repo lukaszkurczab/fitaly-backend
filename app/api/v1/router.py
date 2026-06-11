@@ -14,6 +14,7 @@ from app.api.routes.badges import router as badges_router
 from app.api.routes.notifications import router as notifications_router
 from app.api.routes.meals import router as meals_router
 from app.api.routes.meal_templates import router as meal_templates_router
+from app.api.routes.barcode import router as barcode_router
 from app.api.routes.feedback import router as feedback_router
 
 router = APIRouter()
@@ -31,4 +32,5 @@ router.include_router(badges_router, tags=["users"], prefix="")
 router.include_router(notifications_router, tags=["users"], prefix="")
 router.include_router(meals_router, tags=["users"], prefix="")
 router.include_router(meal_templates_router, tags=["users"], prefix="")
+router.include_router(barcode_router, tags=["users"], prefix="")
 router.include_router(feedback_router, tags=["users"], prefix="")
