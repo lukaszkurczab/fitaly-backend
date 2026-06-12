@@ -12,6 +12,12 @@ from app.services import ai_credits_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_PREMIUM_TRANSITION_EVENTS = {
+    "INITIAL_PURCHASE",
+    "UNCANCELLATION",
+    "RENEWAL",
+    "EXPIRATION",
+}
 
 
 def _extract_header_secret(authorization: str | None) -> str | None:
@@ -69,8 +75,41 @@ def _extract_entitlement_id(event: dict[str, object]) -> str | None:
     return None
 
 
+def _expected_premium_entitlement_id() -> str:
+    expected = settings.REVENUECAT_PREMIUM_ENTITLEMENT_ID.strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RevenueCat premium entitlement ID is not configured",
+        )
+    return expected
+
+
+def _has_expected_premium_entitlement(event: dict[str, object]) -> bool:
+    expected = _expected_premium_entitlement_id()
+
+    single = event.get("entitlement_id")
+    if isinstance(single, str) and single.strip() == expected:
+        return True
+
+    many = event.get("entitlement_ids")
+    if isinstance(many, list):
+        entitlement_ids = cast(list[object], many)
+        return any(
+            isinstance(raw, str) and raw.strip() == expected for raw in entitlement_ids
+        )
+
+    return False
+
+
 def _extract_purchase_anchor(event: dict[str, object]) -> datetime | None:
-    for key in ("purchased_at_ms", "purchased_at", "purchase_at", "event_timestamp_ms", "event_timestamp"):
+    for key in (
+        "purchased_at_ms",
+        "purchased_at",
+        "purchase_at",
+        "event_timestamp_ms",
+        "event_timestamp",
+    ):
         parsed = parse_flexible_datetime(event.get(key))
         if parsed is not None:
             return parsed
@@ -105,6 +144,35 @@ async def revenuecat_webhook(
 
     event_id = _extract_event_id(event)
     entitlement_id = _extract_entitlement_id(event)
+    if event_type in _PREMIUM_TRANSITION_EVENTS and event_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing RevenueCat event ID",
+        )
+    if event_type in _PREMIUM_TRANSITION_EVENTS and not _has_expected_premium_entitlement(event):
+        credits_status = await ai_credits_service.get_credits_status(user_id)
+        logger.info(
+            "revenuecat_webhook_ignored_non_premium_entitlement",
+            extra={
+                "event_type": event_type,
+                "user_id": user_id,
+                "event_id": event_id,
+                "entitlement_id": entitlement_id,
+                "tier": credits_status.tier,
+            },
+        )
+        return {
+            "ok": True,
+            "eventType": event_type,
+            "userId": user_id,
+            "tier": credits_status.tier,
+            "balance": credits_status.balance,
+            "ignored": True,
+        }
+
+    if event_type in _PREMIUM_TRANSITION_EVENTS:
+        entitlement_id = _expected_premium_entitlement_id()
+
     purchase_anchor = _extract_purchase_anchor(event) or utc_now()
     expiration_at = _extract_expiration(event)
 

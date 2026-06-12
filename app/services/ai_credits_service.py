@@ -22,6 +22,7 @@ from app.core.coercion import coerce_int, coerce_optional_str
 from app.core.firestore_constants import (
     AI_CREDITS_CURRENT_DOCUMENT_ID,
     AI_CREDITS_SUBCOLLECTION,
+    AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION,
     AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
     BILLING_DOCUMENT_ID,
     BILLING_SUBCOLLECTION,
@@ -31,7 +32,6 @@ from app.schemas.ai_credits import AiCreditTransactionItem, AiCreditsStatus, Cre
 
 logger = logging.getLogger(__name__)
 Tier = Literal["free", "premium"]
-AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION = "aiCreditIdempotency"
 
 
 @dataclass(frozen=True, slots=True)

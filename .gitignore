@@ -11,11 +11,17 @@ venv/
 build/
 dist/
 *.egg-info/
+node_modules/
 
 # Test / coverage
 .pytest_cache/
 .coverage
 htmlcov/
+evidence/runs/
+firebase-emulator-export/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
 
 # IDE / editor
 .vscode/

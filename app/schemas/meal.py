@@ -2,13 +2,13 @@ from datetime import datetime
 import re
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict", "failed"]
-MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved", "quick_add"]
+MealInputMethod = Literal["manual", "photo", "barcode", "text"]
 _DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -39,7 +39,7 @@ class MealAiMeta(BaseModel):
 
 class MealImageRef(BaseModel):
     imageId: str = Field(min_length=1)
-    storagePath: str = Field(min_length=1)
+    storagePath: str | None = None
     downloadUrl: str | None = None
 
 
@@ -47,6 +47,10 @@ class MealImageRefInput(BaseModel):
     imageId: str = Field(min_length=1)
     storagePath: str | None = None
     downloadUrl: str | None = None
+
+
+class MealTemplateDraftItem(MealIngredient):
+    pass
 
 
 def _meal_ingredients_default() -> list[MealIngredient]:
@@ -127,13 +131,6 @@ class MealItem(MealDocument):
         if normalized.get("loggedAt") is None:
             normalized["loggedAt"] = normalized.get("timestamp")
 
-        image_id = normalized.get("imageId")
-        if normalized.get("imageRef") is None and isinstance(image_id, str) and image_id:
-            normalized["imageRef"] = {
-                "imageId": image_id,
-                "storagePath": f"meals/unknown/{image_id}.jpg",
-                "downloadUrl": normalized.get("photoUrl"),
-            }
         return normalized
 
 
@@ -148,6 +145,7 @@ class MealChangesPageResponse(BaseModel):
 
 
 class MealUpsertRequest(BaseModel):
+    clientMutationId: str = Field(min_length=1)
     id: str | None = Field(default=None, min_length=1)
     mealId: str | None = Field(default=None, min_length=1)
     cloudId: str | None = Field(default=None, min_length=1)
@@ -181,14 +179,94 @@ class MealUpsertRequest(BaseModel):
             return None
         return validate_day_key_format(value)
 
+    @field_validator("clientMutationId")
+    @classmethod
+    def _validate_client_mutation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientMutationId must be non-empty")
+        return normalized
+
 
 class MealUpsertResponse(BaseModel):
     meal: MealItem
     updated: bool
 
 
+class MealTemplate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    templateId: str = Field(min_length=1)
+    ownerUserId: str = Field(min_length=1)
+    templateVersion: int = Field(ge=1)
+    displayName: str | None
+    description: str | None
+    mealTypeHint: MealType
+    draftItems: list[MealTemplateDraftItem]
+    draftTotals: MealTotals
+    nutritionSnapshot: MealTotals
+    imageRef: MealImageRef | None
+    createdAt: str
+    updatedAt: str
+    deleted: bool
+
+
+class MealTemplateChangesPageResponse(BaseModel):
+    items: list[MealTemplate]
+    nextCursor: str | None = None
+
+
+class MealTemplateUpsertResponse(BaseModel):
+    template: MealTemplate
+    updated: bool
+
+
+class SavedMealUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1)
+    templateId: str = Field(min_length=1)
+    ownerUserId: str | None = Field(default=None, min_length=1)
+    templateVersion: int = Field(default=1, ge=1)
+    displayName: str | None = None
+    description: str | None = None
+    mealTypeHint: MealType = "other"
+    draftItems: list[MealTemplateDraftItem] = Field(default_factory=list)
+    draftTotals: MealTotals | None = None
+    nutritionSnapshot: MealTotals | None = None
+    imageRef: MealImageRefInput | None = None
+    createdAt: str | None = None
+    updatedAt: str | None = None
+    deleted: bool = False
+
+    @field_validator("clientMutationId")
+    @classmethod
+    def _validate_template_client_mutation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientMutationId must be non-empty")
+        return normalized
+
+    @field_validator("templateId")
+    @classmethod
+    def _validate_template_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("templateId must be non-empty")
+        return normalized
+
+
 class MealDeleteRequest(BaseModel):
+    clientMutationId: str = Field(min_length=1)
     updatedAt: str = Field(min_length=1)
+
+    @field_validator("clientMutationId")
+    @classmethod
+    def _validate_client_mutation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientMutationId must be non-empty")
+        return normalized
 
 
 class MealDeleteResponse(BaseModel):
@@ -197,7 +275,25 @@ class MealDeleteResponse(BaseModel):
     deleted: bool
 
 
+class SavedMealDeleteRequest(MealDeleteRequest):
+    pass
+
+
+class MealTemplateDeleteResponse(BaseModel):
+    templateId: str
+    updatedAt: str
+    deleted: bool
+
+
 class MealPhotoUploadResponse(BaseModel):
     mealId: str | None = None
     imageId: str
+    storagePath: str
+    photoUrl: str
+
+
+class MealTemplatePhotoUploadResponse(BaseModel):
+    templateId: str
+    imageId: str
+    storagePath: str
     photoUrl: str

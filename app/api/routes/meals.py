@@ -17,6 +17,7 @@ from app.schemas.meal import (
     validate_day_key_format,
 )
 from app.services import meal_service
+from app.services.meal_service import MealMutationDedupeConflictError
 
 router = APIRouter()
 
@@ -40,6 +41,22 @@ def _validate_day_key_range(
     if normalized_start is not None and normalized_end is not None and normalized_start > normalized_end:
         raise ValueError("Invalid dayKey range")
     return normalized_start, normalized_end
+
+
+def _reject_legacy_history_range_params(
+    *,
+    logged_at_start: str | None,
+    logged_at_end: str | None,
+    timestamp_start: str | None,
+    timestamp_end: str | None,
+) -> None:
+    if (
+        logged_at_start is not None
+        or logged_at_end is not None
+        or timestamp_start is not None
+        or timestamp_end is not None
+    ):
+        raise ValueError("Use dayKeyStart/dayKeyEnd for meal history ranges")
 
 
 def _raise_meal_upsert_validation_error(exc: ValidationError) -> NoReturn:
@@ -75,6 +92,12 @@ async def get_meals_history_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealsHistoryPageResponse:
     try:
+        _reject_legacy_history_range_params(
+            logged_at_start=loggedAtStart,
+            logged_at_end=loggedAtEnd,
+            timestamp_start=timestampStart,
+            timestamp_end=timestampEnd,
+        )
         day_key_start, day_key_end = _validate_day_key_range(dayKeyStart, dayKeyEnd)
         items, next_cursor = await meal_service.list_history(
             current_user.uid,
@@ -87,7 +110,6 @@ async def get_meals_history_me(
             day_key_start=day_key_start,
             day_key_end=day_key_end,
         )
-        del loggedAtStart, loggedAtEnd, timestampStart, timestampEnd
     except ValueError as exc:
         raise_bad_request(exc)
 
@@ -156,6 +178,8 @@ async def upsert_meal_me(
         meal = await meal_service.upsert_meal(current_user.uid, parsed_request.model_dump())
     except ValidationError as exc:
         _raise_meal_upsert_validation_error(exc)
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
@@ -173,12 +197,15 @@ async def delete_meal_me(
             current_user.uid,
             mealId,
             updated_at=request.updatedAt,
+            client_mutation_id=request.clientMutationId,
         )
+    except MealMutationDedupeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
 
     return MealDeleteResponse(
         mealId=meal["id"],
         updatedAt=meal["updatedAt"],
-        deleted=True,
+        deleted=bool(meal["deleted"]),
     )

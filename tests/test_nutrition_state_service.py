@@ -624,8 +624,8 @@ def test_get_nutrition_state_uses_bounded_queries(mocker: MockerFixture) -> None
         )
     )
 
-    # Expect exactly 3 calls: dayKey + loggedAt + legacy timestamp fallback.
-    assert len(meals_collection.calls) == 3
+    # Expect exactly 2 calls: dayKey + loggedAt.
+    assert len(meals_collection.calls) == 2
 
     # First query: dayKey range
     first_call = meals_collection.calls[0]
@@ -643,16 +643,8 @@ def test_get_nutrition_state_uses_bounded_queries(mocker: MockerFixture) -> None
     assert second_call[2][0] == "loggedAt"
     assert second_call[2][1] == "<"
 
-    # Third query: legacy timestamp range
-    third_call = meals_collection.calls[2]
-    assert third_call[0] == ("deleted", "==", False)
-    assert third_call[1][0] == "timestamp"
-    assert third_call[1][1] == ">="
-    assert third_call[2][0] == "timestamp"
-    assert third_call[2][1] == "<"
 
-
-def test_get_nutrition_state_falls_back_when_index_is_missing(
+def test_get_nutrition_state_surfaces_missing_index_without_degraded_query(
     mocker: MockerFixture,
 ) -> None:
     client, meals_collection = _mock_firestore(
@@ -675,28 +667,25 @@ def test_get_nutrition_state_falls_back_when_index_is_missing(
         return_value=_credits_status(),
     )
 
-    response = asyncio.run(
-        nutrition_state_service.get_nutrition_state(
-            "user-1",
-            day_key="2026-03-18",
-            now=NOW,
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            nutrition_state_service.get_nutrition_state(
+                "user-1",
+                day_key="2026-03-18",
+                now=NOW,
+            )
         )
+
+    assert len(meals_collection.calls) == 1
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[0][1][0] == "dayKey"
+    assert all(
+        any(field == "deleted" for field, _, _ in call)
+        for call in meals_collection.calls
     )
 
-    assert response.consumed.kcal == 400
-    assert len(meals_collection.calls) == 6
-    assert meals_collection.calls[0][0] == ("deleted", "==", False)
-    assert meals_collection.calls[1][0][0] == "dayKey"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[1])
-    assert meals_collection.calls[2][0] == ("deleted", "==", False)
-    assert meals_collection.calls[3][0][0] == "loggedAt"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[3])
-    assert meals_collection.calls[4][0] == ("deleted", "==", False)
-    assert meals_collection.calls[5][0][0] == "timestamp"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[5])
 
-
-def test_get_nutrition_state_falls_back_when_index_fails_during_iteration(
+def test_get_nutrition_state_surfaces_lazy_missing_index_without_degraded_query(
     mocker: MockerFixture,
 ) -> None:
     client, meals_collection = _mock_firestore(
@@ -720,16 +709,18 @@ def test_get_nutrition_state_falls_back_when_index_fails_during_iteration(
         return_value=_credits_status(),
     )
 
-    response = asyncio.run(
-        nutrition_state_service.get_nutrition_state(
-            "user-1",
-            day_key="2026-03-18",
-            now=NOW,
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            nutrition_state_service.get_nutrition_state(
+                "user-1",
+                day_key="2026-03-18",
+                now=NOW,
+            )
         )
-    )
 
-    assert response.consumed.kcal == 400
-    assert len(meals_collection.calls) == 6
+    assert len(meals_collection.calls) == 1
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[0][1][0] == "dayKey"
 
 
 # ---------------------------------------------------------------------------

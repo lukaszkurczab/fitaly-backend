@@ -7,6 +7,10 @@ class FeedbackDeviceInfo(BaseModel):
     osVersion: str | None = None
 
 
+class FeedbackAttachmentRef(BaseModel):
+    storagePath: str = Field(min_length=1)
+
+
 class FeedbackItem(BaseModel):
     id: str
     message: str = Field(min_length=1, max_length=500)
@@ -17,7 +21,7 @@ class FeedbackItem(BaseModel):
     updatedAt: int | None = Field(default=None, ge=0)
     status: str = Field(min_length=1)
     attachmentUrl: str | None = None
-    attachmentPath: str | None = None
+    attachmentRef: FeedbackAttachmentRef | None = None
 
 
 class FeedbackCreateResponse(BaseModel):

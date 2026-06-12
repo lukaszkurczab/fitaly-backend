@@ -9,6 +9,34 @@ from app.core.exceptions import FirestoreServiceError
 from app.services import meal_service
 
 
+class FakeTransaction:
+    def __init__(self) -> None:
+        self._id = b"transaction-id"
+        self._max_attempts = 1
+        self._read_only = False
+        self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
+
+    def _begin(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def _commit(self) -> list[object]:
+        return []
+
+    def _rollback(self) -> None:
+        return None
+
+    def _clean_up(self) -> None:
+        return None
+
+    def set(
+        self,
+        document_ref: object,
+        data: dict[str, object],
+        merge: bool | None = None,
+    ) -> None:
+        self.set_calls.append((document_ref, data, merge))
+
+
 def _build_snapshot(
     mocker: MockerFixture,
     *,
@@ -22,33 +50,144 @@ def _build_snapshot(
     return snapshot
 
 
-def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
+def _wire_meal_firestore_refs(
+    mocker: MockerFixture,
+    *,
+    meal_snapshot: object,
+    mutation_snapshot: object | None = None,
+):
     client = mocker.Mock()
     users_collection = mocker.Mock()
     user_ref = mocker.Mock()
     meals_collection = mocker.Mock()
+    mutations_collection = mocker.Mock()
     meal_ref = mocker.Mock()
+    mutation_ref = mocker.Mock()
+    transaction = FakeTransaction()
 
     client.collection.return_value = users_collection
+    client.transaction.return_value = transaction
     users_collection.document.return_value = user_ref
-    user_ref.collection.return_value = meals_collection
+    def collection_for_name(name: str) -> object:
+        if name == "meals":
+            return meals_collection
+        if name == "mealMutationDedupe":
+            return mutations_collection
+        return mocker.Mock()
+
+    user_ref.collection.side_effect = collection_for_name
     meals_collection.document.return_value = meal_ref
-    meal_ref.get.return_value = _build_snapshot(
+    mutations_collection.document.return_value = mutation_ref
+    meal_ref.get.return_value = meal_snapshot
+    mutation_ref.get.return_value = mutation_snapshot or _build_snapshot(mocker, exists=False)
+    return client, meal_ref, mutation_ref, transaction
+
+
+def _base_meal_payload(overrides: dict[str, object] | None = None) -> dict[str, object]:
+    return {
+        "cloudId": "meal-1",
+        "mealId": "meal-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "dayKey": "2026-03-03",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "deleted": False,
+        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        **(overrides or {}),
+    }
+
+
+def test_normalize_meal_document_preserves_logged_upload_shaped_storage_path() -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": "meals/user-1/image-1.webp",
+                    "downloadUrl": "https://cdn/meal.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.webp",
+        "downloadUrl": "https://cdn/meal.jpg",
+    }
+
+
+@pytest.mark.parametrize(
+    "storage_path",
+    [
+        "meals/unknown/image-1.jpg",
+        "meals/other-user/image-1.jpg",
+        "meals/user-1/custom-image.jpg",
+        "meals/user-1/meal-1-image-1.jpg",
+        "meals/user-1/image-1",
+        "meals/user-1/nested/image-1.jpg",
+        "images/image-1.jpg",
+        "myMeals/user-1/image-1.jpg",
+    ],
+)
+def test_normalize_meal_document_derives_user_scoped_storage_path(
+    storage_path: str,
+) -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": storage_path,
+                    "downloadUrl": "https://cdn/meal.jpg",
+                },
+            }
+        ),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "downloadUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_normalize_meal_document_derives_missing_storage_path() -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload({"imageRef": {"imageId": "image-1"}}),
+    )
+
+    assert document["imageRef"] == {
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+    }
+
+
+def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
-        exists=True,
-        data={
-            "cloudId": "meal-1",
-            "mealId": "meal-1",
-            "userUid": "user-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
-            "dayKey": "2026-03-03",
-            "type": "lunch",
-            "ingredients": [],
-            "createdAt": "2026-03-03T12:00:00.000Z",
-            "updatedAt": "2026-03-03T13:00:00.000Z",
-            "deleted": False,
-            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
-        },
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "userUid": "user-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T13:00:00.000Z",
+                "deleted": False,
+                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            },
+        ),
     )
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
@@ -66,43 +205,38 @@ def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
                 "createdAt": "2026-03-03T12:00:00.000Z",
                 "updatedAt": "2026-03-03T12:30:00.000Z",
                 "deleted": False,
+                "clientMutationId": "mutation-upsert-stale",
             },
         )
     )
 
     assert result["updatedAt"] == "2026-03-03T13:00:00.000Z"
     meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [mutation_ref]
     sync_streak.assert_not_called()
 
 
 def test_upsert_meal_compares_non_canonical_updated_at_as_utc(
     mocker: MockerFixture,
 ) -> None:
-    client = mocker.Mock()
-    users_collection = mocker.Mock()
-    user_ref = mocker.Mock()
-    meals_collection = mocker.Mock()
-    meal_ref = mocker.Mock()
-
-    client.collection.return_value = users_collection
-    users_collection.document.return_value = user_ref
-    user_ref.collection.return_value = meals_collection
-    meals_collection.document.return_value = meal_ref
-    meal_ref.get.return_value = _build_snapshot(
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
-        exists=True,
-        data={
-            "cloudId": "meal-1",
-            "mealId": "meal-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
-            "dayKey": "2026-03-03",
-            "type": "lunch",
-            "ingredients": [],
-            "createdAt": "2026-03-03T12:00:00.000Z",
-            "updatedAt": "2026-03-03T13:00:00+01:00",
-            "deleted": False,
-            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
-        },
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T13:00:00+01:00",
+                "deleted": False,
+                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            },
+        ),
     )
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
@@ -119,13 +253,15 @@ def test_upsert_meal_compares_non_canonical_updated_at_as_utc(
                 "createdAt": "2026-03-03T12:00:00.000Z",
                 "updatedAt": "2026-03-03T12:30:00.000Z",
                 "deleted": False,
+                "clientMutationId": "mutation-upsert-newer",
             },
         )
     )
 
     assert result["updatedAt"] == "2026-03-03T12:30:00.000Z"
-    meal_ref.set.assert_called_once()
-    written_document = meal_ref.set.call_args.args[0]
+    meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    written_document = transaction.set_calls[0][1]
     assert written_document["updatedAt"] == "2026-03-03T12:30:00.000Z"
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
@@ -133,17 +269,10 @@ def test_upsert_meal_compares_non_canonical_updated_at_as_utc(
 def test_mark_deleted_creates_tombstone_when_meal_is_missing(
     mocker: MockerFixture,
 ) -> None:
-    client = mocker.Mock()
-    users_collection = mocker.Mock()
-    user_ref = mocker.Mock()
-    meals_collection = mocker.Mock()
-    meal_ref = mocker.Mock()
-
-    client.collection.return_value = users_collection
-    users_collection.document.return_value = user_ref
-    user_ref.collection.return_value = meals_collection
-    meals_collection.document.return_value = meal_ref
-    meal_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
 
@@ -152,6 +281,7 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
             "user-1",
             "meal-1",
             updated_at="2026-03-03T12:30:00.000Z",
+            client_mutation_id="mutation-delete-missing",
         )
     )
 
@@ -162,7 +292,10 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
     assert result["timestamp"] == "2026-03-03T12:30:00.000Z"
     assert result["dayKey"] == "2026-03-03"
     assert result["deleted"] is True
-    meal_ref.set.assert_called_once_with(
+    meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert transaction.set_calls[0] == (
+        meal_ref,
         {
             "loggedAt": "2026-03-03T12:30:00.000Z",
             "dayKey": "2026-03-03",
@@ -182,7 +315,7 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
             "deleted": True,
             "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
         },
-        merge=True,
+        True,
     )
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
@@ -190,31 +323,24 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
 def test_mark_deleted_compares_non_canonical_updated_at_as_utc(
     mocker: MockerFixture,
 ) -> None:
-    client = mocker.Mock()
-    users_collection = mocker.Mock()
-    user_ref = mocker.Mock()
-    meals_collection = mocker.Mock()
-    meal_ref = mocker.Mock()
-
-    client.collection.return_value = users_collection
-    users_collection.document.return_value = user_ref
-    user_ref.collection.return_value = meals_collection
-    meals_collection.document.return_value = meal_ref
-    meal_ref.get.return_value = _build_snapshot(
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
-        exists=True,
-        data={
-            "cloudId": "meal-1",
-            "mealId": "meal-1",
-            "timestamp": "2026-03-03T12:00:00.000Z",
-            "dayKey": "2026-03-03",
-            "type": "lunch",
-            "ingredients": [],
-            "createdAt": "2026-03-03T12:00:00.000Z",
-            "updatedAt": "2026-03-03T13:00:00+01:00",
-            "deleted": False,
-            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
-        },
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T13:00:00+01:00",
+                "deleted": False,
+                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            },
+        ),
     )
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
@@ -224,30 +350,25 @@ def test_mark_deleted_compares_non_canonical_updated_at_as_utc(
             "user-1",
             "meal-1",
             updated_at="2026-03-03T12:30:00.000Z",
+            client_mutation_id="mutation-delete-newer",
         )
     )
 
     assert result["updatedAt"] == "2026-03-03T12:30:00.000Z"
     assert result["deleted"] is True
-    meal_ref.set.assert_called_once()
-    written_document = meal_ref.set.call_args.args[0]
+    meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    written_document = transaction.set_calls[0][1]
     assert written_document["updatedAt"] == "2026-03-03T12:30:00.000Z"
     assert written_document["deleted"] is True
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
 def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) -> None:
-    client = mocker.Mock()
-    users_collection = mocker.Mock()
-    user_ref = mocker.Mock()
-    meals_collection = mocker.Mock()
-    meal_ref = mocker.Mock()
-
-    client.collection.return_value = users_collection
-    users_collection.document.return_value = user_ref
-    user_ref.collection.return_value = meals_collection
-    meals_collection.document.return_value = meal_ref
-    meal_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
 
@@ -271,6 +392,7 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
                     "confidence": 0.84,
                     "warnings": ["partial_totals"],
                 },
+                "clientMutationId": "mutation-upsert-ai-meta",
             },
         )
     )
@@ -282,7 +404,10 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
         "confidence": 0.84,
         "warnings": ["partial_totals"],
     }
-    meal_ref.set.assert_called_once_with(
+    meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert transaction.set_calls[0] == (
+        meal_ref,
         {
             "loggedAt": "2026-03-03T12:00:00.000Z",
             "dayKey": "2026-03-03",
@@ -307,8 +432,191 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
             "deleted": False,
             "totals": {"protein": 0.0, "fat": 0.0, "carbs": 0.0, "kcal": 0.0},
         },
-        merge=True,
+        True,
     )
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
+
+
+def test_upsert_meal_duplicate_replay_uses_dedupe_record_without_second_write(
+    mocker: MockerFixture,
+) -> None:
+    first_client, meal_ref, mutation_ref, first_transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    get_firestore = mocker.patch(
+        "app.services.meal_service.get_firestore",
+        return_value=first_client,
+    )
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+    payload: dict[str, object] = {
+        "cloudId": "meal-1",
+        "mealId": "meal-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "dayKey": "2026-03-03",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "deleted": False,
+        "clientMutationId": "mutation-upsert-replay",
+    }
+
+    first_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+    mutation_record = first_transaction.set_calls[1][1]
+
+    second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
+        _wire_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+
+    assert first_result == second_result
+    assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
+    assert second_transaction.set_calls == []
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
+
+
+def test_upsert_meal_rejects_reused_client_mutation_id_for_different_payload(
+    mocker: MockerFixture,
+) -> None:
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        mutation_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "clientMutationId": "mutation-reused",
+                "kind": "upsert",
+                "mealId": "meal-1",
+                "payloadHash": "different-payload",
+                "resultMeal": {"id": "meal-1"},
+            },
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    with pytest.raises(meal_service.MealMutationDedupeConflictError):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                {
+                    "cloudId": "meal-1",
+                    "mealId": "meal-1",
+                    "timestamp": "2026-03-03T12:00:00.000Z",
+                    "dayKey": "2026-03-03",
+                    "type": "lunch",
+                    "ingredients": [],
+                    "createdAt": "2026-03-03T12:00:00.000Z",
+                    "updatedAt": "2026-03-03T12:30:00.000Z",
+                    "deleted": False,
+                    "clientMutationId": "mutation-reused",
+                },
+            )
+        )
+
+    assert transaction.set_calls == []
+    sync_streak.assert_not_called()
+
+
+def test_mark_deleted_keeps_newer_remote_document(mocker: MockerFixture) -> None:
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T13:00:00.000Z",
+                "deleted": False,
+                "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            },
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T12:30:00.000Z",
+            client_mutation_id="mutation-delete-stale",
+        )
+    )
+
+    assert result["updatedAt"] == "2026-03-03T13:00:00.000Z"
+    assert result["deleted"] is False
+    meal_ref.set.assert_not_called()
+    assert [call[0] for call in transaction.set_calls] == [mutation_ref]
+    sync_streak.assert_not_called()
+
+
+def test_mark_deleted_duplicate_replay_uses_dedupe_record_without_second_write(
+    mocker: MockerFixture,
+) -> None:
+    first_client, meal_ref, mutation_ref, first_transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    get_firestore = mocker.patch(
+        "app.services.meal_service.get_firestore",
+        return_value=first_client,
+    )
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    first_result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T12:30:00.000Z",
+            client_mutation_id="mutation-delete-replay",
+        )
+    )
+    mutation_record = first_transaction.set_calls[1][1]
+
+    second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
+        _wire_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T12:30:00.000Z",
+            client_mutation_id="mutation-delete-replay",
+        )
+    )
+
+    assert first_result == second_result
+    assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
+    assert second_transaction.set_calls == []
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
@@ -334,6 +642,39 @@ def test_upload_photo_returns_storage_download_url(mocker: MockerFixture) -> Non
     upload.file.seek.assert_called_once_with(0)
     upload.file.close.assert_called_once_with()
     assert payload["imageId"]
+    assert payload["storagePath"] == bucket.blob.call_args.args[0]
+    assert payload["storagePath"].startswith("meals/user-1/")
+    assert payload["storagePath"].endswith(".jpg")
+    assert payload["photoUrl"].startswith(
+        "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/meals%2Fuser-1%2F"
+    )
+
+
+def test_upload_photo_skips_metadata_patch_in_storage_emulator(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FIREBASE_STORAGE_EMULATOR_HOST", "127.0.0.1:9199")
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    bucket.blob.return_value = blob
+    upload = mocker.Mock()
+    upload.filename = "meal.jpg"
+    upload.content_type = "image/jpeg"
+    upload.file = mocker.Mock()
+    mocker.patch("app.services.meal_storage.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(meal_service.upload_photo("user-1", upload))
+
+    blob.upload_from_file.assert_called_once_with(
+        upload.file,
+        content_type="image/jpeg",
+    )
+    blob.patch.assert_not_called()
+    assert blob.metadata["firebaseStorageDownloadTokens"]
+    assert payload["storagePath"] == bucket.blob.call_args.args[0]
+    assert payload["storagePath"].startswith("meals/user-1/")
     assert payload["photoUrl"].startswith(
         "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/meals%2Fuser-1%2F"
     )
@@ -377,7 +718,173 @@ def test_resolve_photo_uses_meal_document_photo_url(mocker: MockerFixture) -> No
     assert payload == {
         "mealId": "meal-1",
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_resolve_photo_ignores_foreign_stored_storage_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data=_base_meal_payload(
+            {
+                "imageRef": {
+                    "imageId": "image-1",
+                    "storagePath": "meals/other-user/image-1.jpg",
+                },
+            }
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
+    }
+
+
+def test_resolve_photo_ignores_user_scoped_inconsistent_stored_storage_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=True)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.meal_service._normalize_meal_snapshot",
+        return_value={
+            "imageRef": {
+                "imageId": "image-1",
+                "storagePath": "meals/user-1/custom-image.jpg",
+            },
+        },
+    )
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
+    }
+
+
+def test_resolve_photo_returns_derived_path_with_photo_url_for_inconsistent_stored_path(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    meals_collection = mocker.Mock()
+    meal_ref = mocker.Mock()
+
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    meals_collection.document.return_value = meal_ref
+    meal_ref.get.return_value = _build_snapshot(mocker, exists=True)
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    get_storage_bucket = mocker.patch("app.services.meal_service.get_storage_bucket")
+    mocker.patch(
+        "app.services.meal_service._normalize_meal_snapshot",
+        return_value={
+            "imageRef": {
+                "imageId": "image-1",
+                "storagePath": "meals/user-1/custom-image.jpg",
+                "downloadUrl": "https://cdn/meal.jpg",
+            },
+        },
+    )
+
+    payload = asyncio.run(
+        meal_service.resolve_photo("user-1", meal_id="meal-1", image_id="image-1")
+    )
+
+    get_storage_bucket.assert_not_called()
+    assert payload == {
+        "mealId": "meal-1",
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": "https://cdn/meal.jpg",
+    }
+
+
+def test_resolve_photo_uses_user_scoped_storage_object_path(
+    mocker: MockerFixture,
+) -> None:
+    bucket = mocker.Mock()
+    bucket.name = "demo.appspot.com"
+    blob = mocker.Mock()
+    blob.exists.return_value = True
+    blob.metadata = {"firebaseStorageDownloadTokens": "token-1"}
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.meal_service.get_storage_bucket", return_value=bucket)
+
+    payload = asyncio.run(meal_service.resolve_photo("user-1", image_id="image-1"))
+
+    bucket.blob.assert_called_once_with("meals/user-1/image-1.jpg")
+    blob.reload.assert_called_once_with()
+    blob.patch.assert_not_called()
+    assert payload == {
+        "mealId": None,
+        "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
+        "photoUrl": (
+            "https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/"
+            "meals%2Fuser-1%2Fimage-1.jpg?alt=media&token=token-1"
+        ),
     }
 
 
@@ -401,13 +908,16 @@ class _FakeHistoryQuery:
         self._failure = failure
         self._limit: int | None = None
         self._start_after: list[str] | None = None
+        self.order_by_fields: list[str] = []
+        self.stream_called = False
 
     def where(self, *, filter: object):  # noqa: A002
         del filter
         return self
 
     def order_by(self, field: str, direction: object | None = None):
-        del field, direction
+        del direction
+        self.order_by_fields.append(field)
         return self
 
     def start_after(self, cursor: list[str]):
@@ -419,6 +929,7 @@ class _FakeHistoryQuery:
         return self
 
     def stream(self):
+        self.stream_called = True
         if self._failure is not None:
             raise self._failure
         items = self._snapshots
@@ -445,10 +956,10 @@ class _FakeHistoryMealsCollection:
         self,
         *,
         indexed_query: _FakeHistoryQuery,
-        degraded_query: _FakeHistoryQuery,
+        root_order_query: _FakeHistoryQuery,
     ) -> None:
         self._indexed_query = indexed_query
-        self._degraded_query = degraded_query
+        self._root_order_query = root_order_query
 
     def where(self, *, filter: object):  # noqa: A002
         del filter
@@ -456,7 +967,7 @@ class _FakeHistoryMealsCollection:
 
     def order_by(self, field: str, direction: object | None = None):
         del field, direction
-        return self._degraded_query
+        return self._root_order_query
 
 
 def _history_doc(
@@ -680,23 +1191,15 @@ def test_list_changes_rejects_invalid_cursor_without_fallback(
     assert query.stream_called is False
 
 
-def test_list_history_falls_back_on_missing_index_and_still_excludes_deleted(
+def test_list_history_raises_firestore_error_on_missing_index_without_root_order_stream(
     mocker: MockerFixture,
 ) -> None:
     indexed_query = _FakeHistoryQuery(
         snapshots=[],
         failure=FailedPrecondition("The query requires an index."),
     )
-    degraded_query = _FakeHistoryQuery(
+    root_order_query = _FakeHistoryQuery(
         snapshots=[
-            _FakeHistorySnapshot(
-                "meal-deleted",
-                _history_doc(
-                    meal_id="meal-deleted",
-                    timestamp="2026-04-18T09:00:00.000Z",
-                    deleted=True,
-                ),
-            ),
             _FakeHistorySnapshot(
                 "meal-2",
                 _history_doc(
@@ -717,7 +1220,7 @@ def test_list_history_falls_back_on_missing_index_and_still_excludes_deleted(
     )
     meals_collection = _FakeHistoryMealsCollection(
         indexed_query=indexed_query,
-        degraded_query=degraded_query,
+        root_order_query=root_order_query,
     )
 
     client = mocker.Mock()
@@ -728,14 +1231,61 @@ def test_list_history_falls_back_on_missing_index_and_still_excludes_deleted(
     user_ref.collection.return_value = meals_collection
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
 
-    items, next_cursor = asyncio.run(meal_service.list_history("user-1", limit_count=2))
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(meal_service.list_history("user-1", limit_count=2))
 
-    assert [item["cloudId"] for item in items] == ["meal-2", "meal-1"]
-    assert all(item["deleted"] is False for item in items)
-    assert next_cursor == "2026-04-18|2026-04-18T07:00:00.000Z|meal-1"
+    assert indexed_query.stream_called is True
+    assert root_order_query.stream_called is False
 
 
-def test_list_history_filters_by_day_key_without_logged_at_day_fallback(
+def test_list_history_logged_at_range_raises_firestore_error_on_missing_index_without_root_order_stream(
+    mocker: MockerFixture,
+) -> None:
+    indexed_query = _FakeHistoryQuery(
+        snapshots=[],
+        failure=FailedPrecondition("The query requires an index."),
+    )
+    root_order_query = _FakeHistoryQuery(
+        snapshots=[
+            _FakeHistorySnapshot(
+                "meal-1",
+                _history_doc(
+                    meal_id="meal-1",
+                    timestamp="2026-04-18T07:00:00.000Z",
+                    deleted=False,
+                ),
+            ),
+        ],
+    )
+    meals_collection = _FakeHistoryMealsCollection(
+        indexed_query=indexed_query,
+        root_order_query=root_order_query,
+    )
+
+    client = mocker.Mock()
+    users_collection = mocker.Mock()
+    user_ref = mocker.Mock()
+    client.collection.return_value = users_collection
+    users_collection.document.return_value = user_ref
+    user_ref.collection.return_value = meals_collection
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            meal_service.list_history(
+                "user-1",
+                limit_count=2,
+                logged_at_start="2026-04-18T00:00:00.000Z",
+                logged_at_end="2026-04-18T23:59:59.999Z",
+            )
+        )
+
+    assert indexed_query.order_by_fields == ["loggedAt", "__name__"]
+    assert indexed_query.stream_called is True
+    assert root_order_query.stream_called is False
+
+
+def test_list_history_filters_by_day_key_without_derived_logged_at_day(
     mocker: MockerFixture,
 ) -> None:
     indexed_query = _FakeHistoryQuery(
@@ -782,10 +1332,10 @@ def test_list_history_filters_by_day_key_without_logged_at_day_fallback(
             ),
         ],
     )
-    degraded_query = _FakeHistoryQuery(snapshots=[])
+    root_order_query = _FakeHistoryQuery(snapshots=[])
     meals_collection = _FakeHistoryMealsCollection(
         indexed_query=indexed_query,
-        degraded_query=degraded_query,
+        root_order_query=root_order_query,
     )
 
     client = mocker.Mock()
@@ -834,6 +1384,7 @@ def test_upsert_meal_requires_explicit_day_key(mocker: MockerFixture) -> None:
                     "loggedAt": "2026-04-18T01:30:00.000Z",
                     "type": "snack",
                     "ingredients": [],
+                    "clientMutationId": "mutation-missing-day-key",
                 },
             )
         )
@@ -865,6 +1416,7 @@ def test_upsert_meal_rejects_invalid_day_key(mocker: MockerFixture) -> None:
                     "dayKey": "2026/04/18",
                     "type": "snack",
                     "ingredients": [],
+                    "clientMutationId": "mutation-invalid-day-key",
                 },
             )
         )
@@ -923,10 +1475,10 @@ def test_list_history_paginates_composite_cursor_without_duplicates_or_gaps(
         ),
     ]
     indexed_query = _FakeHistoryQuery(snapshots=snapshots)
-    degraded_query = _FakeHistoryQuery(snapshots=[])
+    root_order_query = _FakeHistoryQuery(snapshots=[])
     meals_collection = _FakeHistoryMealsCollection(
         indexed_query=indexed_query,
-        degraded_query=degraded_query,
+        root_order_query=root_order_query,
     )
 
     client = mocker.Mock()
@@ -960,10 +1512,10 @@ def test_list_history_raises_firestore_error_on_non_index_failed_precondition(
         snapshots=[],
         failure=FailedPrecondition("Some other precondition failure."),
     )
-    degraded_query = _FakeHistoryQuery(snapshots=[])
+    root_order_query = _FakeHistoryQuery(snapshots=[])
     meals_collection = _FakeHistoryMealsCollection(
         indexed_query=indexed_query,
-        degraded_query=degraded_query,
+        root_order_query=root_order_query,
     )
 
     client = mocker.Mock()
@@ -976,3 +1528,6 @@ def test_list_history_raises_firestore_error_on_non_index_failed_precondition(
 
     with pytest.raises(FirestoreServiceError):
         asyncio.run(meal_service.list_history("user-1", limit_count=5))
+
+    assert indexed_query.stream_called is True
+    assert root_order_query.stream_called is False

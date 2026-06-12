@@ -1,10 +1,11 @@
-"""Per-user idempotency cache for AI endpoints.
+"""Bearer-namespaced idempotency cache for AI endpoints.
 
-Caches responses keyed by (user_id, X-Idempotency-Key) for 90 seconds.
-A second request with the same key returns the cached response without
-re-running the AI pipeline or deducting credits again.
+Caches responses keyed by (bearer token digest, X-Idempotency-Key) for 90
+seconds. A second request with the same namespace and key returns the cached
+response without re-running the AI pipeline or deducting credits again.
 """
 
+import hashlib
 import json
 import threading
 from typing import Any, AsyncIterator, cast
@@ -17,7 +18,9 @@ from starlette.responses import Response
 
 _CACHE_LOCK = threading.Lock()
 # 50 000 unique (user, key) pairs, 90-second TTL
-_idempotency_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=50_000, ttl=90)
+_idempotency_cache: TTLCache[str, dict[str, Any]] = TTLCache[str, dict[str, Any]](
+    maxsize=50_000, ttl=90
+)
 
 # Only cache these path prefixes
 _IDEMPOTENT_PATHS = {
@@ -27,12 +30,17 @@ _IDEMPOTENT_PATHS = {
 }
 
 
-def _get_user_id(request: Request) -> str | None:
-    """Best-effort user ID extraction — auth dep resolves it later, we just need
-    something to namespace the key; it is extracted again by the real auth dep."""
-    # We rely on the idempotency key being globally unique (UUID v4),
-    # so namespacing by user_id is a defence-in-depth safety measure only.
-    return request.headers.get("X-Uid")  # optional; fall back to key-only if absent
+def _auth_namespace(request: Request) -> str:
+    authorization = (request.headers.get("Authorization") or "").strip()
+    scheme, separator, token = authorization.partition(" ")
+    if separator and scheme.lower() == "bearer" and token.strip():
+        digest = hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+        return f"bearer:{digest}"
+    return "anonymous"
+
+
+def _cache_key(request: Request, idem_key: str) -> str:
+    return f"{_auth_namespace(request)}:{idem_key.strip()}"
 
 
 class IdempotencyMiddleware(BaseHTTPMiddleware):
@@ -44,8 +52,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not idem_key:
             return await call_next(request)
 
-        # Use key alone as cache key (UUID v4 is globally unique enough)
-        cache_key = idem_key
+        cache_key = _cache_key(request, idem_key)
 
         with _CACHE_LOCK:
             cached = _idempotency_cache.get(cache_key)

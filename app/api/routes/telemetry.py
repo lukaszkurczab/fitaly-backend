@@ -59,7 +59,7 @@ def ingest_telemetry_batch(
         ) from exc
     except TelemetryPayloadTooLargeError as exc:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="Telemetry payload is too large",
         ) from exc
     except TelemetryRateLimitError as exc:

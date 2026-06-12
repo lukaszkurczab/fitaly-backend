@@ -1,0 +1,145 @@
+@baseUrl = http://127.0.0.1:8000
+@bearerToken = local-emulator-token
+@revenueCatWebhookSecret = local-secret
+
+### Health: public lightweight liveness
+# Expected app behavior: 200 JSON without Firebase/OpenAI/RevenueCat/auth dependency.
+GET {{baseUrl}}/api/v1/health
+Accept: application/json
+
+### Version: public API metadata
+# Expected app behavior: 200 JSON with public backend version metadata.
+GET {{baseUrl}}/api/v1/version
+Accept: application/json
+
+### Auth required: profile must reject missing bearer token
+# Expected app behavior: 401 before any profile data can be read.
+GET {{baseUrl}}/api/v1/users/me/profile
+Accept: application/json
+
+### Auth required: malformed bearer token rejects without Firebase verification
+# Expected app behavior: 401 invalid credentials without live Firebase dependency.
+GET {{baseUrl}}/api/v1/users/me/profile
+Accept: application/json
+Authorization: Bearer not-a-jwt
+
+### Auth required: AI credits must reject missing bearer token
+# Expected app behavior: 401 before any credits or billing state can be read.
+GET {{baseUrl}}/api/v1/ai/credits
+Accept: application/json
+
+### Auth required: v2 nutrition state must reject missing bearer token
+# Expected app behavior: 401 before any day nutrition state can be read.
+GET {{baseUrl}}/api/v2/users/me/state?day=2026-03-23
+Accept: application/json
+
+### Auth required: AI Chat idempotency key must not bypass auth
+# Expected app behavior: 401 and no X-Idempotency-Replayed response header.
+POST {{baseUrl}}/api/v2/ai/chat/runs
+Accept: application/json
+Content-Type: application/json
+X-Idempotency-Key: local-evidence-ai-auth
+
+{
+  "threadId": "evidence-thread",
+  "clientMessageId": "evidence-client-message",
+  "message": "Summarize today's macros.",
+  "language": "en"
+}
+
+### Auth required: repeated unauthenticated AI Chat idempotency key is not replayed
+# Expected app behavior: 401 and no X-Idempotency-Replayed response header.
+POST {{baseUrl}}/api/v2/ai/chat/runs
+Accept: application/json
+Content-Type: application/json
+X-Idempotency-Key: local-evidence-ai-auth
+
+{
+  "threadId": "evidence-thread",
+  "clientMessageId": "evidence-client-message",
+  "message": "Summarize today's macros.",
+  "language": "en"
+}
+
+### Auth required: AI photo idempotency key must not bypass auth
+# Expected app behavior: 401 and no X-Idempotency-Replayed response header.
+POST {{baseUrl}}/api/v1/ai/photo/analyze
+Accept: application/json
+Content-Type: application/json
+X-Idempotency-Key: local-evidence-photo-auth
+
+{
+  "imageBase64": "local-evidence-image",
+  "lang": "en"
+}
+
+### Auth required: AI text meal idempotency key must not bypass auth
+# Expected app behavior: 401 and no X-Idempotency-Replayed response header.
+POST {{baseUrl}}/api/v1/ai/text-meal/analyze
+Accept: application/json
+Content-Type: application/json
+X-Idempotency-Key: local-evidence-text-auth
+
+{
+  "payload": {
+    "name": "local evidence meal"
+  },
+  "lang": "en"
+}
+
+### Telemetry: disabled local default returns explicit accepted no-op
+# Expected app behavior: 202 when enabled, or explicit 503 when disabled locally.
+POST {{baseUrl}}/api/v2/telemetry/events/batch
+Accept: application/json
+Content-Type: application/json
+
+{
+  "sessionId": "evidence-session",
+  "app": {
+    "platform": "ios",
+    "appVersion": "0.1.0",
+    "build": "local"
+  },
+  "device": {
+    "locale": "en-US",
+    "tzOffsetMin": 0
+  },
+  "events": [
+    {
+      "eventId": "evidence-session-start-1",
+      "name": "session_start",
+      "ts": "2026-03-23T12:00:00Z",
+      "sessionId": "evidence-session",
+      "actor": {
+        "anonymousId": "evidence-anon"
+      },
+      "platform": "ios",
+      "appVersion": "0.1.0",
+      "locale": "en-US",
+      "timezone": "UTC",
+      "tzOffsetMin": 0,
+      "schemaVersion": 2,
+      "props": {
+        "origin": "app_boot"
+      }
+    }
+  ]
+}
+
+### RevenueCat webhook: invalid secret must reject
+# Expected app behavior: 401 when secret is configured, or explicit 503 when unconfigured locally.
+POST {{baseUrl}}/webhooks/revenuecat
+Accept: application/json
+Content-Type: application/json
+Authorization: Bearer invalid-secret
+
+{
+  "event": {
+    "type": "INITIAL_PURCHASE",
+    "app_user_id": "local-user",
+    "id": "evt-local-1",
+    "entitlement_id": "premium",
+    "purchased_at_ms": 1772150400000,
+    "expiration_at_ms": 1774742400000
+  }
+}

@@ -2,7 +2,7 @@
   "_doc": "Canonical enum values shared between backend and mobile. If a value is added or removed, both repos must update.",
   "MealType": ["breakfast", "lunch", "dinner", "snack", "other"],
   "MealSyncState": ["synced", "pending", "conflict", "failed"],
-  "MealInputMethod": ["manual", "photo", "barcode", "text", "saved", "quick_add"],
+  "MealInputMethod": ["manual", "photo", "barcode", "text"],
   "MealSource": ["ai", "manual", "saved"],
   "GatewayRejectReasons": ["OFF_TOPIC", "TOO_SHORT"],
   "TopRisk": ["none", "under_logging", "low_protein_consistency", "high_unknown_meal_details", "calorie_under_target"],

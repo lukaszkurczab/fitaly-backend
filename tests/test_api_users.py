@@ -7,8 +7,8 @@ from pytest_mock import MockerFixture
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.services.user_account_service import (
-    AvatarMetadataValidationError,
     EmailValidationError,
+    UserProfileMutationDedupeConflictError,
 )
 from tests.types import AuthHeaders
 
@@ -149,7 +149,7 @@ def test_post_user_profile_returns_updated_payload(
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={"profile": {"language": "pl"}},
+        json={"clientMutationId": "profile-mutation-1", "profile": {"language": "pl"}},
         headers=auth_headers("user-1"),
     )
 
@@ -161,6 +161,34 @@ def test_post_user_profile_returns_updated_payload(
     upsert_user_profile_data.assert_called_once_with(
         "user-1",
         {"profile": {"language": "pl"}},
+        client_mutation_id="profile-mutation-1",
+        auth_email=None,
+    )
+
+
+def test_post_user_profile_returns_409_for_reused_mutation_id_conflict(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        side_effect=UserProfileMutationDedupeConflictError(
+            "clientMutationId was already used for a different profile mutation"
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={"clientMutationId": "profile-mutation-1", "profile": {"language": "pl"}},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 409
+    assert "different profile mutation" in response.json()["detail"]
+    upsert_user_profile_data.assert_called_once_with(
+        "user-1",
+        {"profile": {"language": "pl"}},
+        client_mutation_id="profile-mutation-1",
         auth_email=None,
     )
 
@@ -176,7 +204,7 @@ def test_post_user_profile_returns_422_for_unknown_profile_fields(
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={"username": "neo"},
+        json={"clientMutationId": "profile-mutation-unknown", "username": "neo"},
         headers=auth_headers("user-1"),
     )
 
@@ -196,12 +224,52 @@ def test_post_user_profile_returns_422_for_empty_payload(
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={},
+        json={"clientMutationId": "profile-mutation-empty"},
         headers=auth_headers("user-1"),
     )
 
     assert response.status_code == 422
     assert "must not be empty" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_returns_422_for_missing_client_mutation_id(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={"profile": {"language": "pl"}},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "clientMutationId" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_returns_422_for_blank_client_mutation_id(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={"clientMutationId": "   ", "profile": {"language": "pl"}},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "clientMutationId" in str(response.json())
     upsert_user_profile_data.assert_not_called()
 
 
@@ -216,13 +284,268 @@ def test_post_user_profile_returns_422_for_invalid_enum_value(
 
     response = client.post(
         "/api/v1/users/me/profile",
-        json={"profile": {"nutritionProfile": {"unitsSystem": "si"}}},
+        json={
+            "clientMutationId": "profile-mutation-invalid-enum",
+            "profile": {"nutritionProfile": {"unitsSystem": "si"}},
+        },
         headers=auth_headers("user-1"),
     )
 
     assert response.status_code == 422
     assert "unitsSystem" in str(response.json())
     upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_rejects_ai_consent_patch(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={
+            "clientMutationId": "profile-mutation-ai-consent",
+            "profile": {
+                "aiConsent": {
+                    "status": "granted",
+                    "grantedAt": "2026-05-01T10:00:00Z",
+                    "revokedAt": None,
+                }
+            }
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "aiConsent" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_user_profile_rejects_readiness_patch_even_with_editable_field(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.upsert_user_profile_data",
+        return_value={"uid": "user-1"},
+    )
+
+    response = client.post(
+        "/api/v1/users/me/profile",
+        json={
+            "clientMutationId": "profile-mutation-readiness",
+            "profile": {
+                "language": "pl",
+                "readiness": {
+                    "status": "ready",
+                    "onboardingCompletedAt": "2026-05-01T10:00:00Z",
+                    "readyAt": "2026-05-01T10:00:00Z",
+                },
+            }
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert "readiness" in str(response.json())
+    upsert_user_profile_data.assert_not_called()
+
+
+def test_post_ai_consent_grant_returns_minimal_payload(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    grant_ai_consent = mocker.patch(
+        "app.api.routes.users.ConsentService.grant_ai_consent",
+        return_value={
+            "status": "granted",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": None,
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/ai-consent/grant",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "aiConsent": {
+            "status": "granted",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": None,
+        },
+    }
+    grant_ai_consent.assert_called_once_with(user_id="user-1", auth_email=None)
+
+
+def test_post_ai_consent_revoke_returns_minimal_payload(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    revoke_ai_consent = mocker.patch(
+        "app.api.routes.users.ConsentService.revoke_ai_consent",
+        return_value={
+            "status": "revoked",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": "2026-05-02T10:00:00Z",
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/ai-consent/revoke",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "aiConsent": {
+            "status": "revoked",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": "2026-05-02T10:00:00Z",
+        },
+    }
+    revoke_ai_consent.assert_called_once_with(user_id="user-1", auth_email=None)
+
+
+def test_ai_consent_endpoints_preserve_transition_semantics(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    state: dict[str, str | None] = {
+        "status": "not_granted",
+        "grantedAt": None,
+        "revokedAt": None,
+    }
+    timestamps = iter(
+        [
+            "2026-05-01T10:00:00Z",
+            "2026-05-02T10:00:00Z",
+            "2026-05-03T10:00:00Z",
+        ]
+    )
+    calls: list[tuple[str, str, str | None]] = []
+
+    class StatefulConsentService:
+        def __init__(self, _user_profile_service: object) -> None:
+            pass
+
+        async def grant_ai_consent(
+            self,
+            *,
+            user_id: str,
+            auth_email: str | None = None,
+        ) -> dict[str, str | None]:
+            calls.append(("grant", user_id, auth_email))
+            if not (
+                state["status"] == "granted"
+                and state["grantedAt"] is not None
+                and state["revokedAt"] is None
+            ):
+                state.update(
+                    {
+                        "status": "granted",
+                        "grantedAt": next(timestamps),
+                        "revokedAt": None,
+                    }
+                )
+            return dict(state)
+
+        async def revoke_ai_consent(
+            self,
+            *,
+            user_id: str,
+            auth_email: str | None = None,
+        ) -> dict[str, str | None]:
+            calls.append(("revoke", user_id, auth_email))
+            if state["status"] != "revoked":
+                state.update(
+                    {
+                        "status": "revoked",
+                        "grantedAt": state["grantedAt"],
+                        "revokedAt": next(timestamps),
+                    }
+                )
+            return dict(state)
+
+    mocker.patch("app.api.routes.users.ConsentService", StatefulConsentService)
+
+    first_grant = client.post(
+        "/api/v1/users/me/ai-consent/grant",
+        headers=auth_headers("user-1"),
+    )
+    assert first_grant.status_code == 200
+    assert first_grant.json() == {
+        "aiConsent": {
+            "status": "granted",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": None,
+        }
+    }
+
+    repeat_grant = client.post(
+        "/api/v1/users/me/ai-consent/grant",
+        headers=auth_headers("user-1"),
+    )
+    assert repeat_grant.status_code == 200
+    assert repeat_grant.json() == first_grant.json()
+
+    revoke = client.post(
+        "/api/v1/users/me/ai-consent/revoke",
+        headers=auth_headers("user-1"),
+    )
+    assert revoke.status_code == 200
+    assert revoke.json() == {
+        "aiConsent": {
+            "status": "revoked",
+            "grantedAt": "2026-05-01T10:00:00Z",
+            "revokedAt": "2026-05-02T10:00:00Z",
+        }
+    }
+
+    repeat_revoke = client.post(
+        "/api/v1/users/me/ai-consent/revoke",
+        headers=auth_headers("user-1"),
+    )
+    assert repeat_revoke.status_code == 200
+    assert repeat_revoke.json() == revoke.json()
+
+    regrant = client.post(
+        "/api/v1/users/me/ai-consent/grant",
+        headers=auth_headers("user-1"),
+    )
+    assert regrant.status_code == 200
+    assert regrant.json() == {
+        "aiConsent": {
+            "status": "granted",
+            "grantedAt": "2026-05-03T10:00:00Z",
+            "revokedAt": None,
+        }
+    }
+    assert calls == [
+        ("grant", "user-1", None),
+        ("grant", "user-1", None),
+        ("revoke", "user-1", None),
+        ("revoke", "user-1", None),
+        ("grant", "user-1", None),
+    ]
+
+
+def test_post_old_ai_consent_route_is_not_exposed(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/ai-health-data-consent",
+        json={"accepted": True},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 404
 
 
 def test_post_email_pending_returns_400_for_invalid_email(
@@ -276,47 +599,16 @@ def test_post_delete_user_returns_success(mocker: MockerFixture, auth_headers: A
     delete_account_data.assert_called_once_with("user-1")
 
 
-def test_post_avatar_metadata_returns_updated_payload(
-    mocker: MockerFixture,
+def test_post_avatar_metadata_route_is_not_active(
     auth_headers: AuthHeaders,
 ) -> None:
-    set_avatar_metadata = mocker.patch(
-        "app.api.routes.users.user_account_service.set_avatar_metadata",
-        return_value=("https://cdn/avatar.jpg", "2026-03-03T12:00:00Z"),
-    )
-
     response = client.post(
         "/api/v1/users/me/avatar-metadata",
         json={"avatarUrl": "https://cdn/avatar.jpg"},
         headers=auth_headers("user-1"),
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "avatarUrl": "https://cdn/avatar.jpg",
-        "avatarlastSyncedAt": "2026-03-03T12:00:00Z",
-        "updated": True,
-    }
-    set_avatar_metadata.assert_called_once_with("user-1", "https://cdn/avatar.jpg")
-
-
-def test_post_avatar_metadata_returns_400_for_invalid_url(
-    mocker: MockerFixture,
-    auth_headers: AuthHeaders,
-) -> None:
-    mocker.patch(
-        "app.api.routes.users.user_account_service.set_avatar_metadata",
-        side_effect=AvatarMetadataValidationError("Invalid avatar URL."),
-    )
-
-    response = client.post(
-        "/api/v1/users/me/avatar-metadata",
-        json={"avatarUrl": "file:///avatar.jpg"},
-        headers=auth_headers("user-1"),
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid avatar URL."}
+    assert response.status_code == 404
 
 
 def test_post_avatar_upload_returns_updated_payload(
@@ -325,11 +617,16 @@ def test_post_avatar_upload_returns_updated_payload(
 ) -> None:
     upload_avatar = mocker.patch(
         "app.api.routes.users.user_account_service.upload_avatar",
-        return_value=("https://cdn/avatar.jpg", "2026-03-03T12:00:00Z"),
+        return_value=(
+            "https://cdn/avatar.jpg",
+            "2026-03-03T12:00:00Z",
+            {"storagePath": "avatars/user-1/avatar.abc123"},
+        ),
     )
 
     response = client.post(
         "/api/v1/users/me/avatar",
+        data={"clientMutationId": " avatar-mutation-1 "},
         files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
         headers=auth_headers("user-1"),
     )
@@ -338,10 +635,61 @@ def test_post_avatar_upload_returns_updated_payload(
     assert response.json() == {
         "avatarUrl": "https://cdn/avatar.jpg",
         "avatarlastSyncedAt": "2026-03-03T12:00:00Z",
+        "avatarRef": {"storagePath": "avatars/user-1/avatar.abc123"},
         "updated": True,
     }
     upload_avatar.assert_called_once()
     assert upload_avatar.call_args.args[0] == "user-1"
+    assert upload_avatar.call_args.kwargs["client_mutation_id"] == " avatar-mutation-1 "
+
+
+def test_post_avatar_upload_rejects_missing_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_avatar_upload_rejects_blank_client_mutation_id(
+    auth_headers: AuthHeaders,
+) -> None:
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        data={"clientMutationId": "   "},
+        files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Missing clientMutationId"}
+
+
+def test_post_avatar_upload_maps_service_value_error_to_400_without_metadata(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upload_avatar = mocker.patch(
+        "app.api.routes.users.user_account_service.upload_avatar",
+        side_effect=ValueError("Unsupported or unrecognized file type"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/avatar",
+        data={"clientMutationId": "avatar-mutation-1"},
+        files={"file": ("avatar.txt", b"not-an-image", "text/plain")},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unsupported or unrecognized file type"}
+    assert "avatarUrl" not in response.json()
+    assert "avatarRef" not in response.json()
+    upload_avatar.assert_called_once()
 
 
 def test_post_avatar_upload_returns_500_for_firestore_errors(
@@ -355,6 +703,7 @@ def test_post_avatar_upload_returns_500_for_firestore_errors(
 
     response = client.post(
         "/api/v1/users/me/avatar",
+        data={"clientMutationId": "avatar-mutation-1"},
         files={"file": ("avatar.jpg", b"avatar-bytes", "image/jpeg")},
         headers=auth_headers("user-1"),
     )
@@ -374,9 +723,20 @@ def test_get_user_export_returns_backend_payload(
             [{"id": "meal-1"}],
             [{"id": "saved-1"}],
             [{"id": "chat-1"}],
+            [{"id": "memory-1"}],
+            [{"id": "run-1"}],
             [{"id": "notif-1"}],
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
+            [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [{"id": "main", "status": "active"}],
+            [{"id": "current", "billingId": "main", "balance": 8}],
+            [{"id": "tx-1", "billingId": "main", "amount": -1}],
+            [{"id": "idem-1", "billingId": "main", "state": "deducted"}],
+            [{"id": "streak_7", "type": "streak"}],
+            [{"id": "main", "current": 7}],
+            [{"id": "2026-03-03", "sendCount": 2}],
+            [{"eventId": "telemetry-1", "name": "meal_logged"}],
         ),
     )
 
@@ -388,9 +748,24 @@ def test_get_user_export_returns_backend_payload(
         "meals": [{"id": "meal-1"}],
         "myMeals": [{"id": "saved-1"}],
         "chatMessages": [{"id": "chat-1"}],
+        "chatMemory": [{"id": "memory-1"}],
+        "aiRuns": [{"id": "run-1"}],
         "notifications": [{"id": "notif-1"}],
         "notificationPrefs": {"motivationEnabled": True},
         "feedback": [{"id": "feedback-1"}],
+        "mealMutationDedupe": [
+            {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
+        ],
+        "billing": [{"id": "main", "status": "active"}],
+        "aiCredits": [{"id": "current", "billingId": "main", "balance": 8}],
+        "aiCreditTransactions": [{"id": "tx-1", "billingId": "main", "amount": -1}],
+        "aiCreditIdempotency": [
+            {"id": "idem-1", "billingId": "main", "state": "deducted"}
+        ],
+        "badges": [{"id": "streak_7", "type": "streak"}],
+        "streak": [{"id": "main", "current": 7}],
+        "reminderDailyStats": [{"id": "2026-03-03", "sendCount": 2}],
+        "telemetryEvents": [{"eventId": "telemetry-1", "name": "meal_logged"}],
     }
     get_user_export_data.assert_called_once_with("user-1")
 

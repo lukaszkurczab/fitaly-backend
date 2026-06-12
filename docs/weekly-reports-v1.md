@@ -61,6 +61,9 @@ Backend returns `WeeklyReportResponse` with:
 - `insights`
 - `priorities`
 
+Access is premium-gated. An authenticated free user receives `403` with
+`detail="WEEKLY_REPORT_PREMIUM_REQUIRED"` before weekly synthesis is computed.
+
 Boundaries enforced by schema:
 
 - `status`: `ready | insufficient_data`
@@ -204,13 +207,14 @@ Weekly Reports v1 does not require broad new backend telemetry.
 
 If telemetry is enabled on mobile, keep the allowlist bounded to:
 
-- `weekly_report_viewed`
-- `weekly_report_cta_clicked`
-- `weekly_report_dismissed`
+- `weekly_report_opened`: `reportStatus`, `insightCount`, `priorityCount`, `source`, `accessState`, `accessReason`
+- `weekly_report_locked_viewed`: `source`, `accessState`, `accessReason`
+- `weekly_report_access_blocked`: `source`, `accessState`, `accessReason`
 
 Do not send:
 
 - `summary`
 - insight `title` or `body`
+- priority `text`
 - raw `reasonCodes`
 - user-authored text

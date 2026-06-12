@@ -23,6 +23,7 @@ async def create_chat_run(
 
     Error contract:
     - kill switch returns `503 detail = {"code": "AI_CHAT_DISABLED", "message"}`.
+    - consent failure returns `403 detail = {"code", "message", "aiConsent"}`.
     - domain failures are returned as `detail = {"code", "message"}`.
     - unexpected failures are mapped to `AI_CHAT_INTERNAL_ERROR`.
     """
@@ -44,10 +45,9 @@ async def create_chat_run(
         detail_message = str(exc).strip() or exc.code
         detail: dict[str, object] = {"code": exc.code, "message": detail_message}
         if isinstance(exc, ConsentRequiredError):
-            detail["readiness"] = {
-                "status": "needs_ai_consent",
-                "onboardingCompletedAt": None,
-                "readyAt": None,
+            detail["aiConsent"] = {
+                "required": True,
+                "scope": "global_ai_health_data",
             }
         credits_status = getattr(exc, "credits_status", None)
         if credits_status is not None:

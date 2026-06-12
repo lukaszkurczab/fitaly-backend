@@ -16,7 +16,6 @@
       "syncState",
       "lastSyncedAt",
       "avatarUrl",
-      "avatarLocalPath",
       "avatarlastSyncedAt"
     ],
     "defaults": {
@@ -42,8 +41,10 @@
         "aiPreferences": {
           "stylePersona": "calm_guide"
         },
-        "consents": {
-          "aiHealthDataConsentAt": null
+        "aiConsent": {
+          "status": "not_granted",
+          "grantedAt": null,
+          "revokedAt": null
         },
         "readiness": {
           "status": "needs_profile",
@@ -54,15 +55,15 @@
       "syncState": "pending",
       "lastSyncedAt": "",
       "avatarUrl": "",
-      "avatarLocalPath": "",
       "avatarlastSyncedAt": ""
     }
   },
   "profilePatch": {
-    "editableFields": ["profile"]
+    "editableFields": ["clientMutationId", "profile"]
   },
   "criticalFieldGroups": {
     "readiness": ["profile.readiness"],
+    "aiConsent": ["profile.aiConsent"],
     "language": ["profile.language"],
     "aiPersona": ["profile.aiPreferences.stylePersona"],
     "aiStyle": ["profile.aiPreferences.stylePersona", "styleProfile"],
@@ -78,6 +79,7 @@
     "activityLevel": ["sedentary", "light", "moderate", "active", "very_active", ""],
     "goal": ["lose", "maintain", "increase", ""],
     "language": ["en", "pl"],
+    "aiConsentStatus": ["not_granted", "granted", "revoked"],
     "preferences": [
       "lowCarb",
       "keto",

@@ -178,6 +178,25 @@ def test_get_reminder_decision_returns_503_when_required_foundations_are_unavail
     assert response.json() == {"detail": "Smart reminders are unavailable"}
 
 
+def test_get_reminder_decision_kill_switch_returns_503_before_foundation_reads(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", False)
+    get_nutrition_state = mocker.patch(
+        "app.services.reminder_service.get_nutrition_state"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Smart reminders are unavailable"}
+    get_nutrition_state.assert_not_called()
+
+
 def test_get_reminder_decision_returns_500_for_backend_failures(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,

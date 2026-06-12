@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     AI_CREDIT_COST_TEXT_MEAL: int = Field(default=1, ge=0)
     AI_CREDIT_COST_PHOTO: int = Field(default=5, ge=0)
     AI_CHAT_ENABLED: bool = True
+    AI_MEAL_ANALYSIS_ENABLED: bool = True
     AI_GATEWAY_ENABLED: bool = True
     TELEMETRY_ENABLED: bool = False
     STATE_ENABLED: bool = True
@@ -50,6 +51,7 @@ class Settings(BaseSettings):
     # Billing integrations
     REVENUECAT_WEBHOOK_SECRET: str = ""
     REVENUECAT_API_KEY: str = ""
+    REVENUECAT_PREMIUM_ENTITLEMENT_ID: str = "premium"
 
     model_config = SettingsConfigDict(
         env_file=".env",

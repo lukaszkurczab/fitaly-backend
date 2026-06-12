@@ -52,6 +52,27 @@ If those thresholds fail repeatedly, treat as an incident candidate even when up
 6. Workflow-level notifications are sent by `OPS_ALERT_DISCORD_WEBHOOK_URL`; GitHub email stays fallback-only.
 7. If flow checks are skipped due to missing smoke secrets, treat it as monitoring debt and configure secrets immediately.
 
+## Observability Privacy Boundary
+
+1. Sentry, Railway service logs, and backend process logs are operational
+   observability records. They stay outside account export/delete only when
+   backend redaction is active and provider/infrastructure retention remains
+   documented in the release evidence packet.
+2. Backend Sentry initialization must use the shared `before_send` sanitizer.
+   Python logging call sites that include sensitive diagnostic fields must
+   redact before emitting `extra`.
+3. Operational logs must not intentionally include emails, auth headers,
+   tokens, passwords, API keys, provider-looking secrets, raw provider
+   prompts/responses, full request/response bodies, user-authored meal/chat
+   text, Firebase/Google Storage URLs, raw Storage object paths, or URL query
+   strings.
+4. Railway and Sentry retention are controlled by their provider project/service
+   settings. Before launch and during quarterly review, capture the current
+   Sentry event retention and Railway log retention settings as evidence.
+5. If unredacted sensitive data is suspected in Sentry, Railway, or backend
+   runtime logs, treat the time window as privacy-relevant incident scope and
+   escalate through `launch-ops`.
+
 ## Incident Triage Checklist
 
 1. Confirm current deployment version on Railway.

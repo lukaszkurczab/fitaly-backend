@@ -1,0 +1,152 @@
+{
+  "contract": "media_asset_lifecycle_v1",
+  "assetStates": [
+    "local_pending",
+    "uploading",
+    "uploaded",
+    "attached",
+    "failed",
+    "dead_letter",
+    "retryable",
+    "discarded",
+    "deleted"
+  ],
+  "lifecycleOwner": "media_asset_lifecycle",
+  "assetLifecycleOwns": [
+    "localFilePath",
+    "opId",
+    "clientMutationId",
+    "remoteStoragePath",
+    "uploadAttempt",
+    "uploadState",
+    "retryState",
+    "discardState",
+    "deleteState",
+    "deadLetterReason",
+    "resolvedDownloadUrl"
+  ],
+  "surfaces": {
+    "meal_photo": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "meal",
+      "domainDocumentOwns": [
+        "imageRef",
+        "displayMetadata",
+        "mealDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "saved_meal_photo": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "saved_meal",
+      "domainDocumentOwns": [
+        "imageRef",
+        "displayMetadata",
+        "savedMealDomainMetadata"
+      ],
+      "futureLibraryBridge": {
+        "currentDomain": "saved_meal",
+        "stableMediaIdentity": [
+          "imageRef",
+          "imageRef.storagePath"
+        ],
+        "bridgesToDomains": [
+          "MealTemplate",
+          "Recipe"
+        ],
+        "bridgeMechanism": "reuse_imageRef_storagePath_without_storage_rewrite",
+        "requiresSeparateMediaMigration": false,
+        "nonMigrationTargets": [
+          {
+            "domain": "Ingredient/Product",
+            "boundaryMechanism": "excluded_from_saved_meal_photo_media_bridge",
+            "reason": "product_media_is_product_owned_not_derived_from_saved_meal_photo_asset"
+          },
+          {
+            "domain": "ShoppingList",
+            "boundaryMechanism": "excluded_from_saved_meal_photo_media_bridge",
+            "reason": "shopping_list_references_items_without_transforming_saved_meal_photo_assets"
+          }
+        ],
+        "loggedMealMustRemainNarrow": true,
+        "currentSavedMealMustNotExpandWith": [
+          "recipeLifecycleState",
+          "productLifecycleState",
+          "shoppingListLifecycleState",
+          "recipeMediaLifecycle",
+          "productMediaLifecycle",
+          "shoppingListMediaLifecycle"
+        ]
+      },
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "avatar": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "profile",
+      "domainDocumentOwns": [
+        "avatarRef",
+        "displayMetadata",
+        "profileDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    },
+    "feedback_attachment": {
+      "usesAssetStates": "assetStates",
+      "domainOwner": "feedback",
+      "domainDocumentOwns": [
+        "attachmentRef",
+        "displayMetadata",
+        "feedbackDomainMetadata"
+      ],
+      "domainDocumentMustNotOwn": [
+        "localFilePath",
+        "opId",
+        "clientMutationId",
+        "remoteStoragePath",
+        "uploadAttempt",
+        "uploadState",
+        "retryState",
+        "discardState",
+        "deleteState",
+        "deadLetterReason",
+        "resolvedDownloadUrl"
+      ]
+    }
+  }
+}

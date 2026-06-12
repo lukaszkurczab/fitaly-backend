@@ -105,9 +105,13 @@ def _check_export_contract(payload: Any) -> None:
         "meals",
         "myMeals",
         "chatMessages",
+        "chatMemory",
+        "aiRuns",
         "notifications",
         "notificationPrefs",
         "feedback",
+        "mealMutationDedupe",
+        "telemetryEvents",
     }
     missing = sorted(required_keys.difference(payload.keys()))
     _expect(not missing, f"Export payload missing keys: {', '.join(missing)}")

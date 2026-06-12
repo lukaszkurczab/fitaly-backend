@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 import re
 from typing import Any, Callable
 from unittest.mock import Mock
@@ -14,6 +15,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.logging_privacy import redact_sensitive_log_text
 from app.db.firebase import (
     build_storage_download_url,
     get_storage_bucket,
@@ -36,6 +38,10 @@ _IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
 _ALLOWED_IMAGE_CONTENT_TYPES = {mime for _, mime in _IMAGE_SIGNATURES}
 
 
+def _storage_emulator_configured() -> bool:
+    return bool(os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "").strip())
+
+
 def _detect_image_content_type(header: bytes) -> str | None:
     for signature, mime in _IMAGE_SIGNATURES:
         if header[: len(signature)] == signature:
@@ -45,13 +51,13 @@ def _detect_image_content_type(header: bytes) -> str | None:
     return None
 
 
-def _validate_upload(upload: UploadFile) -> str:
+def _validate_upload(upload: UploadFile, *, require_detected_image: bool = False) -> str:
     declared_content_type = str(upload.content_type or "").strip().lower()
     normalized_declared = (
         declared_content_type if declared_content_type in _ALLOWED_IMAGE_CONTENT_TYPES else None
     )
     if isinstance(upload.file, Mock):
-        if normalized_declared is not None:
+        if normalized_declared is not None and not require_detected_image:
             return normalized_declared
         raise ValueError("Unsupported or unrecognized file type")
 
@@ -63,6 +69,10 @@ def _validate_upload(upload: UploadFile) -> str:
     header = upload.file.read(16)
     upload.file.seek(0)
     detected = _detect_image_content_type(header) if isinstance(header, bytes) else None
+    if require_detected_image:
+        if detected is not None and normalized_declared is not None:
+            return detected
+        raise ValueError("Unsupported or unrecognized file type")
     if detected is not None:
         return detected
     if normalized_declared is not None:
@@ -193,15 +203,20 @@ async def upload_photo_to_storage(
         blob.metadata = {"firebaseStorageDownloadTokens": token}
         safe_content_type = _validate_upload(upload)
         blob.upload_from_file(upload.file, content_type=safe_content_type)
-        blob.patch()
+        if not _storage_emulator_configured():
+            blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
-        logger.exception(error_message, extra={"user_id": user_id, "object_path": object_path})
+        logger.exception(
+            error_message,
+            extra={"user_id": user_id, "object_path": redact_sensitive_log_text(object_path)},
+        )
         raise FirestoreServiceError(error_message) from exc
     finally:
         upload.file.close()
 
     return {
         "imageId": _extract_image_id_from_object_path(object_path),
+        "storagePath": object_path,
         "photoUrl": build_storage_download_url(
             get_storage_bucket_name(bucket),
             object_path,

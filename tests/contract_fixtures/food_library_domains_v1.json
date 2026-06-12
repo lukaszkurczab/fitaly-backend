@@ -1,0 +1,153 @@
+{
+  "contract": "food_library_domains_v1",
+  "libraryDomains": [
+    "MealTemplate",
+    "Recipe",
+    "Ingredient/Product",
+    "ShoppingList"
+  ],
+  "domainContracts": {
+    "MealTemplate": {
+      "owner": "meal_template_library",
+      "identityFields": [
+        "templateId",
+        "ownerUserId",
+        "templateVersion"
+      ],
+      "ownedFields": [
+        "displayName",
+        "description",
+        "mealTypeHint",
+        "draftItems",
+        "draftTotals",
+        "nutritionSnapshot",
+        "imageRef"
+      ]
+    },
+    "Recipe": {
+      "owner": "recipe_library",
+      "identityFields": [
+        "recipeId",
+        "ownerUserId",
+        "recipeVersion"
+      ],
+      "ownedFields": [
+        "title",
+        "description",
+        "ingredients",
+        "steps",
+        "instructions",
+        "servings",
+        "yield",
+        "prepTimeMin",
+        "cookTimeMin",
+        "nutritionSnapshot",
+        "imageRef"
+      ]
+    },
+    "Ingredient/Product": {
+      "owner": "ingredient_product_library",
+      "identityFields": [
+        "ingredientProductId",
+        "ownerUserId"
+      ],
+      "ownedFields": [
+        "displayName",
+        "kind",
+        "brandName",
+        "ingredientName",
+        "barcodeIdentities",
+        "servingSizes",
+        "nutritionPerServing",
+        "sourceAttribution"
+      ]
+    },
+    "ShoppingList": {
+      "owner": "shopping_list_library",
+      "identityFields": [
+        "listId",
+        "ownerUserId"
+      ],
+      "ownedFields": [
+        "title",
+        "items",
+        "itemRefs",
+        "checkedState",
+        "sortOrder",
+        "notes"
+      ]
+    }
+  },
+  "loggedMealBoundary": {
+    "owner": "meal_logging",
+    "schemaName": "Meal",
+    "mustRemainNarrow": true,
+    "mustNotServeAsLibraryCatchAll": true,
+    "mustNotGainFields": [
+      "mealTemplateId",
+      "templateId",
+      "templateVersion",
+      "recipeId",
+      "recipeInstructions",
+      "recipeSteps",
+      "recipeYield",
+      "recipeServings",
+      "productId",
+      "productBarcode",
+      "productCatalogId",
+      "productLifecycleState",
+      "shoppingListId",
+      "shoppingListItems",
+      "shoppingListCheckedAt",
+      "shoppingListLifecycleState"
+    ],
+    "rationale": "Logged Meal is owned by meal logging as the persisted eaten-meal schema. It must remain narrow, must not serve as the food-library catch-all schema, and must not gain recipe, product, shopping-list, or template-specific fields."
+  },
+  "currentSavedMealsBoundary": {
+    "currentNames": [
+      "myMeals",
+      "saved_meals"
+    ],
+    "isFinalLibraryFoundation": false,
+    "laterTargetDomain": "MealTemplate",
+    "compatibilityFallbackToOldShapeAccepted": false,
+    "legacyMarkersNotCanonicalLibraryFoundation": [
+      "myMeals",
+      "saved_meals",
+      "source:saved",
+      "inputMethod:saved",
+      "savedMealRefId"
+    ],
+    "mustNotExpandWith": [
+      "mealTemplateId",
+      "templateId",
+      "templateVersion",
+      "recipeId",
+      "recipeInstructions",
+      "recipeSteps",
+      "recipeYield",
+      "recipeServings",
+      "productId",
+      "productBarcode",
+      "productCatalogId",
+      "productLifecycleState",
+      "shoppingListId",
+      "shoppingListItems",
+      "shoppingListCheckedAt",
+      "shoppingListLifecycleState"
+    ],
+    "rationale": "Current myMeals and saved-meal shapes are not the final food-library foundation. Later CH-06 work targets MealTemplate ownership, and this contract rejects compatibility fallback to the old saved-meal shape as a release architecture."
+  },
+  "barcodeBoundary": {
+    "resultOwnership": [
+      "backend_provider_adapter",
+      "add_meal_draft_source"
+    ],
+    "addMealDraftSourceOnly": true,
+    "createsFirstPartyProductCatalogInThisSlice": false,
+    "mustNotWriteLibraryDomains": [
+      "Ingredient/Product"
+    ],
+    "rationale": "Barcode lookup results are owned only by the backend provider adapter and Add Meal draft source. This slice does not create a first-party product catalog or any permanent food-library product record."
+  }
+}

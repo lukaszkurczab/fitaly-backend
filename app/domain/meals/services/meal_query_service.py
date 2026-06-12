@@ -123,45 +123,26 @@ class MealQueryService:
             timezone=timezone,
         )
         snapshots_by_id: dict[str, firestore.DocumentSnapshot] = {}
-        day_key_query_failed = False
-        logged_at_query_failed = False
-        legacy_timestamp_query_failed = False
 
         try:
-            try:
-                day_key_query = (
-                    collection.where(filter=FieldFilter("dayKey", ">=", start_date))
-                    .where(filter=FieldFilter("dayKey", "<=", end_date))
-                )
-                for snapshot in day_key_query.stream():
-                    snapshots_by_id[snapshot.id] = snapshot
-            except FailedPrecondition:
-                day_key_query_failed = True
+            day_key_query = (
+                collection.where(filter=FieldFilter("dayKey", ">=", start_date))
+                .where(filter=FieldFilter("dayKey", "<=", end_date))
+            )
+            for snapshot in day_key_query.stream():
+                snapshots_by_id[snapshot.id] = snapshot
 
-            try:
-                logged_at_query = (
-                    collection.where(filter=FieldFilter("loggedAt", ">=", start_timestamp_utc))
-                    .where(filter=FieldFilter("loggedAt", "<", end_timestamp_utc))
-                )
-                for snapshot in logged_at_query.stream():
-                    snapshots_by_id[snapshot.id] = snapshot
-            except FailedPrecondition:
-                logged_at_query_failed = True
+            logged_at_query = (
+                collection.where(filter=FieldFilter("loggedAt", ">=", start_timestamp_utc))
+                .where(filter=FieldFilter("loggedAt", "<", end_timestamp_utc))
+            )
+            for snapshot in logged_at_query.stream():
+                snapshots_by_id[snapshot.id] = snapshot
 
-            try:
-                legacy_timestamp_query = (
-                    collection.where(filter=FieldFilter("timestamp", ">=", start_timestamp_utc))
-                    .where(filter=FieldFilter("timestamp", "<", end_timestamp_utc))
-                )
-                for snapshot in legacy_timestamp_query.stream():
-                    snapshots_by_id[snapshot.id] = snapshot
-            except FailedPrecondition:
-                legacy_timestamp_query_failed = True
-
-            if day_key_query_failed and logged_at_query_failed and legacy_timestamp_query_failed:
-                # Graceful fallback when range indexes are temporarily missing.
-                for snapshot in collection.stream():
-                    snapshots_by_id[snapshot.id] = snapshot
+        except FailedPrecondition as exc:
+            raise FirestoreServiceError(
+                "Failed to query meals in range because a required Firestore index is missing."
+            ) from exc
         except (FirebaseError, GoogleAPICallError, RetryError) as exc:
             raise FirestoreServiceError("Failed to query meals in range.") from exc
 

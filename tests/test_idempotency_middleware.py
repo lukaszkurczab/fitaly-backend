@@ -58,6 +58,45 @@ def test_second_request_with_same_key_returns_cached_response() -> None:
     assert ai_handler.await_count == 1
 
 
+def test_same_key_is_namespaced_by_bearer_token() -> None:
+    ai_handler = AsyncMock(side_effect=[{"detail": "user-a"}, {"detail": "user-b"}])
+    health_handler = AsyncMock(return_value={"detail": "healthy"})
+    client = create_test_client(ai_handler=ai_handler, health_handler=health_handler)
+    first_headers = {
+        "Authorization": "Bearer user-a-token",
+        "X-Idempotency-Key": "shared-key",
+    }
+    second_headers = {
+        "Authorization": "Bearer user-b-token",
+        "X-Idempotency-Key": "shared-key",
+    }
+
+    first = client.post(
+        "/api/v2/ai/chat/runs",
+        json={"message": "hello"},
+        headers=first_headers,
+    )
+    second = client.post(
+        "/api/v2/ai/chat/runs",
+        json={"message": "hello"},
+        headers=second_headers,
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {"detail": "user-a"}
+    assert "X-Idempotency-Replayed" not in first.headers
+
+    assert second.status_code == 200
+    assert second.json() == {"detail": "user-b"}
+    assert "X-Idempotency-Replayed" not in second.headers
+
+    assert ai_handler.await_count == 2
+    cache_keys = list(idempotency._idempotency_cache.keys())
+    assert len(cache_keys) == 2
+    assert all("user-a-token" not in key for key in cache_keys)
+    assert all("user-b-token" not in key for key in cache_keys)
+
+
 def test_request_without_idempotency_key_passes_through_without_caching() -> None:
     ai_handler = AsyncMock(side_effect=[{"detail": "first"}, {"detail": "second"}])
     health_handler = AsyncMock(return_value={"detail": "healthy"})

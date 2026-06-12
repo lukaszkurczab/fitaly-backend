@@ -1,15 +1,15 @@
 # Runtime Config Contract
 
-This is the backend side of the mobile to backend runtime contract for Fitaly prod, smoke, and dev/local environments. It mirrors the mobile contract in `fitaly/docs/runtime-config.md`.
+This is the backend side of the mobile to backend runtime contract for Fitaly prod, smoke, and dev/local environments. It mirrors the workspace runtime contract in `../../docs/runbooks/runtime-config.md`.
 
 Do not commit secrets. Values such as Firebase private keys, OpenAI keys, RevenueCat secrets, and Sentry DSNs stay in Railway/EAS secret stores.
 
 ## Environment Matrix
 
-| Contract environment | Backend Railway environment | Backend `ENVIRONMENT` | Expected mobile API URL | Telemetry | Smart Reminders | Billing / RevenueCat | Firebase eager init | OpenAI / AI gateway |
+| Contract environment | Backend Railway environment | Backend `ENVIRONMENT` | Expected mobile API URL | Telemetry | Smart Reminders | Billing / RevenueCat | Firebase eager init | OpenAI / AI controls |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `prod` | `prod` | `production` | Mobile `EXPO_PUBLIC_API_BASE_URL=https://fitaly-backend-production.up.railway.app` | `TELEMETRY_ENABLED=true`; mobile must also build with `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. | `SMART_REMINDERS_ENABLED=true`; mobile must build with `EXPO_PUBLIC_ENABLE_SMART_REMINDERS=true`. | Billing enabled. Mobile `DISABLE_BILLING=false`; production RevenueCat SDK keys in EAS. Backend `REVENUECAT_API_KEY` and `REVENUECAT_WEBHOOK_SECRET` target the production RevenueCat project. | `EAGER_FIREBASE_INIT=true`; startup must fail fast when production Firebase config or credentials are invalid. | `OPENAI_API_KEY` configured; `AI_CHAT_ENABLED=true`; `AI_GATEWAY_ENABLED=true`. |
-| `smoke` | `smoke` | `production` | Mobile `EXPO_PUBLIC_API_BASE_URL=https://fitaly-backend-smoke.up.railway.app` | Launch-like smoke: `TELEMETRY_ENABLED=true`; mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. If disabled for rollback testing, do not count that run as launch readiness. | `SMART_REMINDERS_ENABLED=true`; mobile `EXPO_PUBLIC_ENABLE_SMART_REMINDERS=true`. | Billing enabled for launch rehearsal. Use smoke/sandbox RevenueCat credentials or another explicitly safe test setup. Do not reuse production webhook secrets unless the environment is intentionally wired to production RevenueCat behavior. | Default `EAGER_FIREBASE_INIT=false` for lightweight smoke runtime. Temporarily set `true` only for deliberate Firestore credential/startup readiness checks. | Smoke or limited `OPENAI_API_KEY` configured; `AI_CHAT_ENABLED=true`; `AI_GATEWAY_ENABLED=true`. |
+| `prod` | `prod` | `production` | Mobile `EXPO_PUBLIC_API_BASE_URL=https://fitaly-backend-production.up.railway.app` | `TELEMETRY_ENABLED=true`; mobile must also build with `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. | `SMART_REMINDERS_ENABLED=true`; mobile must build with `EXPO_PUBLIC_ENABLE_SMART_REMINDERS=true`. | Billing enabled. Mobile `DISABLE_BILLING=false`; production RevenueCat SDK keys in EAS. Backend `REVENUECAT_API_KEY` and `REVENUECAT_WEBHOOK_SECRET` target the production RevenueCat project; `REVENUECAT_PREMIUM_ENTITLEMENT_ID=premium` must match the mobile entitlement key. | `EAGER_FIREBASE_INIT=true`; startup must fail fast when production Firebase config or credentials are invalid. | `OPENAI_API_KEY` configured; `AI_CHAT_ENABLED=true`; `AI_MEAL_ANALYSIS_ENABLED=true`; `AI_GATEWAY_ENABLED=true`. |
+| `smoke` | `smoke` | `production` | Mobile `EXPO_PUBLIC_API_BASE_URL=https://fitaly-backend-smoke.up.railway.app` | Launch-like smoke: `TELEMETRY_ENABLED=true`; mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. If disabled for rollback testing, do not count that run as launch readiness. | `SMART_REMINDERS_ENABLED=true`; mobile `EXPO_PUBLIC_ENABLE_SMART_REMINDERS=true`. | Billing enabled for launch rehearsal. Use smoke/sandbox RevenueCat credentials or another explicitly safe test setup. `REVENUECAT_PREMIUM_ENTITLEMENT_ID=premium` must match the mobile entitlement key. Do not reuse production webhook secrets unless the environment is intentionally wired to production RevenueCat behavior. | Default `EAGER_FIREBASE_INIT=false` for lightweight smoke runtime. Temporarily set `true` only for deliberate Firestore credential/startup readiness checks. | Smoke or limited `OPENAI_API_KEY` configured; `AI_CHAT_ENABLED=true`; `AI_MEAL_ANALYSIS_ENABLED=true`; `AI_GATEWAY_ENABLED=true`. |
 | `dev/local` | local developer runtime | `local` or `development` | Mobile local default `http://localhost:8000/`; remote dev-client builds may intentionally point to smoke. | Default `TELEMETRY_ENABLED=false`; enable only when testing telemetry locally. | Default `SMART_REMINDERS_ENABLED=true`, but local failures do not block release readiness. | Developer choice. RevenueCat backend secrets may be empty unless testing sync/webhooks. | Developer choice based on local Firebase testing needs. | `OPENAI_API_KEY` may be empty unless testing AI. |
 
 Notes:
@@ -18,6 +18,12 @@ Notes:
 - `SENTRY_ENVIRONMENT` should be `production` in prod and `smoke` in smoke.
 - Smoke should use separate or scoped Firebase, OpenAI, RevenueCat, and Sentry secrets where possible. The contract requires launch-like behavior, not shared secrets.
 - Local/dev fallbacks must not be used as production readiness evidence.
+- `AI_MEAL_ANALYSIS_ENABLED=false` disables v1 Add Meal photo/text analysis with a structured `503` before gateway, credit, provider, or gateway-log work. `AI_GATEWAY_ENABLED=false` only bypasses gateway enforcement/logging.
+- Telemetry retention is not an environment override in the current release:
+  ingested telemetry events receive `expiresAt = ingestedAt + 30 days`.
+  Account export/delete includes only `userHash`-scoped telemetry for the
+  authenticated user. Anonymous telemetry is retained only as non-account data
+  with no `userId/userHash` and expires through the same 30-day boundary.
 
 ## Smoke Checklist After Runtime Config Changes
 
@@ -31,6 +37,7 @@ Notes:
    - `SMART_REMINDERS_ENABLED=true`
    - `WEEKLY_REPORTS_ENABLED=true`
    - `AI_CHAT_ENABLED=true`
+   - `AI_MEAL_ANALYSIS_ENABLED=true`
    - `AI_GATEWAY_ENABLED=true`
    - `SENTRY_ENVIRONMENT=smoke`
 2. Confirm mobile smoke build profile points at `https://fitaly-backend-smoke.up.railway.app` with telemetry, Smart Reminders, and billing enabled.
@@ -39,6 +46,7 @@ Notes:
    - EAS `RC_ANDROID_API_KEY`
    - Railway `REVENUECAT_API_KEY`
    - Railway `REVENUECAT_WEBHOOK_SECRET`
+   - Railway `REVENUECAT_PREMIUM_ENTITLEMENT_ID=premium`
 4. Confirm OpenAI and Firebase smoke secrets are separate or intentionally scoped and do not expose production-only credentials.
 5. Run lightweight health:
    - `GET https://fitaly-backend-smoke.up.railway.app/api/v1/health`
