@@ -99,7 +99,7 @@ service cloud.firestore {
     }
 
     // Backend-owned reminder state; not exposed to client SDK.
-    match /users/{userId}/daily_stats/{docId} {
+    match /users/{userId}/reminderDailyStats/{dayKey} {
       allow read, write: if false;
     }
 

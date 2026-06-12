@@ -45,6 +45,7 @@ from app.core.firestore_constants import (
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
 from app.services import telemetry_service
+from app.services.reminder_decision_store import DAILY_STATS_SUBCOLLECTION
 
 logger = logging.getLogger(__name__)
 AiConsentDocument = dict[str, str | None]
@@ -1014,10 +1015,54 @@ def _read_subcollection_documents(
     user_ref: firestore.DocumentReference,
     subcollection_name: str,
 ) -> list[dict[str, Any]]:
-    return [
-        dict(document.to_dict() or {})
-        for document in user_ref.collection(subcollection_name).stream()
-    ]
+    documents: list[dict[str, Any]] = []
+    for document in user_ref.collection(subcollection_name).stream():
+        payload = dict(document.to_dict() or {})
+        payload.setdefault("id", document.id)
+        documents.append(payload)
+    return documents
+
+
+def _read_billing_export(
+    user_ref: firestore.DocumentReference,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    billing_documents = _read_subcollection_documents(user_ref, BILLING_SUBCOLLECTION)
+    ai_credits: list[dict[str, Any]] = []
+    ai_credit_transactions: list[dict[str, Any]] = []
+    ai_credit_idempotency: list[dict[str, Any]] = []
+    billing_ids = [str(document.get("id") or "") for document in billing_documents]
+    if BILLING_DOCUMENT_ID not in billing_ids:
+        billing_ids.insert(0, BILLING_DOCUMENT_ID)
+
+    for billing_id in billing_ids:
+        if not billing_id:
+            continue
+        billing_ref = user_ref.collection(BILLING_SUBCOLLECTION).document(billing_id)
+        for document in _read_subcollection_documents(
+            billing_ref,
+            AI_CREDITS_SUBCOLLECTION,
+        ):
+            document.setdefault("billingId", billing_id)
+            ai_credits.append(document)
+        for document in _read_subcollection_documents(
+            billing_ref,
+            AI_CREDIT_TRANSACTIONS_SUBCOLLECTION,
+        ):
+            document.setdefault("billingId", billing_id)
+            ai_credit_transactions.append(document)
+        for document in _read_subcollection_documents(
+            billing_ref,
+            AI_CREDIT_IDEMPOTENCY_SUBCOLLECTION,
+        ):
+            document.setdefault("billingId", billing_id)
+            ai_credit_idempotency.append(document)
+
+    return billing_documents, ai_credits, ai_credit_transactions, ai_credit_idempotency
 
 
 def _read_telemetry_events(
@@ -1307,6 +1352,13 @@ async def get_user_export_data(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -1325,6 +1377,18 @@ async def get_user_export_data(
         meal_mutation_dedupe = _read_subcollection_documents(
             user_ref,
             MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+        )
+        (
+            billing,
+            ai_credits,
+            ai_credit_transactions,
+            ai_credit_idempotency,
+        ) = _read_billing_export(user_ref)
+        badges = _read_subcollection_documents(user_ref, BADGES_SUBCOLLECTION)
+        streak = _read_subcollection_documents(user_ref, STREAK_SUBCOLLECTION)
+        reminder_daily_stats = _read_subcollection_documents(
+            user_ref,
+            DAILY_STATS_SUBCOLLECTION,
         )
         notification_prefs = {}
         for document in prefs_documents:
@@ -1351,5 +1415,12 @@ async def get_user_export_data(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        billing,
+        ai_credits,
+        ai_credit_transactions,
+        ai_credit_idempotency,
+        badges,
+        streak,
+        reminder_daily_stats,
         telemetry_events,
     )

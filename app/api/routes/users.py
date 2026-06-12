@@ -239,6 +239,13 @@ async def get_user_export_me(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        billing,
+        ai_credits,
+        ai_credit_transactions,
+        ai_credit_idempotency,
+        badges,
+        streak,
+        reminder_daily_stats,
         telemetry_events,
     ) = await user_account_service.get_user_export_data(current_user.uid)
 
@@ -253,5 +260,12 @@ async def get_user_export_me(
         notificationPrefs=notification_prefs,
         feedback=feedback,
         mealMutationDedupe=meal_mutation_dedupe,
+        billing=billing,
+        aiCredits=ai_credits,
+        aiCreditTransactions=ai_credit_transactions,
+        aiCreditIdempotency=ai_credit_idempotency,
+        badges=badges,
+        streak=streak,
+        reminderDailyStats=reminder_daily_stats,
         telemetryEvents=telemetry_events,
     )

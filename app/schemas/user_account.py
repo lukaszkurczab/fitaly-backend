@@ -43,6 +43,13 @@ class UserExportResponse(BaseModel):
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
     feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     mealMutationDedupe: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    billing: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    aiCredits: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    aiCreditTransactions: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    aiCreditIdempotency: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    badges: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    streak: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    reminderDailyStats: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     telemetryEvents: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
 
 

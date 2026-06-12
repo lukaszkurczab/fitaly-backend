@@ -729,6 +729,13 @@ def test_get_user_export_returns_backend_payload(
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
             [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [{"id": "main", "status": "active"}],
+            [{"id": "current", "billingId": "main", "balance": 8}],
+            [{"id": "tx-1", "billingId": "main", "amount": -1}],
+            [{"id": "idem-1", "billingId": "main", "state": "deducted"}],
+            [{"id": "streak_7", "type": "streak"}],
+            [{"id": "main", "current": 7}],
+            [{"id": "2026-03-03", "sendCount": 2}],
             [{"eventId": "telemetry-1", "name": "meal_logged"}],
         ),
     )
@@ -749,6 +756,15 @@ def test_get_user_export_returns_backend_payload(
         "mealMutationDedupe": [
             {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
         ],
+        "billing": [{"id": "main", "status": "active"}],
+        "aiCredits": [{"id": "current", "billingId": "main", "balance": 8}],
+        "aiCreditTransactions": [{"id": "tx-1", "billingId": "main", "amount": -1}],
+        "aiCreditIdempotency": [
+            {"id": "idem-1", "billingId": "main", "state": "deducted"}
+        ],
+        "badges": [{"id": "streak_7", "type": "streak"}],
+        "streak": [{"id": "main", "current": 7}],
+        "reminderDailyStats": [{"id": "2026-03-03", "sendCount": 2}],
         "telemetryEvents": [{"eventId": "telemetry-1", "name": "meal_logged"}],
     }
     get_user_export_data.assert_called_once_with("user-1")

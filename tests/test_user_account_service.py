@@ -1852,25 +1852,81 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     prefs_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     meal_mutation_dedupe_collection_ref = mocker.Mock()
+    billing_collection_ref = mocker.Mock()
+    main_billing_ref = mocker.Mock()
+    annual_billing_ref = mocker.Mock()
+    main_ai_credits_collection_ref = mocker.Mock()
+    main_ai_credit_transactions_collection_ref = mocker.Mock()
+    main_ai_credit_idempotency_collection_ref = mocker.Mock()
+    annual_ai_credits_collection_ref = mocker.Mock()
+    annual_ai_credit_transactions_collection_ref = mocker.Mock()
+    annual_ai_credit_idempotency_collection_ref = mocker.Mock()
+    badges_collection_ref = mocker.Mock()
+    streak_collection_ref = mocker.Mock()
+    reminder_daily_stats_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
     ai_runs_collection_ref = mocker.Mock()
     ai_runs_query = mocker.Mock()
     meal_document = mocker.Mock()
+    meal_document.id = "meal-1"
     meal_document.to_dict.return_value = {"id": "meal-1"}
     my_meal_document = mocker.Mock()
+    my_meal_document.id = "saved-1"
     my_meal_document.to_dict.return_value = {"id": "saved-1"}
     notification_document = mocker.Mock()
+    notification_document.id = "notif-1"
     notification_document.to_dict.return_value = {"id": "notif-1", "enabled": True}
     prefs_document = mocker.Mock()
+    prefs_document.id = "notifications"
     prefs_document.to_dict.return_value = {
         "notifications": {"motivationEnabled": True, "daysAhead": 7}
     }
     feedback_document = mocker.Mock()
+    feedback_document.id = "feedback-1"
     feedback_document.to_dict.return_value = {"id": "feedback-1", "message": "hello"}
     meal_mutation_dedupe_document = mocker.Mock()
+    meal_mutation_dedupe_document.id = "profile-mutation-1"
     meal_mutation_dedupe_document.to_dict.return_value = {
         "clientMutationId": "profile-mutation-1",
         "kind": "profile_update",
+    }
+    main_billing_document = mocker.Mock()
+    main_billing_document.id = "main"
+    main_billing_document.to_dict.return_value = {"status": "active"}
+    main_billing_document.reference = main_billing_ref
+    annual_billing_document = mocker.Mock()
+    annual_billing_document.id = "annual"
+    annual_billing_document.to_dict.return_value = {"status": "past_due"}
+    annual_billing_document.reference = annual_billing_ref
+    main_ai_credit_document = mocker.Mock()
+    main_ai_credit_document.id = "current"
+    main_ai_credit_document.to_dict.return_value = {"balance": 8}
+    main_ai_credit_transaction_document = mocker.Mock()
+    main_ai_credit_transaction_document.id = "tx-1"
+    main_ai_credit_transaction_document.to_dict.return_value = {"amount": -1}
+    main_ai_credit_idempotency_document = mocker.Mock()
+    main_ai_credit_idempotency_document.id = "idem-1"
+    main_ai_credit_idempotency_document.to_dict.return_value = {"state": "deducted"}
+    annual_ai_credit_document = mocker.Mock()
+    annual_ai_credit_document.id = "renewal"
+    annual_ai_credit_document.to_dict.return_value = {"balance": 20}
+    annual_ai_credit_transaction_document = mocker.Mock()
+    annual_ai_credit_transaction_document.id = "tx-annual"
+    annual_ai_credit_transaction_document.to_dict.return_value = {"amount": 20}
+    annual_ai_credit_idempotency_document = mocker.Mock()
+    annual_ai_credit_idempotency_document.id = "idem-annual"
+    annual_ai_credit_idempotency_document.to_dict.return_value = {"state": "applied"}
+    badge_document = mocker.Mock()
+    badge_document.id = "streak_7"
+    badge_document.to_dict.return_value = {"type": "streak", "unlockedAt": 1}
+    streak_document = mocker.Mock()
+    streak_document.id = "main"
+    streak_document.to_dict.return_value = {"current": 7, "lastDate": "2026-03-03"}
+    reminder_daily_stats_document = mocker.Mock()
+    reminder_daily_stats_document.id = "2026-03-03"
+    reminder_daily_stats_document.to_dict.return_value = {
+        "sendCount": 2,
+        "emittedDecisionKeys": ["2026-03-03:breakfast:2026-03-03T08:00:00Z"],
     }
     telemetry_document = mocker.Mock()
     telemetry_document.id = "telemetry-1"
@@ -1922,6 +1978,14 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return feedback_collection_ref
         if name == "mealMutationDedupe":
             return meal_mutation_dedupe_collection_ref
+        if name == "billing":
+            return billing_collection_ref
+        if name == "badges":
+            return badges_collection_ref
+        if name == "streak":
+            return streak_collection_ref
+        if name == "reminderDailyStats":
+            return reminder_daily_stats_collection_ref
         if name == "chat_threads":
             return chat_threads_collection_ref
         raise AssertionError(f"Unexpected subcollection {name}")
@@ -1935,9 +1999,61 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     meal_mutation_dedupe_collection_ref.stream.return_value = [
         meal_mutation_dedupe_document
     ]
+    billing_collection_ref.stream.return_value = [
+        main_billing_document,
+        annual_billing_document,
+    ]
+    def billing_document_side_effect(document_id: str):
+        if document_id == "main":
+            return main_billing_ref
+        if document_id == "annual":
+            return annual_billing_ref
+        raise AssertionError(f"Unexpected billing document {document_id}")
+
+    billing_collection_ref.document.side_effect = billing_document_side_effect
+    badges_collection_ref.stream.return_value = [badge_document]
+    streak_collection_ref.stream.return_value = [streak_document]
+    reminder_daily_stats_collection_ref.stream.return_value = [
+        reminder_daily_stats_document
+    ]
     chat_threads_collection_ref.stream.return_value = [chat_thread_document]
     ai_runs_collection_ref.where.return_value = ai_runs_query
     ai_runs_query.stream.return_value = [ai_run_document]
+
+    def main_billing_child_collection_side_effect(name: str):
+        if name == "aiCredits":
+            return main_ai_credits_collection_ref
+        if name == "aiCreditTransactions":
+            return main_ai_credit_transactions_collection_ref
+        if name == "aiCreditIdempotency":
+            return main_ai_credit_idempotency_collection_ref
+        raise AssertionError(f"Unexpected main billing subcollection {name}")
+
+    def annual_billing_child_collection_side_effect(name: str):
+        if name == "aiCredits":
+            return annual_ai_credits_collection_ref
+        if name == "aiCreditTransactions":
+            return annual_ai_credit_transactions_collection_ref
+        if name == "aiCreditIdempotency":
+            return annual_ai_credit_idempotency_collection_ref
+        raise AssertionError(f"Unexpected annual billing subcollection {name}")
+
+    main_billing_ref.collection.side_effect = main_billing_child_collection_side_effect
+    annual_billing_ref.collection.side_effect = annual_billing_child_collection_side_effect
+    main_ai_credits_collection_ref.stream.return_value = [main_ai_credit_document]
+    main_ai_credit_transactions_collection_ref.stream.return_value = [
+        main_ai_credit_transaction_document
+    ]
+    main_ai_credit_idempotency_collection_ref.stream.return_value = [
+        main_ai_credit_idempotency_document
+    ]
+    annual_ai_credits_collection_ref.stream.return_value = [annual_ai_credit_document]
+    annual_ai_credit_transactions_collection_ref.stream.return_value = [
+        annual_ai_credit_transaction_document
+    ]
+    annual_ai_credit_idempotency_collection_ref.stream.return_value = [
+        annual_ai_credit_idempotency_document
+    ]
 
     def chat_thread_child_collection_side_effect(name: str):
         if name == "messages":
@@ -1969,6 +2085,13 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        billing,
+        ai_credits,
+        ai_credit_transactions,
+        ai_credit_idempotency,
+        badges,
+        streak,
+        reminder_daily_stats,
         telemetry_events,
     ) = asyncio.run(
         user_account_service.get_user_export_data("user-1")
@@ -1996,7 +2119,40 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     assert notification_prefs == {"motivationEnabled": True, "daysAhead": 7}
     assert feedback == [{"id": "feedback-1", "message": "hello"}]
     assert meal_mutation_dedupe == [
-        {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
+        {
+            "clientMutationId": "profile-mutation-1",
+            "kind": "profile_update",
+            "id": "profile-mutation-1",
+        }
+    ]
+    assert billing == [
+        {"status": "active", "id": "main"},
+        {"status": "past_due", "id": "annual"},
+    ]
+    assert ai_credits == [
+        {"balance": 8, "id": "current", "billingId": "main"},
+        {"balance": 20, "id": "renewal", "billingId": "annual"},
+    ]
+    assert ai_credit_transactions == [
+        {"amount": -1, "id": "tx-1", "billingId": "main"},
+        {"amount": 20, "id": "tx-annual", "billingId": "annual"},
+    ]
+    assert ai_credit_idempotency == [
+        {"state": "deducted", "id": "idem-1", "billingId": "main"},
+        {"state": "applied", "id": "idem-annual", "billingId": "annual"},
+    ]
+    assert badges == [
+        {"type": "streak", "unlockedAt": 1, "id": "streak_7"}
+    ]
+    assert streak == [
+        {"current": 7, "lastDate": "2026-03-03", "id": "main"}
+    ]
+    assert reminder_daily_stats == [
+        {
+            "sendCount": 2,
+            "emittedDecisionKeys": ["2026-03-03:breakfast:2026-03-03T08:00:00Z"],
+            "id": "2026-03-03",
+        }
     ]
     assert telemetry_events == [
         {
@@ -2016,6 +2172,63 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     assert telemetry_filter.field_path == "userHash"
     assert telemetry_filter.op_string == "=="
     assert telemetry_filter.value == telemetry_service.build_user_hash("user-1")
+
+
+def test_read_billing_export_reads_main_children_when_parent_doc_is_missing(
+    mocker: MockerFixture,
+) -> None:
+    user_ref = mocker.Mock()
+    billing_collection_ref = mocker.Mock()
+    main_billing_ref = mocker.Mock()
+    ai_credits_collection_ref = mocker.Mock()
+    ai_credit_transactions_collection_ref = mocker.Mock()
+    ai_credit_idempotency_collection_ref = mocker.Mock()
+    ai_credit_doc = mocker.Mock()
+    ai_credit_doc.id = "current"
+    ai_credit_doc.to_dict.return_value = {"balance": 8}
+    ai_credit_transaction_doc = mocker.Mock()
+    ai_credit_transaction_doc.id = "tx-1"
+    ai_credit_transaction_doc.to_dict.return_value = {"amount": -1}
+    ai_credit_idempotency_doc = mocker.Mock()
+    ai_credit_idempotency_doc.id = "idem-1"
+    ai_credit_idempotency_doc.to_dict.return_value = {"state": "deducted"}
+
+    def user_collection_side_effect(name: str):
+        if name == "billing":
+            return billing_collection_ref
+        raise AssertionError(f"Unexpected subcollection {name}")
+
+    def main_billing_child_collection_side_effect(name: str):
+        if name == "aiCredits":
+            return ai_credits_collection_ref
+        if name == "aiCreditTransactions":
+            return ai_credit_transactions_collection_ref
+        if name == "aiCreditIdempotency":
+            return ai_credit_idempotency_collection_ref
+        raise AssertionError(f"Unexpected billing subcollection {name}")
+
+    user_ref.collection.side_effect = user_collection_side_effect
+    billing_collection_ref.stream.return_value = []
+    billing_collection_ref.document.assert_not_called()
+    billing_collection_ref.document.return_value = main_billing_ref
+    main_billing_ref.collection.side_effect = main_billing_child_collection_side_effect
+    ai_credits_collection_ref.stream.return_value = [ai_credit_doc]
+    ai_credit_transactions_collection_ref.stream.return_value = [ai_credit_transaction_doc]
+    ai_credit_idempotency_collection_ref.stream.return_value = [ai_credit_idempotency_doc]
+
+    billing, ai_credits, ai_credit_transactions, ai_credit_idempotency = (
+        user_account_service._read_billing_export(user_ref)
+    )
+
+    assert billing == []
+    assert ai_credits == [{"balance": 8, "id": "current", "billingId": "main"}]
+    assert ai_credit_transactions == [
+        {"amount": -1, "id": "tx-1", "billingId": "main"}
+    ]
+    assert ai_credit_idempotency == [
+        {"state": "deducted", "id": "idem-1", "billingId": "main"}
+    ]
+    billing_collection_ref.document.assert_called_once_with("main")
 
 
 def test_get_user_export_data_wraps_firestore_errors(mocker: MockerFixture) -> None:
