@@ -11,7 +11,7 @@ service firebase.storage {
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.admin == true;
+      return isAuthenticated() && request.auth.token.get('admin', false) == true;
     }
 
     match /avatars/{userId}/{filename} {
@@ -32,7 +32,7 @@ service firebase.storage {
       allow read: if isOwner(userId) || isAdmin();
     }
 
-    // Legacy storage path; sunset target: 2026-06-30.
+    // Denied legacy feedback surface; attachments use /feedback/{userId}/{feedbackId}/{filename}.
     match /feedbacks/{document=**} {
       allow read, write: if false;
     }

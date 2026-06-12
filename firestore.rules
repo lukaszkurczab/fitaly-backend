@@ -11,7 +11,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.admin == true;
+      return isAuthenticated() && request.auth.token.get('admin', false) == true;
     }
 
     function isValidStreak() {
@@ -124,7 +124,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Legacy top-level Firestore paths to decommission after cutover.
+    // Denied legacy feedback surface; feedback writes use /users/{userId}/feedback/{feedbackId}.
     match /feedbacks/{document=**} {
       allow read, write: if false;
     }

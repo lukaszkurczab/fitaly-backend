@@ -1198,17 +1198,6 @@ def _feedback_attachment_storage_paths(
         ):
             storage_paths.append(storage_path)
 
-    legacy_attachment_path = payload.get("attachmentPath")
-    if (
-        isinstance(legacy_attachment_path, str)
-        and _is_feedback_attachment_storage_path_for_user(
-            user_id=user_id,
-            storage_path=legacy_attachment_path,
-        )
-        and legacy_attachment_path not in storage_paths
-    ):
-        storage_paths.append(legacy_attachment_path)
-
     return storage_paths
 
 

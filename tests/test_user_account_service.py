@@ -404,7 +404,7 @@ def test_delete_feedback_attachments_uses_canonical_attachment_ref(
     blob.delete.assert_called_once_with()
 
 
-def test_delete_feedback_attachments_handles_legacy_attachment_path(
+def test_delete_feedback_attachments_ignores_in_scope_legacy_attachment_path(
     mocker: MockerFixture,
 ) -> None:
     feedback_doc = mocker.Mock()
@@ -422,8 +422,8 @@ def test_delete_feedback_attachments_handles_legacy_attachment_path(
         user_id="user-1",
     )
 
-    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/legacy.jpg")
-    blob.delete.assert_called_once_with()
+    bucket.blob.assert_not_called()
+    blob.delete.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -478,7 +478,7 @@ def test_delete_feedback_attachments_ignores_out_of_scope_paths(
     bucket.blob.assert_not_called()
 
 
-def test_delete_feedback_attachments_does_not_delete_duplicate_path_twice(
+def test_delete_feedback_attachments_uses_canonical_ref_when_legacy_path_is_present(
     mocker: MockerFixture,
 ) -> None:
     feedback_doc = mocker.Mock()
@@ -487,7 +487,7 @@ def test_delete_feedback_attachments_does_not_delete_duplicate_path_twice(
         "attachmentRef": {
             "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
         },
-        "attachmentPath": "feedback/user-1/feedback-1/feedback.jpg",
+        "attachmentPath": "feedback/user-1/feedback-1/legacy.jpg",
     }
     bucket = mocker.Mock()
     blob = mocker.Mock()
