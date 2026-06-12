@@ -45,6 +45,19 @@ class RevenueCatMalformedResponse(ValueError):
     pass
 
 
+class RevenueCatConfigurationError(ValueError):
+    pass
+
+
+def _expected_premium_entitlement_id() -> str:
+    expected = settings.REVENUECAT_PREMIUM_ENTITLEMENT_ID.strip()
+    if not expected:
+        raise RevenueCatConfigurationError(
+            "RevenueCat premium entitlement ID is not configured"
+        )
+    return expected
+
+
 def _parse_revenuecat_datetime(
     entitlement: dict[str, object],
     *keys: str,
@@ -71,46 +84,46 @@ def _resolve_entitlement_decision(
             "RevenueCat subscriber entitlements are missing or invalid"
         )
 
+    entitlement_id = _expected_premium_entitlement_id()
+    entitlement_raw = entitlements.get(entitlement_id)
+    if entitlement_raw is None:
+        return RevenueCatEntitlementDecision(status="confirmed_inactive")
+
+    entitlement_map = _as_object_map(entitlement_raw)
+    if entitlement_map is None:
+        raise RevenueCatMalformedResponse("RevenueCat entitlement payload is invalid")
+
     now = utc_now()
-    for entitlement_id, entitlement_raw in entitlements.items():
-        if not entitlement_id.strip():
-            raise RevenueCatMalformedResponse("RevenueCat entitlement ID is empty")
-        entitlement_map = _as_object_map(entitlement_raw)
-        if entitlement_map is None:
-            raise RevenueCatMalformedResponse("RevenueCat entitlement payload is invalid")
+    expires_at = _parse_revenuecat_datetime(
+        entitlement_map,
+        "expires_date",
+        "expires_date_ms",
+    )
+    if expires_at is not None and expires_at <= now:
+        return RevenueCatEntitlementDecision(status="confirmed_inactive")
 
-        expires_at = _parse_revenuecat_datetime(
+    anchor_at = (
+        _parse_revenuecat_datetime(
             entitlement_map,
-            "expires_date",
-            "expires_date_ms",
+            "purchase_date",
+            "purchase_date_ms",
         )
-        if expires_at is not None and expires_at <= now:
-            continue
-
-        anchor_at = (
-            _parse_revenuecat_datetime(
-                entitlement_map,
-                "purchase_date",
-                "purchase_date_ms",
-            )
-            or _parse_revenuecat_datetime(
-                entitlement_map,
-                "original_purchase_date",
-                "original_purchase_date_ms",
-            )
-            or now
+        or _parse_revenuecat_datetime(
+            entitlement_map,
+            "original_purchase_date",
+            "original_purchase_date_ms",
         )
+        or now
+    )
 
-        return RevenueCatEntitlementDecision(
-            status="active",
-            active_entitlement=RevenueCatActiveEntitlement(
-                entitlement_id=entitlement_id.strip(),
-                anchor_at=anchor_at,
-                period_end_at=expires_at,
-            ),
-        )
-
-    return RevenueCatEntitlementDecision(status="confirmed_inactive")
+    return RevenueCatEntitlementDecision(
+        status="active",
+        active_entitlement=RevenueCatActiveEntitlement(
+            entitlement_id=entitlement_id,
+            anchor_at=anchor_at,
+            period_end_at=expires_at,
+        ),
+    )
 
 
 def _build_sync_event_id(
@@ -199,6 +212,14 @@ async def sync_ai_credits_tier(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiCreditsSyncResponse:
     user_id = current_user.uid
+    try:
+        _expected_premium_entitlement_id()
+    except RevenueCatConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RevenueCat premium entitlement ID is not configured",
+        ) from exc
+
     revenuecat_payload = await _fetch_revenuecat_subscriber(user_id)
     subscriber_data = _as_object_map(revenuecat_payload.get("subscriber"))
     if subscriber_data is None:
@@ -209,6 +230,11 @@ async def sync_ai_credits_tier(
 
     try:
         entitlement_decision = _resolve_entitlement_decision(subscriber_data)
+    except RevenueCatConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RevenueCat premium entitlement ID is not configured",
+        ) from exc
     except RevenueCatMalformedResponse as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

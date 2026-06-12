@@ -7,9 +7,10 @@ Canonical AI chat runtime is exposed only by
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -17,15 +18,15 @@ from app.api.deps import (
     AuthenticatedUser,
     get_required_authenticated_user,
 )
-from app.api.http_errors import (
-    raise_service_unavailable,
-)
 from app.core.config import settings
+from app.core.errors import ConsentRequiredError
 from app.core.exceptions import (
     AiCreditsExhaustedError,
     FirestoreServiceError,
     OpenAIServiceError,
 )
+from app.domain.users.services.consent_service import ConsentService
+from app.domain.users.services.user_profile_service import UserProfileService
 from app.schemas.ai_common import BACKEND_OWNED_PERSISTENCE
 from app.schemas.ai_credits import AiCreditsStatus
 from app.schemas.ai_photo import (
@@ -49,9 +50,39 @@ from app.services import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_OPENAI_TIMEOUT_MESSAGES = {
+    "openai request timed out.",
+    "openai photo analysis timed out.",
+}
+_AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT_CODE = "AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT"
+_AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT_MESSAGE = (
+    "Meal analysis request is already in progress or completed."
+)
+
 
 def _resolve_request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+def _resolve_ai_operation_id(request: Request) -> str:
+    idempotency_key = (request.headers.get("X-Idempotency-Key") or "").strip()
+    if idempotency_key:
+        return idempotency_key
+
+    request_id = (_resolve_request_id(request) or "").strip()
+    if request_id:
+        return request_id
+
+    return uuid.uuid4().hex
+
+
+def _build_credit_idempotency_key(
+    *,
+    user_id: str,
+    action: str,
+    operation_id: str,
+) -> str:
+    return f"ai-credit:{user_id}:{action}:{operation_id}"
 
 
 def _safe_photo_gateway_message(image_base64: str) -> str:
@@ -126,6 +157,69 @@ async def _log_gateway_result(
         )
 
 
+async def _ensure_active_ai_consent(*, user_id: str) -> None:
+    consent_service = ConsentService(UserProfileService())
+    try:
+        await consent_service.ensure_ai_consent(user_id=user_id)
+    except ConsentRequiredError as exc:
+        detail_message = str(exc).strip() or exc.code
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "code": exc.code,
+                "message": detail_message,
+                "aiConsent": {
+                    "required": True,
+                    "scope": "global_ai_health_data",
+                },
+            },
+        ) from exc
+
+
+def _ensure_meal_analysis_enabled() -> None:
+    if settings.AI_MEAL_ANALYSIS_ENABLED:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "AI_MEAL_ANALYSIS_DISABLED",
+            "message": "Meal analysis AI is temporarily disabled.",
+        },
+    )
+
+
+def _is_openai_timeout_error(exc: OpenAIServiceError) -> bool:
+    cause: BaseException | None = exc.__cause__
+    for _ in range(4):
+        if cause is None:
+            break
+        if isinstance(cause, (asyncio.TimeoutError, TimeoutError)):
+            return True
+        cause = cause.__cause__
+
+    return str(exc).strip().lower() in _OPENAI_TIMEOUT_MESSAGES
+
+
+def _raise_ai_provider_error(exc: OpenAIServiceError) -> NoReturn:
+    if _is_openai_timeout_error(exc):
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={
+                "code": "AI_CHAT_TIMEOUT",
+                "message": "AI provider timed out before a response was generated.",
+            },
+        ) from exc
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "AI_CHAT_PROVIDER_UNAVAILABLE",
+            "message": "AI provider is temporarily unavailable.",
+        },
+    ) from exc
+
+
 async def _reject_gateway_request(
     *,
     user_id: str,
@@ -191,9 +285,16 @@ async def _deduct_credits_or_raise(
     user_id: str,
     cost: int,
     action: str,
-) -> AiCreditsStatus:
+    idempotency_key: str,
+) -> tuple[AiCreditsStatus, bool]:
     try:
-        return await ai_credits_service.deduct_credits(user_id, cost=cost, action=action)
+        result = await ai_credits_service.deduct_credits_idempotent(
+            user_id,
+            cost=cost,
+            action=action,
+            idempotency_key=idempotency_key,
+        )
+        return result.status, result.applied
     except AiCreditsExhaustedError:
         credits_status = await ai_credits_service.get_credits_status(user_id)
         logger.warning(
@@ -218,27 +319,42 @@ async def _deduct_credits_or_raise(
         )
 
 
+def _raise_ai_meal_analysis_idempotency_conflict() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": _AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT_CODE,
+            "message": _AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT_MESSAGE,
+        },
+    )
+
+
 async def _refund_credits_after_ai_failure(
     *,
     user_id: str,
     cost: int,
     action: str,
     endpoint: str,
+    idempotency_key: str,
 ) -> None:
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
-            credits_status = await ai_credits_service.refund_credits(
+            result = await ai_credits_service.refund_credits_idempotent(
                 user_id,
                 cost=cost,
                 action=action,
+                idempotency_key=idempotency_key,
             )
+            credits_status = result.status
             logger.info(
                 "Refunded AI credits after upstream failure.",
                 extra={
                     "user_id": user_id,
                     "endpoint": endpoint,
                     "cost": cost,
+                    "idempotency_key": idempotency_key,
+                    "applied": result.applied,
                     "balance": credits_status.balance,
                     "allocation": credits_status.allocation,
                     "tier": credits_status.tier,
@@ -256,6 +372,7 @@ async def _refund_credits_after_ai_failure(
                     "user_id": user_id,
                     "endpoint": endpoint,
                     "cost": cost,
+                    "idempotency_key": idempotency_key,
                     "attempts": max_attempts,
                 },
             )
@@ -294,6 +411,7 @@ async def _execute_ai_request(
     endpoint: str,
     ai_call: Callable[[], Awaitable[tuple[Any, int | None]]],
     started_at: float,
+    credit_idempotency_key: str,
 ) -> tuple[Any, AiCreditsStatus, int | None]:
     if gateway_result["decision"] != "FORWARD":
         await _reject_gateway_request(
@@ -305,11 +423,14 @@ async def _execute_ai_request(
             started_at=started_at,
         )
 
-    credits_status = await _deduct_credits_or_raise(
+    credits_status, credit_deduction_applied = await _deduct_credits_or_raise(
         user_id=user_id,
         cost=credit_cost,
         action=action_type,
+        idempotency_key=credit_idempotency_key,
     )
+    if not credit_deduction_applied:
+        _raise_ai_meal_analysis_idempotency_conflict()
 
     try:
         result, actual_tokens = await ai_call()
@@ -338,8 +459,9 @@ async def _execute_ai_request(
             cost=credit_cost,
             action=f"{action_type}_failure_refund",
             endpoint=endpoint,
+            idempotency_key=credit_idempotency_key,
         )
-        raise_service_unavailable(exc, detail="AI service unavailable")
+        _raise_ai_provider_error(exc)
 
     elapsed_ms = (perf_counter() - started_at) * 1000
     await _log_gateway_result(
@@ -360,7 +482,12 @@ async def _execute_ai_request(
         credit_cost=float(credit_cost),
     )
 
-    return result, credits_status, actual_tokens
+    completed_credits = await ai_credits_service.complete_credits_idempotent(
+        user_id,
+        idempotency_key=credit_idempotency_key,
+    )
+
+    return result, completed_credits.status, actual_tokens
 
 
 @router.post("/ai/photo/analyze", response_model=AiPhotoAnalyzeResponse)
@@ -369,15 +496,19 @@ async def analyze_photo_ai(
     request: AiPhotoAnalyzeRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiPhotoAnalyzeResponse:
-    started_at = perf_counter()
     user_id = current_user.uid
+    await _ensure_active_ai_consent(user_id=user_id)
+    _ensure_meal_analysis_enabled()
+
+    started_at = perf_counter()
+    operation_id = _resolve_ai_operation_id(http_request)
     gateway_message = _safe_photo_gateway_message(request.imageBase64)
     gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         "photo_analysis",
         gateway_message,
         language=request.lang,
-        request_id=_resolve_request_id(http_request),
+        request_id=operation_id,
         raw_payload_chars=len(request.imageBase64.strip()),
     )
 
@@ -394,6 +525,11 @@ async def analyze_photo_ai(
             lang=request.lang,
         ),
         started_at=started_at,
+        credit_idempotency_key=_build_credit_idempotency_key(
+            user_id=user_id,
+            action="photo_analysis",
+            operation_id=operation_id,
+        ),
     )
 
     return AiPhotoAnalyzeResponse(
@@ -412,15 +548,19 @@ async def analyze_text_meal_ai(
     request: AiTextMealAnalyzeRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiTextMealAnalyzeResponse:
-    started_at = perf_counter()
     user_id = current_user.uid
+    await _ensure_active_ai_consent(user_id=user_id)
+    _ensure_meal_analysis_enabled()
+
+    started_at = perf_counter()
+    operation_id = _resolve_ai_operation_id(http_request)
     gateway_message = request.payload.model_dump_json(exclude_none=True)
     gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         "text_meal_analysis",
         gateway_message,
         language=request.lang,
-        request_id=_resolve_request_id(http_request),
+        request_id=operation_id,
         raw_payload_chars=len(gateway_message),
     )
 
@@ -437,6 +577,11 @@ async def analyze_text_meal_ai(
             lang=request.lang,
         ),
         started_at=started_at,
+        credit_idempotency_key=_build_credit_idempotency_key(
+            user_id=user_id,
+            action="text_meal_analysis",
+            operation_id=operation_id,
+        ),
     )
 
     return AiTextMealAnalyzeResponse(

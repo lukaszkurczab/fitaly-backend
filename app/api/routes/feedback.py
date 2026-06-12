@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.post("/users/me/feedback", response_model=FeedbackCreateResponse)
 async def create_feedback_me(
-    message: str = Form(...),
+    message: str | None = Form(default=None),
     deviceModelName: str | None = Form(default=None),
     deviceOsName: str | None = Form(default=None),
     deviceOsVersion: str | None = Form(default=None),
@@ -21,7 +21,7 @@ async def create_feedback_me(
     try:
         feedback = await feedback_service.create_feedback(
             user_id=current_user.uid,
-            message=message,
+            message=message or "",
             email=current_user.claims.get("email")
             if isinstance(current_user.claims.get("email"), str)
             else None,

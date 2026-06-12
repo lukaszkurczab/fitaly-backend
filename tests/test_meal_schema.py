@@ -1,9 +1,65 @@
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.meal import MealAiMeta, MealItem, MealTotals, MealUpsertRequest
+from app.schemas.meal import (
+    MealAiMeta,
+    MealItem,
+    MealTemplate,
+    MealTotals,
+    MealUpsertRequest,
+    SavedMealDeleteRequest,
+    SavedMealUpsertRequest,
+)
+from app.services.meal_service import normalize_meal_document_payload
+
+_FORBIDDEN_PERSISTED_KEYS = {
+    "rawPrompt",
+    "rawResponse",
+    "providerMessages",
+    "fullPayload",
+    "rawImage",
+    "rawToolOutput",
+    "profile",
+    "history",
+    "chat",
+    "logs",
+    "debug",
+    "userId",
+    "userUid",
+}
+
+_FORBIDDEN_PERSISTED_SENTINELS = (
+    "secret-provider-prompt",
+    "secret-provider-response",
+    "secret-raw-image",
+    "secret-full-payload",
+    "secret-history",
+    "secret-chat",
+    "secret-debug-log",
+    "secret-user-id",
+)
+
+
+def _assert_no_forbidden_persisted_payload(value: Any, *, path: str = "$") -> None:
+    if isinstance(value, dict):
+        payload = cast(dict[object, Any], value)
+        for raw_key, item in payload.items():
+            key = str(raw_key)
+            assert key not in _FORBIDDEN_PERSISTED_KEYS, f"{path}.{key}"
+            _assert_no_forbidden_persisted_payload(item, path=f"{path}.{key}")
+        return
+
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+        for index, item in enumerate(items):
+            _assert_no_forbidden_persisted_payload(item, path=f"{path}[{index}]")
+        return
+
+    if isinstance(value, str):
+        for sentinel in _FORBIDDEN_PERSISTED_SENTINELS:
+            assert sentinel not in value, f"{path} contains {sentinel}"
 
 
 # ---------------------------------------------------------------------------
@@ -15,6 +71,7 @@ def test_meal_upsert_request_accepts_input_method_and_ai_meta() -> None:
     payload = MealUpsertRequest.model_validate(
         {
             "mealId": "meal-1",
+            "clientMutationId": "mutation-schema-ai-meta",
             "timestamp": "2026-03-18T12:00:00.000Z",
             "type": "lunch",
             "ingredients": [],
@@ -43,6 +100,7 @@ def test_meal_upsert_request_is_backward_compatible_without_new_fields() -> None
     payload = MealUpsertRequest.model_validate(
         {
             "mealId": "meal-1",
+            "clientMutationId": "mutation-schema-basic",
             "timestamp": "2026-03-18T12:00:00.000Z",
             "type": "lunch",
             "ingredients": [],
@@ -51,6 +109,146 @@ def test_meal_upsert_request_is_backward_compatible_without_new_fields() -> None
 
     assert payload.inputMethod is None
     assert payload.aiMeta is None
+
+
+def test_saved_meal_upsert_request_requires_non_empty_client_mutation_id() -> None:
+    base: dict[str, Any] = {
+        "templateId": "saved-1",
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+    }
+
+    with pytest.raises(ValidationError):
+        SavedMealUpsertRequest.model_validate(base)
+
+    with pytest.raises(ValidationError):
+        SavedMealUpsertRequest.model_validate({**base, "clientMutationId": "   "})
+
+    payload = SavedMealUpsertRequest.model_validate(
+        {**base, "clientMutationId": " mutation-saved-schema "}
+    )
+    assert payload.clientMutationId == "mutation-saved-schema"
+
+
+def test_saved_meal_upsert_request_rejects_logged_meal_only_fields() -> None:
+    base: dict[str, Any] = {
+        "clientMutationId": "mutation-template-old-shape",
+        "templateId": "saved-1",
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+    }
+
+    forbidden_fields: dict[str, object] = {
+        "loggedAt": "2026-03-18T12:00:00.000Z",
+        "timestamp": "2026-03-18T12:00:00.000Z",
+        "dayKey": "2026-03-18",
+        "loggedAtLocalMin": 720,
+        "tzOffsetMin": 60,
+        "source": "saved",
+        "inputMethod": "manual",
+        "savedMealRefId": "saved-1",
+        "syncState": "synced",
+    }
+    for forbidden_field, value in forbidden_fields.items():
+        with pytest.raises(ValidationError):
+            SavedMealUpsertRequest.model_validate({**base, forbidden_field: value})
+        with pytest.raises(ValidationError):
+            SavedMealUpsertRequest.model_validate({**base, forbidden_field: None})
+
+
+def test_meal_template_response_rejects_logged_meal_only_fields() -> None:
+    base: dict[str, Any] = {
+        "templateId": "saved-1",
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+        "draftTotals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "nutritionSnapshot": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "imageRef": None,
+        "createdAt": "2026-03-18T12:00:00.000Z",
+        "updatedAt": "2026-03-18T12:05:00.000Z",
+        "deleted": False,
+    }
+    forbidden_fields: dict[str, object] = {
+        "id": "saved-1",
+        "mealId": "saved-1",
+        "cloudId": "saved-1",
+        "loggedAt": "2026-03-18T12:00:00.000Z",
+        "timestamp": "2026-03-18T12:00:00.000Z",
+        "dayKey": "2026-03-18",
+        "loggedAtLocalMin": 720,
+        "tzOffsetMin": 60,
+        "type": "lunch",
+        "name": "Saved meal",
+        "ingredients": [],
+        "syncState": "synced",
+        "source": "saved",
+        "inputMethod": "manual",
+        "aiMeta": None,
+        "notes": None,
+        "tags": [],
+        "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "userUid": "user-1",
+        "imageId": "image-1",
+        "photoUrl": "https://cdn/meal.jpg",
+        "savedMealRefId": "saved-1",
+    }
+
+    assert MealTemplate.model_validate(base).model_dump() == base
+    for forbidden_field, value in forbidden_fields.items():
+        with pytest.raises(ValidationError):
+            MealTemplate.model_validate({**base, forbidden_field: value})
+
+
+def test_meal_template_response_requires_owned_fields_without_defaults() -> None:
+    base: dict[str, Any] = {
+        "templateId": "saved-1",
+        "ownerUserId": "user-1",
+        "templateVersion": 1,
+        "displayName": "Saved meal",
+        "description": None,
+        "mealTypeHint": "lunch",
+        "draftItems": [],
+        "draftTotals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "nutritionSnapshot": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        "imageRef": None,
+        "createdAt": "2026-03-18T12:00:00.000Z",
+        "updatedAt": "2026-03-18T12:05:00.000Z",
+        "deleted": False,
+    }
+
+    for required_field in (
+        "displayName",
+        "description",
+        "mealTypeHint",
+        "draftItems",
+        "draftTotals",
+        "nutritionSnapshot",
+        "imageRef",
+        "deleted",
+    ):
+        payload = dict(base)
+        payload.pop(required_field)
+        with pytest.raises(ValidationError):
+            MealTemplate.model_validate(payload)
+
+
+def test_saved_meal_delete_request_requires_non_empty_client_mutation_id() -> None:
+    base: dict[str, Any] = {"updatedAt": "2026-03-18T12:05:00.000Z"}
+
+    with pytest.raises(ValidationError):
+        SavedMealDeleteRequest.model_validate(base)
+
+    with pytest.raises(ValidationError):
+        SavedMealDeleteRequest.model_validate({**base, "clientMutationId": "   "})
+
+    payload = SavedMealDeleteRequest.model_validate(
+        {**base, "clientMutationId": " mutation-saved-delete-schema "}
+    )
+    assert payload.clientMutationId == "mutation-saved-delete-schema"
 
 
 def test_meal_item_serializes_input_method_and_ai_meta() -> None:
@@ -87,11 +285,33 @@ def test_meal_item_serializes_input_method_and_ai_meta() -> None:
     }
 
 
+def test_meal_item_does_not_synthesize_unknown_storage_path() -> None:
+    item = MealItem.model_validate(
+        {
+            "userUid": "user-1",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-18T12:00:00.000Z",
+            "type": "lunch",
+            "ingredients": [],
+            "createdAt": "2026-03-18T12:00:00.000Z",
+            "updatedAt": "2026-03-18T12:05:00.000Z",
+            "cloudId": "meal-1",
+            "imageId": "image-1",
+            "photoUrl": "https://cdn/meal.jpg",
+        }
+    )
+
+    assert item.imageId == "image-1"
+    assert item.photoUrl == "https://cdn/meal.jpg"
+    assert item.imageRef is None
+
+
 def test_meal_upsert_request_rejects_invalid_input_method() -> None:
     with pytest.raises(ValidationError):
         MealUpsertRequest.model_validate(
             {
                 "mealId": "meal-1",
+                "clientMutationId": "mutation-schema-invalid-input",
                 "timestamp": "2026-03-18T12:00:00.000Z",
                 "type": "lunch",
                 "ingredients": [],
@@ -126,6 +346,7 @@ def test_meal_upsert_request_accepts_all_sync_states() -> None:
     """Request model must accept every syncState that mobile can send."""
     base: dict[str, Any] = {
         "mealId": "meal-1",
+        "clientMutationId": "mutation-schema-sync-state",
         "timestamp": "2026-03-18T12:00:00.000Z",
         "type": "lunch",
         "ingredients": [],
@@ -141,6 +362,7 @@ def test_meal_item_rejects_unknown_sync_state() -> None:
             {
                 "userUid": "user-1",
                 "mealId": "meal-1",
+                "clientMutationId": "mutation-schema-invalid-sync",
                 "timestamp": "2026-03-18T12:00:00.000Z",
                 "type": "lunch",
                 "ingredients": [],
@@ -212,7 +434,9 @@ _FULL_MEAL_PAYLOAD: dict[str, Any] = {
 
 def test_full_meal_request_parses_all_boundary_fields() -> None:
     """Complete meal payload with all fields round-trips through request model."""
-    req = MealUpsertRequest.model_validate(_FULL_MEAL_PAYLOAD)
+    req = MealUpsertRequest.model_validate(
+        {**_FULL_MEAL_PAYLOAD, "clientMutationId": "mutation-schema-full"}
+    )
 
     assert req.mealId == "meal-full-1"
     assert req.dayKey == "2026-03-18"
@@ -263,6 +487,152 @@ def test_full_meal_response_serializes_all_boundary_fields() -> None:
     assert data["deleted"] is False
 
 
+def test_meal_item_accepts_image_ref_without_storage_path() -> None:
+    item = MealItem.model_validate(
+        {
+            **_FULL_MEAL_PAYLOAD,
+            "source": "saved",
+            "imageRef": {
+                "imageId": "image-without-path-1",
+                "downloadUrl": "https://cdn.example.invalid/saved.jpg",
+            },
+        }
+    )
+
+    assert item.imageRef is not None
+    assert item.imageRef.imageId == "image-without-path-1"
+    assert item.imageRef.storagePath is None
+    assert item.imageRef.downloadUrl == "https://cdn.example.invalid/saved.jpg"
+
+
+def test_meal_document_normalization_drops_raw_ai_provider_payloads() -> None:
+    """Persisted meal docs keep visible meal fields and structured AI metadata only."""
+    payload: dict[str, Any] = {
+        **_FULL_MEAL_PAYLOAD,
+        "id": "meal-boundary-1",
+        "mealId": "meal-boundary-1",
+        "cloudId": "meal-boundary-1",
+        "source": "saved",
+        "inputMethod": "photo",
+        "imageRef": {
+            "imageId": "image-boundary-1",
+            "storagePath": "meals/user-boundary/image-boundary-1.jpg",
+            "downloadUrl": "https://cdn.example.invalid/visible-meal.jpg",
+            "rawImage": "secret-raw-image",
+            "debug": {"logs": ["secret-debug-log"]},
+        },
+        "aiMeta": {
+            "model": "gpt-4o-mini",
+            "runId": "run-boundary-1",
+            "confidence": 0.86,
+            "warnings": ["estimated_portion"],
+            "rawPrompt": "secret-provider-prompt",
+            "rawResponse": {"text": "secret-provider-response"},
+            "providerMessages": [
+                {"role": "developer", "content": "secret-provider-prompt"}
+            ],
+            "fullPayload": "secret-full-payload",
+            "rawToolOutput": "secret-history",
+            "debug": {"logs": ["secret-debug-log"]},
+        },
+        "ingredients": [
+            {
+                "id": "ing-boundary-1",
+                "name": "Visible ingredient",
+                "amount": 150,
+                "unit": "g",
+                "kcal": 240,
+                "protein": 30,
+                "fat": 8,
+                "carbs": 12,
+                "rawResponse": "secret-provider-response",
+                "profile": {"userId": "secret-user-id"},
+                "logs": ["secret-debug-log"],
+            }
+        ],
+        "totals": {
+            "kcal": 240,
+            "protein": 30,
+            "fat": 8,
+            "carbs": 12,
+            "fullPayload": "secret-full-payload",
+        },
+        "rawPrompt": "secret-provider-prompt",
+        "rawResponse": "secret-provider-response",
+        "providerMessages": [{"role": "assistant", "content": "secret-provider-response"}],
+        "fullPayload": {"raw": "secret-full-payload"},
+        "rawImage": "secret-raw-image",
+        "rawToolOutput": "secret-history",
+        "profile": {"userId": "secret-user-id"},
+        "history": ["secret-history"],
+        "chat": ["secret-chat"],
+        "logs": ["secret-debug-log"],
+        "debug": {"trace": "secret-debug-log"},
+        "userUid": "secret-user-id",
+    }
+
+    meal_id, document = normalize_meal_document_payload("user-boundary", payload)
+
+    _assert_no_forbidden_persisted_payload(document)
+    assert meal_id == "meal-boundary-1"
+    assert set(document) == {
+        "loggedAt",
+        "dayKey",
+        "loggedAtLocalMin",
+        "tzOffsetMin",
+        "type",
+        "name",
+        "ingredients",
+        "createdAt",
+        "updatedAt",
+        "source",
+        "inputMethod",
+        "aiMeta",
+        "imageRef",
+        "notes",
+        "tags",
+        "deleted",
+        "totals",
+    }
+    assert document["loggedAt"] == "2026-03-18T12:00:00.000Z"
+    assert document["dayKey"] == "2026-03-18"
+    assert document["type"] == "lunch"
+    assert document["name"] == "Grilled chicken salad"
+    assert document["source"] == "saved"
+    assert document["inputMethod"] == "photo"
+    assert document["notes"] == "Post-workout meal"
+    assert document["tags"] == ["high-protein", "lunch"]
+    assert document["imageRef"] == {
+        "imageId": "image-boundary-1",
+        "storagePath": "meals/user-boundary/image-boundary-1.jpg",
+        "downloadUrl": "https://cdn.example.invalid/visible-meal.jpg",
+    }
+    assert document["ingredients"] == [
+        {
+            "id": "ing-boundary-1",
+            "name": "Visible ingredient",
+            "amount": 150.0,
+            "unit": "g",
+            "kcal": 240.0,
+            "protein": 30.0,
+            "fat": 8.0,
+            "carbs": 12.0,
+        }
+    ]
+    assert document["totals"] == {
+        "protein": 30.0,
+        "fat": 8.0,
+        "carbs": 12.0,
+        "kcal": 240.0,
+    }
+    assert document["aiMeta"] == {
+        "model": "gpt-4o-mini",
+        "runId": "run-boundary-1",
+        "confidence": 0.86,
+        "warnings": ["estimated_portion"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Backward compatibility — old payload without Foundation Sprint fields
 # ---------------------------------------------------------------------------
@@ -271,9 +641,10 @@ def test_full_meal_response_serializes_all_boundary_fields() -> None:
 def test_legacy_payload_without_foundation_fields_still_works() -> None:
     """Pre-Foundation-Sprint payload (no inputMethod, aiMeta, dayKey) must parse."""
     legacy = MealUpsertRequest.model_validate(
-        {
-            "mealId": "legacy-1",
-            "timestamp": "2025-12-01T08:00:00.000Z",
+            {
+                "mealId": "legacy-1",
+                "clientMutationId": "mutation-schema-legacy",
+                "timestamp": "2025-12-01T08:00:00.000Z",
             "type": "breakfast",
             "ingredients": [
                 {"id": "i1", "name": "Oats", "amount": 100, "kcal": 389, "protein": 16.9, "fat": 6.9, "carbs": 66.3},
@@ -329,6 +700,7 @@ def test_meal_type_rejects_unknown_value() -> None:
         MealUpsertRequest.model_validate(
             {
                 "mealId": "m1",
+                "clientMutationId": "mutation-schema-invalid-source",
                 "timestamp": "2026-03-18T12:00:00.000Z",
                 "type": "brunch",
                 "ingredients": [],
@@ -341,6 +713,7 @@ def test_meal_source_accepts_valid_values() -> None:
         req = MealUpsertRequest.model_validate(
             {
                 "mealId": "m1",
+                "clientMutationId": f"mutation-schema-source-{source or 'none'}",
                 "timestamp": "2026-03-18T12:00:00.000Z",
                 "type": "lunch",
                 "ingredients": [],
@@ -351,10 +724,11 @@ def test_meal_source_accepts_valid_values() -> None:
 
 
 def test_all_input_methods_accepted() -> None:
-    for method in ("manual", "photo", "barcode", "text", "saved", "quick_add"):
+    for method in ("manual", "photo", "barcode", "text"):
         req = MealUpsertRequest.model_validate(
             {
                 "mealId": "m1",
+                "clientMutationId": f"mutation-schema-input-{method}",
                 "timestamp": "2026-03-18T12:00:00.000Z",
                 "type": "lunch",
                 "ingredients": [],
@@ -362,6 +736,20 @@ def test_all_input_methods_accepted() -> None:
             }
         )
         assert req.inputMethod == method
+
+
+def test_meal_upsert_request_rejects_saved_input_method() -> None:
+    with pytest.raises(ValidationError):
+        MealUpsertRequest.model_validate(
+            {
+                "mealId": "m1",
+                "clientMutationId": "mutation-schema-input-saved",
+                "timestamp": "2026-03-18T12:00:00.000Z",
+                "type": "lunch",
+                "ingredients": [],
+                "inputMethod": "saved",
+            }
+        )
 
 
 def test_ai_meta_all_fields_optional() -> None:

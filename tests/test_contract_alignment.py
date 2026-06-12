@@ -21,6 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 from pydantic import ValidationError
 
+from app.schemas.barcode import BarcodeLookupFoundResponse
 from app.schemas.coach import (
     CoachMeta,
     CoachActionType,
@@ -30,13 +31,37 @@ from app.schemas.coach import (
     CoachSource,
 )
 from app.schemas.habits import CoachPriority, TopRisk
+from app.schemas.food_library import (
+    FOOD_LIBRARY_BARCODE_RESULT_OWNERS,
+    FOOD_LIBRARY_CURRENT_SAVED_MEAL_NAMES,
+    FOOD_LIBRARY_DOMAIN_CONTRACTS,
+    FOOD_LIBRARY_DOMAINS,
+    FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS,
+    FOOD_LIBRARY_LEGACY_MARKERS_NOT_CANONICAL,
+    FOOD_LIBRARY_LOGGED_MEAL_OWNER,
+    FOOD_LIBRARY_LOGGED_MEAL_SCHEMA,
+    FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS,
+    FoodLibraryDomainsContract,
+)
 from app.schemas.meal import (
+    MealDocument,
     MealInputMethod,
     MealItem,
     MealSource,
     MealSyncState,
     MealType,
     MealUpsertRequest,
+)
+from app.schemas.media_asset import (
+    MEDIA_ASSET_LIFECYCLE_OWNED_FIELDS,
+    MEDIA_ASSET_LIFECYCLE_OWNER,
+    MEDIA_ASSET_STATES,
+    MEDIA_ASSET_SURFACES,
+    SAVED_MEAL_PHOTO_LIBRARY_BRIDGE_DOMAINS,
+    SAVED_MEAL_PHOTO_LIBRARY_NON_MIGRATION_TARGETS,
+    SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN,
+    SAVED_MEAL_PHOTO_STABLE_MEDIA_IDENTITY,
+    MediaAssetLifecycleContract,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import (
@@ -52,6 +77,14 @@ from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
     ALLOWED_TELEMETRY_EVENT_PROPS,
 )
+from app.schemas.weekly_reports import (
+    WeeklyReportInsightImportance,
+    WeeklyReportInsightTone,
+    WeeklyReportInsightType,
+    WeeklyReportPriorityType,
+    WeeklyReportResponse,
+    WeeklyReportStatus,
+)
 from app.services.ai_gateway_service import (
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
@@ -62,6 +95,13 @@ from app.services.coach_service import get_coach_response
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
 JSONDict = dict[str, Any]
 StringListDict = dict[str, list[str]]
+MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN = {
+    "avatarUrl",
+    "attachmentUrl",
+    "downloadUrl",
+    "publicUrl",
+    "resolvedDownloadUrl",
+}
 
 
 def _load_fixture(name: str) -> JSONDict:
@@ -121,7 +161,9 @@ class TestMealItemContract:
         assert item.deleted is False
 
     def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
-        req = MealUpsertRequest.model_validate(fixture)
+        req = MealUpsertRequest.model_validate(
+            {**fixture, "clientMutationId": "mutation-contract-meal"}
+        )
         assert req.id == "meal-contract-1"
         assert req.type == "lunch"
         assert req.totals is not None
@@ -618,6 +660,154 @@ class TestGatewayRejectContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: ai_rejections.json
+# ---------------------------------------------------------------------------
+
+
+class TestAiRejectionContract:
+    """Canonical AI rejection fixtures match product-safe HTTP error shapes."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("ai_rejections.json")
+
+    def test_consent_required_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["consentRequired"]
+        detail = rejection["detail"]
+        ai_consent = detail["aiConsent"]
+
+        assert rejection["status"] == 403
+        assert detail["code"] == "AI_CONSENT_REQUIRED"
+        assert detail["code"] != "_".join(["AI", "CHAT", "CONSENT", "REQUIRED"])
+        assert detail["message"] == "AI health data consent required."
+        assert ai_consent["required"] is True
+        assert ai_consent["scope"] == "global_ai_health_data"
+
+    def test_meal_analysis_disabled_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["mealAnalysisDisabled"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 503
+        assert detail["code"] == "AI_MEAL_ANALYSIS_DISABLED"
+        assert detail["message"] == "Meal analysis AI is temporarily disabled."
+        assert "aiConsent" not in detail
+
+    def test_meal_analysis_idempotency_conflict_rejection_shape(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        rejection = fixture["rejections"]["mealAnalysisIdempotencyConflict"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 409
+        assert detail["code"] == "AI_MEAL_ANALYSIS_IDEMPOTENCY_CONFLICT"
+        assert detail["message"] == (
+            "Meal analysis request is already in progress or completed."
+        )
+        assert "aiConsent" not in detail
+
+    def test_provider_unavailable_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["providerUnavailable"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 503
+        assert detail["code"] == "AI_CHAT_PROVIDER_UNAVAILABLE"
+        assert detail["message"] == "AI provider is temporarily unavailable."
+        assert "OpenAI" not in detail["message"]
+        assert "aiConsent" not in detail
+
+    def test_provider_timeout_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["providerTimeout"]
+        detail = rejection["detail"]
+
+        assert rejection["status"] == 504
+        assert detail["code"] == "AI_CHAT_TIMEOUT"
+        assert detail["message"] == "AI provider timed out before a response was generated."
+        assert "OpenAI" not in detail["message"]
+        assert "aiConsent" not in detail
+
+    def test_credits_exhausted_rejection_shape(self, fixture: JSONDict) -> None:
+        rejection = fixture["rejections"]["creditsExhausted"]
+        detail = rejection["detail"]
+        credits = detail["credits"]
+
+        assert rejection["status"] == 402
+        assert detail["code"] == "AI_CREDITS_EXHAUSTED"
+        assert detail["message"] == "AI credits exhausted."
+        assert "aiConsent" not in detail
+        assert set(credits.keys()) >= {
+            "userId",
+            "tier",
+            "balance",
+            "allocation",
+            "periodStartAt",
+            "periodEndAt",
+            "costs",
+            "renewalAnchorSource",
+            "revenueCatEntitlementId",
+            "revenueCatExpirationAt",
+            "lastRevenueCatEventId",
+        }
+        assert credits["userId"] == "user-1"
+        assert credits["tier"] == "free"
+        assert credits["balance"] == 0
+        assert credits["allocation"] == 100
+        assert credits["periodStartAt"] == "2026-04-19T00:00:00Z"
+        assert credits["periodEndAt"] == "2026-05-19T00:00:00Z"
+        assert credits["costs"] == {
+            "chat": 1,
+            "textMeal": 1,
+            "photo": 5,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Fixture: weekly_report.json
+# ---------------------------------------------------------------------------
+
+
+class TestWeeklyReportContract:
+    """Canonical weekly report fixture must parse through WeeklyReportResponse."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("weekly_report.json")
+
+    def test_response_parses(self, fixture: JSONDict) -> None:
+        report = WeeklyReportResponse.model_validate(fixture)
+
+        assert report.status == "ready"
+        assert report.period.startDay == "2026-03-09"
+        assert report.period.endDay == "2026-03-15"
+        assert report.summary is not None
+        assert "Logging stayed steady across the week." in report.summary
+        assert len(report.insights) == 1
+        assert len(report.priorities) == 1
+        assert report.insights[0].type == "consistency"
+        assert report.priorities[0].type == "maintain_consistency"
+
+    def test_top_level_keys_match_schema(self, fixture: JSONDict) -> None:
+        expected_keys = set(WeeklyReportResponse.model_fields.keys())
+        actual_keys = set(fixture.keys())
+        assert actual_keys == expected_keys
+
+    def test_fixture_values_match_backend_literals(self, fixture: JSONDict) -> None:
+        report = WeeklyReportResponse.model_validate(fixture)
+
+        assert report.status in get_args(WeeklyReportStatus)
+        assert len(report.insights) <= 4
+        assert len(report.priorities) <= 2
+
+        for insight in report.insights:
+            assert insight.type in get_args(WeeklyReportInsightType)
+            assert insight.importance in get_args(WeeklyReportInsightImportance)
+            assert insight.tone in get_args(WeeklyReportInsightTone)
+
+        for priority in report.priorities:
+            assert priority.type in get_args(WeeklyReportPriorityType)
+
+
+# ---------------------------------------------------------------------------
 # Fixture: enums.json — enum value parity
 # ---------------------------------------------------------------------------
 
@@ -674,6 +864,392 @@ class TestEnumParity:
         assert sorted(enums["ReminderReasonCode"]) == sorted(
             get_args(ReminderReasonCode)
         )
+
+
+# ---------------------------------------------------------------------------
+# Fixture: food_library_domains_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestFoodLibraryDomainsContract:
+    """CH-06 food-library domain split must stay separate from logged Meal."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("food_library_domains_v1.json")
+
+    def test_contract_parses_and_declares_exact_library_domains(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+
+        assert contract.contract == "food_library_domains_v1"
+        assert tuple(contract.libraryDomains) == FOOD_LIBRARY_DOMAINS
+        assert contract.libraryDomains == [
+            "MealTemplate",
+            "Recipe",
+            "Ingredient/Product",
+            "ShoppingList",
+        ]
+
+    def test_domain_contracts_declare_exact_domain_owned_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+
+        assert tuple(contract.domainContracts.keys()) == FOOD_LIBRARY_DOMAINS
+        for domain, expected in FOOD_LIBRARY_DOMAIN_CONTRACTS.items():
+            expected_owner, expected_identity_fields, expected_owned_fields = expected
+            domain_contract = contract.domainContracts[domain]
+
+            assert domain_contract.owner == expected_owner
+            assert tuple(domain_contract.identityFields) == expected_identity_fields
+            assert tuple(domain_contract.ownedFields) == expected_owned_fields
+
+    def test_meal_template_contract_excludes_logged_meal_only_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        template_contract = contract.domainContracts["MealTemplate"]
+        template_fields = {
+            *template_contract.identityFields,
+            *template_contract.ownedFields,
+        }
+
+        assert template_fields.isdisjoint(
+            FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+
+    def test_logged_meal_boundary_is_narrow_and_not_library_catch_all(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.loggedMealBoundary
+
+        assert boundary.owner == FOOD_LIBRARY_LOGGED_MEAL_OWNER
+        assert boundary.schemaName == FOOD_LIBRARY_LOGGED_MEAL_SCHEMA
+        assert boundary.mustRemainNarrow is True
+        assert boundary.mustNotServeAsLibraryCatchAll is True
+        assert tuple(boundary.mustNotGainFields) == (
+            FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+        assert "persisted eaten-meal schema" in boundary.rationale
+
+    def test_current_saved_meals_are_not_final_library_foundation(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.currentSavedMealsBoundary
+
+        assert tuple(boundary.currentNames) == FOOD_LIBRARY_CURRENT_SAVED_MEAL_NAMES
+        assert boundary.isFinalLibraryFoundation is False
+        assert boundary.laterTargetDomain == "MealTemplate"
+        assert boundary.compatibilityFallbackToOldShapeAccepted is False
+        assert tuple(boundary.legacyMarkersNotCanonicalLibraryFoundation) == (
+            FOOD_LIBRARY_LEGACY_MARKERS_NOT_CANONICAL
+        )
+        assert tuple(boundary.mustNotExpandWith) == (
+            FOOD_LIBRARY_FORBIDDEN_LOGGED_MEAL_FIELDS
+        )
+
+    def test_barcode_boundary_is_backend_adapter_draft_source_only(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        boundary = contract.barcodeBoundary
+
+        assert tuple(boundary.resultOwnership) == FOOD_LIBRARY_BARCODE_RESULT_OWNERS
+        assert boundary.addMealDraftSourceOnly is True
+        assert boundary.createsFirstPartyProductCatalogInThisSlice is False
+        assert boundary.mustNotWriteLibraryDomains == ["Ingredient/Product"]
+
+    def test_logged_meal_models_do_not_include_forbidden_library_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        forbidden_fields = set(contract.loggedMealBoundary.mustNotGainFields)
+
+        assert forbidden_fields.isdisjoint(MealDocument.model_fields)
+        assert forbidden_fields.isdisjoint(MealUpsertRequest.model_fields)
+
+    def test_rejects_extra_fields(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["loggedMealBoundary"]["templateFieldsAllowed"] = False
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_missing_domain_contract(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        del payload["domainContracts"]["ShoppingList"]
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_extra_domain_contract(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["domainContracts"]["PantryItem"] = {
+            "owner": "ingredient_product_library",
+            "identityFields": ["ingredientProductId", "ownerUserId"],
+            "ownedFields": ["displayName"],
+        }
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_domain_drift(self, fixture: JSONDict) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["libraryDomains"] = [
+            "MealTemplate",
+            "Recipe",
+            "Recipe",
+            "ShoppingList",
+        ]
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+    def test_rejects_meal_template_logged_meal_only_field(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = json.loads(json.dumps(fixture))
+        payload["domainContracts"]["MealTemplate"]["ownedFields"].append("loggedAt")
+
+        with pytest.raises(ValidationError):
+            FoodLibraryDomainsContract.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Fixture: barcode_lookup_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestBarcodeLookupContract:
+    """CH-06 barcode lookup response is backend-owned and mobile-consumable."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("barcode_lookup_v1.json")
+
+    def test_found_response_parses_through_backend_schema(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        response = BarcodeLookupFoundResponse.model_validate(fixture["found"])
+
+        assert response.kind == "found"
+        assert response.name == "Greek yogurt"
+        assert response.ingredient.id == "5901234123457"
+        assert response.ingredient.amount == 100
+        assert response.ingredient.unit == "g"
+        assert response.ingredient.kcal == 120
+        assert response.ingredient.protein == 12
+        assert response.ingredient.fat == 4
+        assert response.ingredient.carbs == 8
+
+    def test_declares_exact_route_and_error_mapping(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        assert fixture["contract"] == "barcode_lookup_v1"
+        assert fixture["route"] == {
+            "method": "GET",
+            "path": "/users/me/barcode/lookup",
+            "query": {"barcode": "5901234123457"},
+        }
+        assert fixture["errors"] == {
+            "invalid": {
+                "status": 400,
+                "detail": {
+                    "code": "BARCODE_INVALID",
+                    "message": "Barcode must be 8, 12, or 13 digits",
+                },
+            },
+            "not_found": {
+                "status": 404,
+                "detail": {
+                    "code": "BARCODE_NOT_FOUND",
+                    "message": "Barcode product not found",
+                },
+            },
+            "timeout": {
+                "status": 504,
+                "detail": {
+                    "code": "BARCODE_PROVIDER_TIMEOUT",
+                    "message": "Barcode provider timed out",
+                },
+            },
+            "provider_error": {
+                "status": 502,
+                "detail": {
+                    "code": "BARCODE_PROVIDER_FAILURE",
+                    "message": "Barcode provider unavailable",
+                },
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
+# Fixture: media_asset_lifecycle_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestMediaAssetLifecycleContract:
+    """Shared media asset lifecycle fixture must parse and stay exact."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("media_asset_lifecycle_v1.json")
+
+    def test_contract_parses(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert contract.contract == "media_asset_lifecycle_v1"
+        assert contract.lifecycleOwner == MEDIA_ASSET_LIFECYCLE_OWNER
+        assert (
+            tuple(contract.assetLifecycleOwns)
+            == MEDIA_ASSET_LIFECYCLE_OWNED_FIELDS
+        )
+        assert {"opId", "clientMutationId"}.issubset(contract.assetLifecycleOwns)
+
+    def test_state_vocabulary_is_exact(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert tuple(contract.assetStates) == MEDIA_ASSET_STATES
+
+    def test_release_surfaces_are_exact(self, fixture: JSONDict) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        assert set(contract.surfaces.keys()) == set(MEDIA_ASSET_SURFACES)
+
+    def test_every_surface_uses_shared_states_and_owner_boundaries(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+
+        for surface in MEDIA_ASSET_SURFACES:
+            surface_contract = contract.surfaces[surface]
+
+            assert surface_contract.usesAssetStates == "assetStates"
+            assert surface_contract.domainDocumentOwns
+            assert surface_contract.domainDocumentMustNotOwn == list(
+                contract.assetLifecycleOwns
+            )
+            assert not MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN.intersection(
+                surface_contract.domainDocumentOwns
+            )
+            assert not any(
+                field.endswith(("Url", "URL"))
+                for field in surface_contract.domainDocumentOwns
+            )
+
+    def test_saved_meal_photo_bridges_to_future_library_domains(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        bridge = contract.surfaces["saved_meal_photo"].futureLibraryBridge
+
+        assert bridge is not None
+        assert bridge.currentDomain == "saved_meal"
+        assert tuple(bridge.stableMediaIdentity) == (
+            SAVED_MEAL_PHOTO_STABLE_MEDIA_IDENTITY
+        )
+        assert tuple(bridge.bridgesToDomains) == (
+            SAVED_MEAL_PHOTO_LIBRARY_BRIDGE_DOMAINS
+        )
+        assert (
+            bridge.bridgeMechanism
+            == "reuse_imageRef_storagePath_without_storage_rewrite"
+        )
+        assert bridge.requiresSeparateMediaMigration is False
+
+    def test_saved_meal_photo_excludes_product_and_shopping_list_migration_targets(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        bridge = contract.surfaces["saved_meal_photo"].futureLibraryBridge
+
+        assert bridge is not None
+        assert tuple(
+            (target.domain, target.boundaryMechanism, target.reason)
+            for target in bridge.nonMigrationTargets
+        ) == SAVED_MEAL_PHOTO_LIBRARY_NON_MIGRATION_TARGETS
+        assert "Ingredient/Product" not in bridge.bridgesToDomains
+        assert "ShoppingList" not in bridge.bridgesToDomains
+
+    def test_saved_meal_photo_non_migration_boundary_rejects_drift(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = dict(fixture)
+        payload["surfaces"] = dict(cast(JSONDict, fixture["surfaces"]))
+        payload["surfaces"]["saved_meal_photo"] = dict(
+            payload["surfaces"]["saved_meal_photo"]
+        )
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"] = dict(
+            payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"]
+        )
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"][
+            "nonMigrationTargets"
+        ] = [
+            dict(target)
+            for target in payload["surfaces"]["saved_meal_photo"][
+                "futureLibraryBridge"
+            ]["nonMigrationTargets"]
+        ]
+        payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"][
+            "nonMigrationTargets"
+        ][0]["domain"] = "Recipe"
+
+        with pytest.raises(ValidationError):
+            MediaAssetLifecycleContract.model_validate(payload)
+
+    def test_saved_meal_bridge_does_not_expand_current_domain_documents(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = MediaAssetLifecycleContract.model_validate(fixture)
+        saved_meal_photo = contract.surfaces["saved_meal_photo"]
+        bridge = saved_meal_photo.futureLibraryBridge
+
+        assert bridge is not None
+        assert bridge.loggedMealMustRemainNarrow is True
+        assert saved_meal_photo.domainDocumentOwns == [
+            "imageRef",
+            "displayMetadata",
+            "savedMealDomainMetadata",
+        ]
+        assert not set(SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN).intersection(
+            saved_meal_photo.domainDocumentOwns
+        )
+        assert tuple(bridge.currentSavedMealMustNotExpandWith) == (
+            SAVED_MEAL_PHOTO_LIBRARY_SCHEMA_FIELDS_FORBIDDEN
+        )
+
+    def test_library_bridge_is_only_valid_for_saved_meal_photo(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        payload = dict(fixture)
+        payload["surfaces"] = dict(cast(JSONDict, fixture["surfaces"]))
+        payload["surfaces"]["meal_photo"] = dict(payload["surfaces"]["meal_photo"])
+        payload["surfaces"]["meal_photo"]["futureLibraryBridge"] = dict(
+            payload["surfaces"]["saved_meal_photo"]["futureLibraryBridge"]
+        )
+
+        with pytest.raises(ValidationError):
+            MediaAssetLifecycleContract.model_validate(payload)
 
 
 class TestCoachContractEnums:

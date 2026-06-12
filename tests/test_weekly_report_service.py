@@ -1,7 +1,5 @@
 import asyncio
-import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Protocol
 
 from pytest_mock import MockerFixture
@@ -14,8 +12,6 @@ from app.services.weekly_report_service import (
     get_weekly_report,
     resolve_requested_week_end,
 )
-
-FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
 
 
 class _FilterLike(Protocol):
@@ -113,11 +109,6 @@ def _mock_firestore(
     return client, meals_collection
 
 
-def _load_fixture() -> WeeklyReportResponse:
-    payload = json.loads((FIXTURES_DIR / "weekly_report.json").read_text(encoding="utf-8"))
-    return WeeklyReportResponse.model_validate(payload)
-
-
 def test_resolve_requested_week_end_defaults_to_yesterday() -> None:
     resolved = resolve_requested_week_end(
         None,
@@ -173,11 +164,11 @@ def test_get_weekly_report_raises_when_feature_is_disabled(
 def test_get_weekly_report_returns_insufficient_data_placeholder(
     mocker: MockerFixture,
 ) -> None:
-    fixture = _load_fixture()
+    period = build_weekly_report_period("2026-03-15")
     mocker.patch(
         "app.services.weekly_report_service.collect_weekly_aggregate",
         return_value=build_weekly_aggregate_from_meals(
-            period=fixture.period,
+            period=period,
             meals=[],
         ),
     )
@@ -185,12 +176,18 @@ def test_get_weekly_report_returns_insufficient_data_placeholder(
     response = asyncio.run(
         get_weekly_report(
             "user-1",
-            week_end=fixture.period.endDay,
+            week_end=period.endDay,
             now=datetime(2026, 3, 21, 8, 0, tzinfo=UTC),
         )
     )
 
-    assert response == fixture
+    assert response == WeeklyReportResponse(
+        status="insufficient_data",
+        period=period,
+        summary="Log a few complete days to unlock a weekly report.",
+        insights=[],
+        priorities=[],
+    )
 
 
 def test_get_weekly_report_returns_ready_when_week_has_enough_valid_days(
@@ -243,7 +240,18 @@ def test_get_weekly_report_returns_ready_when_week_has_enough_valid_days(
     assert 2 <= len(response.insights) <= 4
     assert 1 <= len(response.priorities) <= 2
     assert response.summary is not None
-    assert len(meals_collection.calls) == 3
+    assert meals_collection.calls == [
+        [
+            ("deleted", "==", False),
+            ("dayKey", ">=", "2026-03-01"),
+            ("dayKey", "<=", "2026-03-16"),
+        ],
+        [
+            ("deleted", "==", False),
+            ("loggedAt", ">=", "2026-03-01T00:00:00Z"),
+            ("loggedAt", "<", "2026-03-17T00:00:00Z"),
+        ],
+    ]
 
 
 def test_get_weekly_report_returns_insufficient_data_for_three_valid_days(

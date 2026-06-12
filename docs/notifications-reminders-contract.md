@@ -56,6 +56,33 @@ Failure values are explicit HTTP errors, not synthetic `noop` decisions:
 - `500`: backend computation or persistence failed.
 - `400`: client supplied an invalid day key.
 
+## Smart Reminder Telemetry Allowlist
+
+Smart Reminder telemetry must stay categorical and bounded. Do not send freeform
+copy, raw reason text, user-authored content, or sensitive profile data.
+
+Canonical event names:
+
+- `smart_reminder_suppressed`
+- `smart_reminder_scheduled`
+- `smart_reminder_noop`
+- `smart_reminder_decision_failed`
+- `smart_reminder_schedule_failed`
+
+Canonical props by event:
+
+| Event | Allowed props |
+| --- | --- |
+| `smart_reminder_suppressed` | `decision`, `suppressionReason`, `confidenceBucket` |
+| `smart_reminder_scheduled` | `reminderKind`, `decision`, `confidenceBucket`, `scheduledWindow` |
+| `smart_reminder_noop` | `decision`, `noopReason`, `confidenceBucket` |
+| `smart_reminder_decision_failed` | `failureReason` |
+| `smart_reminder_schedule_failed` | `reminderKind`, `decision`, `confidenceBucket`, `failureReason` |
+
+The paired contract fixture is
+`tests/contract_fixtures/smart_reminder_telemetry.json`; backend/mobile copies
+must stay identical.
+
 ## Kill Switches
 
 `SMART_REMINDERS_ENABLED=false` disables the reminder decision surface and returns `503`. It must not fall back to legacy notification plans.

@@ -89,9 +89,7 @@ SMART_REMINDER_DECISION_FAILURE_REASONS = frozenset(
 SMART_REMINDER_SCHEDULE_FAILURE_REASONS = frozenset(
     {"permission_unavailable", "channel_unavailable", "invalid_time", "schedule_error"}
 )
-MEAL_INPUT_METHODS = frozenset(
-    {"manual", "photo", "barcode", "text", "saved", "quick_add"}
-)
+MEAL_INPUT_METHODS = frozenset({"manual", "photo", "barcode", "text"})
 MEAL_SOURCES = frozenset({"manual", "ai", "saved"})
 AI_MEAL_REVIEW_INPUT_METHODS = frozenset({"photo", "text"})
 PAYWALL_SOURCES = frozenset({"manage_subscription", "meal_text_limit"})
@@ -99,7 +97,8 @@ PAYWALL_TRIGGER_SOURCES = frozenset(
     {"manage_subscription_screen", "meal_text_limit_modal"}
 )
 PURCHASE_SOURCES = frozenset({"manage_subscription"})
-ENTITLEMENT_SOURCES = frozenset({"purchase", "restore"})
+RESTORE_SOURCES = frozenset({"manage_subscription"})
+ENTITLEMENT_SOURCES = frozenset({"purchase", "restore", "manage_subscription"})
 ENTITLEMENT_TIERS = frozenset({"premium"})
 ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
     {
@@ -125,6 +124,9 @@ ENTITLEMENT_CONFIRMATION_FAILURE_REASONS = frozenset(
 WEEKLY_REPORT_STATUSES = frozenset({"ready", "insufficient_data", "unavailable"})
 WEEKLY_REPORT_SOURCES = frozenset({"remote", "fallback", "disabled"})
 WEEKLY_REPORT_ACCESS_STATES = frozenset({"premium", "locked", "degraded", "unknown"})
+WEEKLY_REPORT_ACCESS_REASONS = frozenset(
+    {"requires_premium", "premium_required", "degraded", "feature_disabled"}
+)
 COACH_INSIGHT_TYPES = frozenset(
     {
         "under_logging",
@@ -142,10 +144,22 @@ COACH_TAPPABLE_ACTION_TYPES = frozenset(
     {"log_next_meal", "open_chat", "review_history"}
 )
 COACH_INSIGHT_FRESHNESS = frozenset({"fresh", "degraded", "stale"})
+SESSION_START_ORIGINS = frozenset({"app_boot"})
 ONBOARDING_MODES = frozenset({"first", "refill"})
 NOTIFICATION_ORIGINS = frozenset(
     {"user_notifications", "system_notifications", "unknown"}
 )
+NOTIFICATION_TYPES = frozenset(
+    {
+        "meal_reminder",
+        "day_fill",
+        "stats_weekly_summary",
+        "motivation_dont_give_up",
+        "calorie_goal",
+        "unknown",
+    }
+)
+NOTIFICATION_ACTION_IDENTIFIERS = frozenset({"default", "open_chat"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -159,7 +173,9 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "ai_meal_review_saved": frozenset(
         {"inputMethod", "corrected", "ingredientCount", "requestId"}
     ),
-    "notification_opened": frozenset({"notificationType", "origin"}),
+    "notification_opened": frozenset(
+        {"notificationType", "origin", "actionIdentifier", "openedFromBackground"}
+    ),
     "paywall_view": frozenset({"source", "trigger_source"}),
     "purchase_started": frozenset({"source"}),
     "purchase_succeeded": frozenset({"source"}),
@@ -234,6 +250,9 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
         "failureReason": SMART_REMINDER_SCHEDULE_FAILURE_REASONS,
     },
+    "session_start": {
+        "origin": SESSION_START_ORIGINS,
+    },
     "onboarding_completed": {
         "mode": ONBOARDING_MODES,
     },
@@ -245,7 +264,9 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "inputMethod": AI_MEAL_REVIEW_INPUT_METHODS,
     },
     "notification_opened": {
+        "notificationType": NOTIFICATION_TYPES,
         "origin": NOTIFICATION_ORIGINS,
+        "actionIdentifier": NOTIFICATION_ACTION_IDENTIFIERS,
     },
     "paywall_view": {
         "source": PAYWALL_SOURCES,
@@ -266,24 +287,30 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "reason": ENTITLEMENT_CONFIRMATION_FAILURE_REASONS,
     },
     "restore_started": {
-        "source": PURCHASE_SOURCES,
+        "source": RESTORE_SOURCES,
+    },
+    "restore_succeeded": {
+        "source": RESTORE_SOURCES,
     },
     "restore_failed": {
-        "source": PURCHASE_SOURCES,
+        "source": RESTORE_SOURCES,
         "reason": ENTITLEMENT_CONFIRMATION_FAILURE_REASONS,
     },
     "weekly_report_opened": {
         "reportStatus": WEEKLY_REPORT_STATUSES,
         "source": WEEKLY_REPORT_SOURCES,
         "accessState": WEEKLY_REPORT_ACCESS_STATES,
+        "accessReason": WEEKLY_REPORT_ACCESS_REASONS,
     },
     "weekly_report_locked_viewed": {
         "source": WEEKLY_REPORT_SOURCES,
         "accessState": frozenset({"locked"}),
+        "accessReason": WEEKLY_REPORT_ACCESS_REASONS,
     },
     "weekly_report_access_blocked": {
         "source": WEEKLY_REPORT_SOURCES,
         "accessState": frozenset({"degraded", "unknown"}),
+        "accessReason": WEEKLY_REPORT_ACCESS_REASONS,
     },
     "coach_insight_viewed": {
         "insightType": COACH_INSIGHT_TYPES,

@@ -9,6 +9,7 @@ from app.domain.users.models.user_profile import UserProfile
 from app.domain.users.services.user_profile_service import UserProfileService
 from app.schemas.user_account import (
     ActivityLevelValue,
+    AiConsentStatusValue,
     AiPersonaValue,
     AllergyValue,
     ChronicDiseaseValue,
@@ -71,7 +72,7 @@ def test_profile_patch_fields_match_contract_fixture() -> None:
     ]
 
 
-def test_onboarding_completion_builds_canonical_profile_requiring_ai_consent() -> None:
+def test_onboarding_completion_builds_ready_profile_without_ai_consent() -> None:
     request = UserOnboardingCompleteRequest(
         unitsSystem="metric",
         age="30",
@@ -99,10 +100,11 @@ def test_onboarding_completion_builds_canonical_profile_requiring_ai_consent() -
     profile = patch["profile"]
     assert profile["nutritionProfile"]["calorieTarget"] == 2250
     assert profile["aiPreferences"]["stylePersona"] == "focused_coach"
+    assert "aiConsent" not in profile
     assert profile["readiness"] == {
-        "status": "needs_ai_consent",
+        "status": "ready",
         "onboardingCompletedAt": "2026-05-05T10:00:00Z",
-        "readyAt": None,
+        "readyAt": "2026-05-05T10:00:00Z",
     }
 
 
@@ -115,6 +117,7 @@ def test_profile_patch_enums_match_contract_fixture() -> None:
         "activityLevel": list(get_args(ActivityLevelValue)),
         "goal": list(get_args(GoalValue)),
         "language": list(get_args(LanguageValue)),
+        "aiConsentStatus": list(get_args(AiConsentStatusValue)),
         "preferences": list(get_args(PreferenceValue)),
         "chronicDiseases": list(get_args(ChronicDiseaseValue)),
         "allergies": list(get_args(AllergyValue)),
@@ -187,7 +190,7 @@ def test_ai_persona_style_semantics_match_contract_fixture() -> None:
 def test_critical_field_groups_cover_backend_surfaces() -> None:
     contract = _load_fixture()
 
-    for group_name in ("language", "aiPersona", "nutrition"):
+    for group_name in ("language", "aiConsent", "aiPersona", "nutrition"):
         assert all(
             field.startswith("profile.")
             for field in contract["criticalFieldGroups"][group_name]
@@ -206,6 +209,9 @@ def test_critical_field_groups_cover_backend_surfaces() -> None:
         readiness_status="ready",
         readiness_onboarding_completed_at="2026-05-01T09:00:00Z",
         readiness_ready_at="2026-05-02T09:00:00Z",
+        ai_consent_status="granted",
+        ai_consent_granted_at="2026-05-02T09:00:00Z",
+        ai_consent_revoked_at=None,
     )
     summary = asyncio.run(_StubProfileService(profile).get_profile_summary(user_id="user-1"))
 

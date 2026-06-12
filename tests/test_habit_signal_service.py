@@ -539,16 +539,14 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
 
     assert response.behavior.loggingDays7 == 1
     assert response.behavior.kcalAdherence14 == 0.9
-    assert len(meals_collection.calls) == 3
+    assert len(meals_collection.calls) == 2
     assert meals_collection.calls[0][0] == ("deleted", "==", False)
     assert meals_collection.calls[0][1][0] == "dayKey"
     assert meals_collection.calls[1][0] == ("deleted", "==", False)
     assert meals_collection.calls[1][1][0] == "loggedAt"
-    assert meals_collection.calls[2][0] == ("deleted", "==", False)
-    assert meals_collection.calls[2][1][0] == "timestamp"
 
 
-def test_get_habit_signals_falls_back_when_index_is_missing(
+def test_get_habit_signals_surfaces_missing_index_without_degraded_query(
     mocker: MockerFixture,
 ) -> None:
     user_snapshot = mocker.Mock()
@@ -573,24 +571,21 @@ def test_get_habit_signals_falls_back_when_index_is_missing(
 
     mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
 
-    response = asyncio.run(
-        habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
+        )
+
+    assert len(meals_collection.calls) == 1
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[0][1][0] == "dayKey"
+    assert all(
+        any(field == "deleted" for field, _, _ in call)
+        for call in meals_collection.calls
     )
 
-    assert response.behavior.loggingDays7 == 1
-    assert len(meals_collection.calls) == 6
-    assert meals_collection.calls[0][0] == ("deleted", "==", False)
-    assert meals_collection.calls[1][0][0] == "dayKey"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[1])
-    assert meals_collection.calls[2][0] == ("deleted", "==", False)
-    assert meals_collection.calls[3][0][0] == "loggedAt"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[3])
-    assert meals_collection.calls[4][0] == ("deleted", "==", False)
-    assert meals_collection.calls[5][0][0] == "timestamp"
-    assert all(field != "deleted" for field, _, _ in meals_collection.calls[5])
 
-
-def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
+def test_get_habit_signals_surfaces_lazy_missing_index_without_degraded_query(
     mocker: MockerFixture,
 ) -> None:
     user_snapshot = mocker.Mock()
@@ -619,12 +614,14 @@ def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
 
     mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
 
-    response = asyncio.run(
-        habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
-    )
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
+        )
 
-    assert response.behavior.loggingDays7 == 1
-    assert len(meals_collection.calls) == 6
+    assert len(meals_collection.calls) == 1
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[0][1][0] == "dayKey"
 
 
 def test_get_habit_signals_wraps_firestore_errors(mocker: MockerFixture) -> None:

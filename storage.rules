@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.get('admin', false) == true;
+    }
+
+    match /avatars/{userId}/{filename} {
+      allow read, write: if isOwner(userId)
+        && filename.matches('^avatar\\.[0-9a-f]{64}$');
+    }
+
+    match /meals/{userId}/{filename} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /mealTemplates/{userId}/{filename} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /feedback/{userId}/{feedbackId}/{filename} {
+      allow write: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
+    }
+
+    // Denied legacy feedback surface; attachments use /feedback/{userId}/{feedbackId}/{filename}.
+    match /feedbacks/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

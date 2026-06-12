@@ -54,9 +54,8 @@ The backend should not translate these failures into `no_data` or `insufficient_
 
 Backend allowlist for Coach Insights v1 telemetry:
 
-- `coach_card_viewed`: `insightType`, `actionType`, `isPositive`
-- `coach_card_expanded`: `insightType`
-- `coach_card_cta_clicked`: `insightType`, `actionType`, `targetScreen`
-- `coach_empty_state_viewed`: `emptyReason`
+- `coach_insight_viewed`: `insightType`, `actionType`, `freshness`
+- `coach_insight_tapped`: `insightType`, `actionType`, `freshness`
 
-Do not send `title`, `body`, reason text, or user-authored content.
+Do not send `title`, `body`, `reasonCodes`, reason text, empty-state copy,
+target screen names, or user-authored content.

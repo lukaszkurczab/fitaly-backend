@@ -75,13 +75,13 @@ MAX_PHOTO_PAYLOAD_CHARS = 4_000_000
 # In-memory fallback used only by tests (patched via mocker).
 _request_buckets: dict[str, deque[float]] = {}
 _LOCAL_BUCKET_LOCK = threading.Lock()
-_local_buckets: TTLCache[str, int] = TTLCache(
+_local_buckets: TTLCache[str, int] = TTLCache[str, int](
     maxsize=10_000,
     ttl=LOCAL_BUCKET_TTL_S,
 )
 _FALLBACK_LOCK = threading.Lock()
 _FALLBACK_MAX_REQUESTS = 5
-_fallback_buckets: TTLCache[str, deque[float]] = TTLCache(
+_fallback_buckets: TTLCache[str, deque[float]] = TTLCache[str, deque[float]](
     maxsize=10_000,
     ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
 )

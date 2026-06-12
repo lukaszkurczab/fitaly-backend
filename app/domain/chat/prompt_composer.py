@@ -66,6 +66,22 @@ _CORE_STYLE_GUARDRAILS = [
     "No diagnosis, no treatment instructions, no shame, no guilt, no aggressive fitness tone.",
 ]
 
+_GROUNDING_SECTION_ORDER = (
+    "planner",
+    "scope",
+    "profileSummary",
+    "goalContext",
+    "nutritionSummary",
+    "comparison",
+    "mealLoggingQuality",
+    "appHelpContext",
+    "chatSummary",
+    "threadMemory",
+    "styleProfile",
+)
+
+_NUTRITION_TOTAL_KEYS = ("kcal", "proteinG", "fatG", "carbsG")
+
 
 class PromptComposer:
     def build_prompt_input(
@@ -87,7 +103,9 @@ class PromptComposer:
 
     def compose_messages(self, prompt_input: dict[str, Any]) -> list[dict[str, str]]:
         dto = PromptBuildInputDto.model_validate(prompt_input)
-        grounding_payload = dto.grounding.model_dump(by_alias=True, exclude_none=True)
+        grounding_payload = _sanitize_provider_grounding(
+            dto.grounding.model_dump(by_alias=True, exclude_none=True)
+        )
 
         explicit_listing_requested = self._is_explicit_listing_request(dto.user_message)
         response_shape = self._infer_response_shape(
@@ -357,3 +375,352 @@ class PromptComposer:
     def _is_explicit_listing_request(user_message: str) -> bool:
         lowered = user_message.strip().lower()
         return any(marker in lowered for marker in _EXPLICIT_LISTING_MARKERS)
+
+
+def _sanitize_provider_grounding(value: Any) -> dict[str, Any]:
+    source = _as_string_map(value)
+    if source is None:
+        return {}
+
+    sanitized: dict[str, Any] = {}
+    for section in _GROUNDING_SECTION_ORDER:
+        section_value = source.get(section)
+        if section_value is None:
+            continue
+        section_payload = _sanitize_grounding_section(section, section_value)
+        if section_payload is not None:
+            sanitized[section] = section_payload
+    return sanitized
+
+
+def _sanitize_grounding_section(section: str, value: Any) -> dict[str, Any] | None:
+    if section == "planner":
+        return _sanitize_planner(value)
+    if section == "scope":
+        return _sanitize_scope(value)
+    if section == "profileSummary":
+        return _sanitize_profile_summary(value)
+    if section == "goalContext":
+        return _sanitize_goal_context(value)
+    if section == "nutritionSummary":
+        return _sanitize_nutrition_summary(value)
+    if section == "comparison":
+        return _sanitize_comparison(value)
+    if section == "mealLoggingQuality":
+        return _sanitize_meal_logging_quality(value)
+    if section == "appHelpContext":
+        return _sanitize_app_help_context(value)
+    if section in {"chatSummary", "threadMemory"}:
+        return _sanitize_chat_summary(value)
+    if section == "styleProfile":
+        return _sanitize_style_profile(value)
+    return None
+
+
+def _sanitize_planner(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(
+        sanitized,
+        source,
+        ("taskType", "responseMode", "followUpQuestion"),
+    )
+    _copy_bool_fields(sanitized, source, ("needsFollowUp",))
+    _copy_string_list_fields(sanitized, source, ("topics", "capabilities"))
+    return sanitized
+
+
+def _sanitize_scope(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("type", "startDate", "endDate", "timezone"))
+    _copy_bool_fields(sanitized, source, ("isPartial",))
+    return sanitized
+
+
+def _sanitize_profile_summary(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(
+        sanitized,
+        source,
+        ("goal", "activityLevel", "language", "aiPersona"),
+    )
+    _copy_string_list_fields(sanitized, source, ("preferences", "allergies"))
+    style_profile = _sanitize_style_profile(source.get("styleProfile"))
+    if style_profile is not None:
+        sanitized["styleProfile"] = style_profile
+    return sanitized
+
+
+def _sanitize_style_profile(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("id", "label"))
+    return sanitized
+
+
+def _sanitize_goal_context(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("goal", "proteinStrategy"))
+    _copy_number_fields(sanitized, source, ("calorieTarget",))
+    return sanitized
+
+
+def _sanitize_nutrition_summary(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+
+    period = _sanitize_scope(source.get("period"))
+    if period is not None:
+        sanitized["period"] = period
+
+    logging_coverage = _sanitize_logging_coverage(source.get("loggingCoverage"))
+    if logging_coverage is not None:
+        sanitized["loggingCoverage"] = logging_coverage
+
+    totals = _sanitize_nutrition_totals(source.get("totals"))
+    if totals is not None:
+        sanitized["totals"] = totals
+
+    daily_breakdown = _sanitize_daily_breakdown(source.get("dailyBreakdown"))
+    if daily_breakdown is not None:
+        sanitized["dailyBreakdown"] = daily_breakdown
+
+    signals = _string_list_value(source.get("signals"))
+    if signals is not None:
+        sanitized["signals"] = signals
+
+    reliability = _sanitize_reliability(source.get("reliability"))
+    if reliability is not None:
+        sanitized["reliability"] = reliability
+
+    return sanitized
+
+
+def _sanitize_logging_coverage(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_int_fields(sanitized, source, ("daysInPeriod", "daysWithEntries", "mealCount"))
+    _copy_string_fields(sanitized, source, ("coverageLevel",))
+    return sanitized
+
+
+def _sanitize_nutrition_totals(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_number_fields(sanitized, source, _NUTRITION_TOTAL_KEYS)
+    return sanitized
+
+
+def _sanitize_daily_breakdown(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    items: list[dict[str, Any]] = []
+    for item in cast(list[object], value):
+        source = _as_string_map(item)
+        if source is None:
+            continue
+        sanitized: dict[str, Any] = {}
+        _copy_string_fields(sanitized, source, ("date",))
+        _copy_int_fields(sanitized, source, ("mealCount",))
+        _copy_number_fields(sanitized, source, _NUTRITION_TOTAL_KEYS)
+        items.append(sanitized)
+    return items
+
+
+def _sanitize_reliability(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("summaryConfidence", "reason"))
+    return sanitized
+
+
+def _sanitize_meal_logging_quality(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("coverageLevel",))
+    _copy_int_fields(sanitized, source, ("daysWithEntries", "missingDays"))
+    _copy_bool_fields(sanitized, source, ("canSupportTrendAnalysis",))
+    return sanitized
+
+
+def _sanitize_app_help_context(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("topic",))
+    _copy_string_list_fields(sanitized, source, ("answerFacts",))
+    return sanitized
+
+
+def _sanitize_chat_summary(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_string_fields(sanitized, source, ("summary", "source"))
+    _copy_string_list_fields(sanitized, source, ("resolvedFacts",))
+    _copy_bool_fields(sanitized, source, ("hasSummary",))
+    last_turns = _sanitize_last_turns(source.get("lastTurns"))
+    if last_turns is not None:
+        sanitized["lastTurns"] = last_turns
+    return sanitized
+
+
+def _sanitize_last_turns(value: Any) -> list[dict[str, str]] | None:
+    if not isinstance(value, list):
+        return None
+    turns: list[dict[str, str]] = []
+    for item in cast(list[object], value):
+        source = _as_string_map(item)
+        if source is None:
+            continue
+        turn: dict[str, str] = {}
+        role = source.get("role")
+        content = source.get("content")
+        if isinstance(role, str):
+            turn["role"] = role
+        if isinstance(content, str):
+            turn["content"] = content
+        turns.append(turn)
+    return turns
+
+
+def _sanitize_comparison(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+
+    current_period = _sanitize_nutrition_summary(source.get("currentPeriod"))
+    if current_period is not None:
+        sanitized["currentPeriod"] = current_period
+
+    previous_period = _sanitize_nutrition_summary(source.get("previousPeriod"))
+    if previous_period is not None:
+        sanitized["previousPeriod"] = previous_period
+
+    coverage_guard = _sanitize_coverage_guard(source.get("coverageGuard"))
+    if coverage_guard is not None:
+        sanitized["coverageGuard"] = coverage_guard
+
+    delta = _sanitize_delta(source.get("delta"))
+    if delta is not None:
+        sanitized["delta"] = delta
+
+    return sanitized
+
+
+def _sanitize_coverage_guard(value: Any) -> dict[str, Any] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    _copy_bool_fields(sanitized, source, ("comparable",))
+    _copy_string_fields(sanitized, source, ("reason",))
+    return sanitized
+
+
+def _sanitize_delta(value: Any) -> dict[str, dict[str, float | None]] | None:
+    source = _as_string_map(value)
+    if source is None:
+        return None
+    sanitized: dict[str, dict[str, float | None]] = {}
+    for metric_name, metric_value in source.items():
+        metric_source = _as_string_map(metric_value)
+        if metric_source is None:
+            continue
+        delta_value: dict[str, float | None] = {}
+        absolute = metric_source.get("absolute")
+        if isinstance(absolute, int | float) and not isinstance(absolute, bool):
+            delta_value["absolute"] = float(absolute)
+        percentage = metric_source.get("percentage")
+        if percentage is None or (
+            isinstance(percentage, int | float) and not isinstance(percentage, bool)
+        ):
+            delta_value["percentage"] = (
+                None if percentage is None else float(percentage)
+            )
+        sanitized[metric_name] = delta_value
+    return sanitized
+
+
+def _as_string_map(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, Any], value)
+    return {key: item for key, item in raw_map.items() if isinstance(key, str)}
+
+
+def _copy_string_fields(
+    target: dict[str, Any], source: dict[str, Any], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        value = source.get(field)
+        if isinstance(value, str):
+            target[field] = value
+
+
+def _copy_string_list_fields(
+    target: dict[str, Any], source: dict[str, Any], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        items = _string_list_value(source.get(field))
+        if items is not None:
+            target[field] = items
+
+
+def _string_list_value(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    return [item for item in cast(list[object], value) if isinstance(item, str)]
+
+
+def _copy_bool_fields(
+    target: dict[str, Any], source: dict[str, Any], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        value = source.get(field)
+        if isinstance(value, bool):
+            target[field] = value
+
+
+def _copy_int_fields(
+    target: dict[str, Any], source: dict[str, Any], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        value = source.get(field)
+        if isinstance(value, int) and not isinstance(value, bool):
+            target[field] = value
+
+
+def _copy_number_fields(
+    target: dict[str, Any], source: dict[str, Any], fields: tuple[str, ...]
+) -> None:
+    for field in fields:
+        value = source.get(field)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            target[field] = value

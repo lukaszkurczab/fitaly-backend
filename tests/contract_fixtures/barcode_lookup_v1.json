@@ -1,0 +1,54 @@
+{
+  "contract": "barcode_lookup_v1",
+  "route": {
+    "method": "GET",
+    "path": "/users/me/barcode/lookup",
+    "query": {
+      "barcode": "5901234123457"
+    }
+  },
+  "found": {
+    "kind": "found",
+    "name": "Greek yogurt",
+    "ingredient": {
+      "id": "5901234123457",
+      "name": "Greek yogurt",
+      "amount": 100,
+      "unit": "g",
+      "kcal": 120,
+      "protein": 12,
+      "fat": 4,
+      "carbs": 8
+    }
+  },
+  "errors": {
+    "invalid": {
+      "status": 400,
+      "detail": {
+        "code": "BARCODE_INVALID",
+        "message": "Barcode must be 8, 12, or 13 digits"
+      }
+    },
+    "not_found": {
+      "status": 404,
+      "detail": {
+        "code": "BARCODE_NOT_FOUND",
+        "message": "Barcode product not found"
+      }
+    },
+    "timeout": {
+      "status": 504,
+      "detail": {
+        "code": "BARCODE_PROVIDER_TIMEOUT",
+        "message": "Barcode provider timed out"
+      }
+    },
+    "provider_error": {
+      "status": 502,
+      "detail": {
+        "code": "BARCODE_PROVIDER_FAILURE",
+        "message": "Barcode provider unavailable"
+      }
+    }
+  }
+}

@@ -51,28 +51,16 @@ A task is considered a refactor if it includes any of:
 
 - "refactor", "architecture", "extract", "move file", "decouple", "service layer", "db layer", "shared logic", "boundary"
 
-### Preflight (default)
+### Optional MCP review support
 
-Before editing code, run:
-
-1. `mcp__ollama_backend_sidecar__propose_backend_approaches`
-   - Input: task description + constraints from this file.
-   - Output: 2–3 approaches + recommended approach.
-
-2. `mcp__ollama_backend_sidecar__backend_risk_check`
-   - Input: chosen approach + known hotspots.
-   - Output: risks + regression vectors + test checklist + rollback plan.
-
-Skip preflight only if the user explicitly says **"skip preflight"**.
-
-### Hard requirement (tool-before-edit)
-
-For refactors/boundary work: **do not edit any files** until both MCP tools have been called:
+Before higher-risk refactors or boundary work, focused MCP review tools may be
+used when they are available and likely to improve the plan. These tools are
+advisory only; they are not required before editing, and unavailable tools do
+not block work that is otherwise scoped, inspected, and verifiable from repo
+evidence.
 
 - `mcp__ollama_backend_sidecar__propose_backend_approaches`
 - `mcp__ollama_backend_sidecar__backend_risk_check`
-
-If MCP tools are unavailable or time out: **stop and report**; do not proceed with edits.
 
 ### Execution
 
@@ -228,7 +216,8 @@ When a change touches any of the surfaces below, **both repos must be updated**:
 
 # Firebase
 
-Durign work with firebase check firebaseRules.md from frontend repo and if it is necessery suggerst changes
+During work with Firebase, check the canonical deployable rules in
+`firestore.rules` and `storage.rules`, and suggest changes when necessary.
 
 # After
 

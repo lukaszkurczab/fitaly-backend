@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from app.domain.users.models.user_profile import ReadinessStatus, UserProfile
+from app.domain.users.models.user_profile import (
+    AiConsentStatus,
+    ReadinessStatus,
+    UserProfile,
+)
 from app.services import user_account_service
 
 _ACTIVITY_MULTIPLIERS = {
@@ -117,6 +121,23 @@ def _normalize_readiness(raw: object) -> tuple[ReadinessStatus, str | None, str 
     )
 
 
+def _normalize_ai_consent(raw: object) -> tuple[AiConsentStatus, str | None, str | None]:
+    if not isinstance(raw, dict):
+        return "not_granted", None, None
+    payload = cast(dict[str, object], raw)
+    status_raw = payload.get("status")
+    status: AiConsentStatus
+    if status_raw == "granted" or status_raw == "revoked":
+        status = cast(AiConsentStatus, status_raw)
+    else:
+        status = "not_granted"
+    granted_at_raw = payload.get("grantedAt")
+    revoked_at_raw = payload.get("revokedAt")
+    granted_at = str(granted_at_raw).strip() if granted_at_raw is not None else None
+    revoked_at = str(revoked_at_raw).strip() if revoked_at_raw is not None else None
+    return status, granted_at or None, revoked_at or None
+
+
 def _calculate_calorie_target(payload: dict[str, Any]) -> int:
     weight_kg = _normalize_int(payload.get("weight"))
     height_cm = _normalize_int(payload.get("height"))
@@ -179,19 +200,12 @@ class UserProfileService:
             if isinstance(ai_preferences_raw, dict)
             else {}
         )
-        consents_raw = profile.get("consents")
-        consents = (
-            cast(dict[str, Any], consents_raw) if isinstance(consents_raw, dict) else {}
-        )
         ai_persona = _normalize_ai_persona(ai_preferences.get("stylePersona"))
         readiness_status, onboarding_completed_at, ready_at = _normalize_readiness(
             profile.get("readiness")
         )
-        ai_health_data_consent_at_raw = consents.get("aiHealthDataConsentAt")
-        ai_health_data_consent_at = (
-            str(ai_health_data_consent_at_raw).strip()
-            if ai_health_data_consent_at_raw is not None
-            else None
+        ai_consent_status, ai_consent_granted_at, ai_consent_revoked_at = (
+            _normalize_ai_consent(profile.get("aiConsent"))
         )
         return UserProfile(
             user_id=user_id,
@@ -204,7 +218,9 @@ class UserProfileService:
             allergies=_normalize_list(nutrition.get("allergies")),
             language=_normalize_language(profile.get("language")),
             ai_persona=ai_persona,
-            ai_health_data_consent_at=ai_health_data_consent_at or None,
+            ai_consent_status=ai_consent_status,
+            ai_consent_granted_at=ai_consent_granted_at,
+            ai_consent_revoked_at=ai_consent_revoked_at,
             style_profile=_style_profile(ai_persona),
             readiness_status=readiness_status,
             readiness_onboarding_completed_at=onboarding_completed_at,
@@ -241,9 +257,9 @@ class UserProfileService:
                     "stylePersona": _normalize_ai_persona(payload.get("aiPersona")),
                 },
                 "readiness": {
-                    "status": "needs_ai_consent",
+                    "status": "ready",
                     "onboardingCompletedAt": completed_at,
-                    "readyAt": None,
+                    "readyAt": completed_at,
                 },
             },
         }

@@ -243,6 +243,77 @@ def test_sync_tier_keeps_current_free_cycle_when_no_entitlement(
     expiration.assert_not_called()
 
 
+def test_sync_tier_does_not_activate_unknown_entitlement(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
+        return_value={
+            "subscriber": {
+                "entitlements": {
+                    "pro": {
+                        "purchase_date": "2026-04-14T08:00:00Z",
+                        "expires_date": "2026-05-14T08:00:00Z",
+                    }
+                }
+            }
+        },
+    )
+    current_free_status = _status(
+        tier="free",
+        balance=95,
+        allocation=100,
+        period_start_at=datetime(2026, 5, 23, tzinfo=timezone.utc),
+        period_end_at=datetime(2026, 6, 23, tzinfo=timezone.utc),
+    )
+    mocker.patch(
+        "app.api.routes.ai_credits_sync.ai_credits_service.get_credits_status",
+        return_value=current_free_status,
+    )
+    activation = mocker.patch(
+        "app.api.routes.ai_credits_sync.ai_credits_service.apply_premium_activation"
+    )
+    expiration = mocker.patch(
+        "app.api.routes.ai_credits_sync.ai_credits_service.apply_premium_expiration"
+    )
+
+    response = client.post("/api/v1/ai/credits/sync-tier", headers=auth_headers("user-1"))
+
+    assert response.status_code == 200
+    assert response.json()["tier"] == "free"
+    assert response.json()["syncStatus"] == {
+        "entitlementStatus": "confirmed_inactive",
+        "syncAction": "kept_current",
+        "entitlementId": None,
+    }
+    activation.assert_not_called()
+    expiration.assert_not_called()
+
+
+def test_sync_tier_returns_503_when_premium_entitlement_id_is_missing(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch.object(settings, "REVENUECAT_PREMIUM_ENTITLEMENT_ID", "")
+    fetch_subscriber = mocker.patch(
+        "app.api.routes.ai_credits_sync._fetch_revenuecat_subscriber",
+        return_value={"subscriber": {"entitlements": {}}},
+    )
+    expiration = mocker.patch(
+        "app.api.routes.ai_credits_sync.ai_credits_service.apply_premium_expiration"
+    )
+
+    response = client.post("/api/v1/ai/credits/sync-tier", headers=auth_headers("user-1"))
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "RevenueCat premium entitlement ID is not configured"
+    }
+    fetch_subscriber.assert_not_called()
+    expiration.assert_not_called()
+
+
 def test_sync_tier_returns_503_without_downgrade_when_revenuecat_is_unavailable(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,

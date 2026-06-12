@@ -156,7 +156,7 @@ async def test_get_app_help_context_normalizes_chat_topic() -> None:
     assert any("/api/v2/ai/chat/runs" in item for item in result["answerFacts"])
 
 
-async def test_consent_service_enforces_ai_health_data_consent() -> None:
+async def test_consent_service_enforces_ai_consent() -> None:
     service_without_consent = ConsentService(
         _FakeConsentProfileService(
             UserProfile(
@@ -165,9 +165,9 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
             )
         )  # type: ignore[arg-type]
     )
-    assert await service_without_consent.has_ai_health_data_consent(user_id="user-1") is False
+    assert await service_without_consent.has_ai_consent(user_id="user-1") is False
     with pytest.raises(ConsentRequiredError):
-        await service_without_consent.ensure_ai_health_data_consent(user_id="user-1")
+        await service_without_consent.ensure_ai_consent(user_id="user-1")
 
     service_with_profile_only = ConsentService(
         _FakeConsentProfileService(
@@ -178,20 +178,22 @@ async def test_consent_service_enforces_ai_health_data_consent() -> None:
             )
         )  # type: ignore[arg-type]
     )
-    assert await service_with_profile_only.has_ai_health_data_consent(user_id="user-1") is False
+    assert await service_with_profile_only.has_ai_consent(user_id="user-1") is False
 
     service_with_consent = ConsentService(
         _FakeConsentProfileService(
             UserProfile(
                 user_id="user-1",
-                readiness_status="ready",
+                readiness_status="needs_ai_consent",
                 readiness_onboarding_completed_at="2026-04-18T10:00:00Z",
                 readiness_ready_at="2026-04-19T10:00:00Z",
-                ai_health_data_consent_at="2026-04-19T10:00:00Z",
+                ai_consent_status="granted",
+                ai_consent_granted_at="2026-04-19T10:00:00Z",
+                ai_consent_revoked_at=None,
             )
         )  # type: ignore[arg-type]
     )
-    await service_with_consent.ensure_ai_health_data_consent(user_id="user-1")
+    await service_with_consent.ensure_ai_consent(user_id="user-1")
 
 
 async def test_user_profile_service_reuses_user_account_profile_data(
@@ -212,8 +214,10 @@ async def test_user_profile_service_reuses_user_account_profile_data(
                 "aiPreferences": {
                     "stylePersona": "focused_coach",
                 },
-                "consents": {
-                    "aiHealthDataConsentAt": "2026-04-10T11:00:00Z",
+                "aiConsent": {
+                    "status": "granted",
+                    "grantedAt": "2026-04-10T11:00:00Z",
+                    "revokedAt": None,
                 },
                 "readiness": {
                     "status": "ready",
@@ -237,6 +241,7 @@ async def test_user_profile_service_reuses_user_account_profile_data(
     assert profile.style_profile == {"id": "focused_coach", "label": "Focused Coach"}
     assert profile.readiness_status == "ready"
     assert profile.readiness_ready_at == "2026-04-10T11:00:00Z"
+    assert profile.has_active_ai_consent is True
 
     goal_context = await service.get_goal_context(user_id="user-1")
     assert goal_context["proteinStrategy"] == "higher_protein_with_calorie_surplus"

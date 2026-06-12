@@ -3,6 +3,7 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from app.services.meal_service import MealMutationDedupeConflictError
 from tests.types import AuthHeaders
 
 client = TestClient(app)
@@ -76,6 +77,42 @@ def test_get_meals_history_rejects_invalid_day_key(
     list_history.assert_not_called()
 
 
+def test_get_meals_history_rejects_invalid_day_key_range(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    list_history = mocker.patch("app.api.routes.meals.meal_service.list_history")
+
+    response = client.get(
+        "/api/v1/users/me/meals/history?dayKeyStart=2026-03-31&dayKeyEnd=2026-03-01",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid dayKey range"}
+    list_history.assert_not_called()
+
+
+def test_get_meals_history_rejects_legacy_timestamp_range_params(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    list_history = mocker.patch("app.api.routes.meals.meal_service.list_history")
+
+    response = client.get(
+        "/api/v1/users/me/meals/history"
+        "?loggedAtStart=2026-03-01T00:00:00.000Z"
+        "&loggedAtEnd=2026-03-31T23:59:59.999Z",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Use dayKeyStart/dayKeyEnd for meal history ranges"
+    }
+    list_history.assert_not_called()
+
+
 def test_get_meal_changes_returns_backend_payload(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
@@ -129,6 +166,7 @@ def test_get_meal_photo_url_returns_backend_payload(
         return_value={
             "mealId": "meal-1",
             "imageId": "image-1",
+            "storagePath": "meals/user-1/image-1.jpg",
             "photoUrl": "https://cdn/meal.jpg",
         },
     )
@@ -142,6 +180,7 @@ def test_get_meal_photo_url_returns_backend_payload(
     assert response.json() == {
         "mealId": "meal-1",
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
     }
     resolve_photo.assert_called_once_with(
@@ -159,6 +198,7 @@ def test_post_meal_photo_upload_returns_backend_payload(
         "app.api.routes.meals.meal_service.upload_photo",
         return_value={
             "imageId": "image-1",
+            "storagePath": "meals/user-1/image-1.jpg",
             "photoUrl": "https://cdn/meal.jpg",
         },
     )
@@ -173,6 +213,7 @@ def test_post_meal_photo_upload_returns_backend_payload(
     assert response.json() == {
         "mealId": None,
         "imageId": "image-1",
+        "storagePath": "meals/user-1/image-1.jpg",
         "photoUrl": "https://cdn/meal.jpg",
     }
     upload_photo.assert_called_once()
@@ -206,6 +247,7 @@ def test_post_meal_upsert_persists_via_backend_service(
     response = client.post(
         "/api/v1/users/me/meals",
         json={
+            "clientMutationId": "mutation-api-upsert",
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "dayKey": "2026-03-03",
@@ -255,6 +297,7 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
     response = client.post(
         "/api/v1/users/me/meals",
         json={
+            "clientMutationId": "mutation-api-upsert-ai",
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "dayKey": "2026-03-03",
@@ -312,8 +355,57 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "deleted": False,
             "totals": None,
             "userUid": None,
+            "clientMutationId": "mutation-api-upsert-ai",
         },
     )
+
+
+def test_post_meal_upsert_rejects_missing_client_mutation_id(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_meal = mocker.patch("app.api.routes.meals.meal_service.upsert_meal")
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    upsert_meal.assert_not_called()
+
+
+def test_post_meal_upsert_returns_409_for_client_mutation_conflict(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.meals.meal_service.upsert_meal",
+        side_effect=MealMutationDedupeConflictError("clientMutationId conflict"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-conflict",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "clientMutationId conflict"}
 
 
 def test_post_meal_upsert_rejects_missing_day_key(
@@ -322,6 +414,7 @@ def test_post_meal_upsert_rejects_missing_day_key(
     response = client.post(
         "/api/v1/users/me/meals",
         json={
+            "clientMutationId": "mutation-missing-day-key",
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "type": "lunch",
@@ -340,6 +433,7 @@ def test_post_meal_upsert_rejects_invalid_day_key_with_400(
     response = client.post(
         "/api/v1/users/me/meals",
         json={
+            "clientMutationId": "mutation-invalid-day-key",
             "mealId": "meal-1",
             "timestamp": "2026-03-03T12:00:00.000Z",
             "dayKey": "2026/03/03",
@@ -362,12 +456,16 @@ def test_post_meal_delete_uses_backend_service(
         return_value={
             "id": "meal-1",
             "updatedAt": "2026-03-03T12:00:00.000Z",
+            "deleted": True,
         },
     )
 
     response = client.post(
         "/api/v1/users/me/meals/meal-1/delete",
-        json={"updatedAt": "2026-03-03T12:00:00.000Z"},
+        json={
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "clientMutationId": "mutation-api-delete",
+        },
         headers=auth_headers("user-1"),
     )
 
@@ -381,7 +479,60 @@ def test_post_meal_delete_uses_backend_service(
         "user-1",
         "meal-1",
         updated_at="2026-03-03T12:00:00.000Z",
+        client_mutation_id="mutation-api-delete",
     )
+
+
+def test_post_meal_delete_reports_preserved_newer_remote_state(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mark_deleted = mocker.patch(
+        "app.api.routes.meals.meal_service.mark_deleted",
+        return_value={
+            "id": "meal-1",
+            "updatedAt": "2026-03-03T13:00:00.000Z",
+            "deleted": False,
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/meals/meal-1/delete",
+        json={
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "clientMutationId": "mutation-api-delete-stale",
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mealId": "meal-1",
+        "updatedAt": "2026-03-03T13:00:00.000Z",
+        "deleted": False,
+    }
+    mark_deleted.assert_called_once_with(
+        "user-1",
+        "meal-1",
+        updated_at="2026-03-03T12:00:00.000Z",
+        client_mutation_id="mutation-api-delete-stale",
+    )
+
+
+def test_post_meal_delete_rejects_missing_client_mutation_id(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mark_deleted = mocker.patch("app.api.routes.meals.meal_service.mark_deleted")
+
+    response = client.post(
+        "/api/v1/users/me/meals/meal-1/delete",
+        json={"updatedAt": "2026-03-03T12:00:00.000Z"},
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    mark_deleted.assert_not_called()
 
 
 def test_get_meals_history_returns_500_for_firestore_errors(
