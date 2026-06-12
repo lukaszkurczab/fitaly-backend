@@ -6,7 +6,7 @@ from unittest.mock import ANY
 
 from fastapi import UploadFile
 import pytest
-from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import GoogleAPICallError, NotFound
 from pytest_mock import MockerFixture
 from starlette.datastructures import Headers
 
@@ -184,6 +184,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     meal_mutation_dedupe_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
+    reminder_daily_stats_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
     chat_threads_collection_ref = mocker.Mock()
     ai_runs_collection_ref = mocker.Mock()
@@ -200,6 +201,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     meal_mutation_dedupe_doc = mocker.Mock()
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
+    reminder_daily_stats_doc = mocker.Mock()
     billing_doc = mocker.Mock()
     billing_doc.id = "main"
     main_billing_ref = mocker.Mock()
@@ -253,6 +255,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return badges_collection_ref
         if name == "streak":
             return streak_collection_ref
+        if name == user_account_service.DAILY_STATS_SUBCOLLECTION:
+            return reminder_daily_stats_collection_ref
         if name == "billing":
             return billing_collection_ref
         if name == "chat_threads":
@@ -270,6 +274,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     meal_mutation_dedupe_collection_ref.stream.return_value = [meal_mutation_dedupe_doc]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
+    reminder_daily_stats_collection_ref.stream.return_value = [reminder_daily_stats_doc]
     billing_collection_ref.stream.return_value = [billing_doc]
     billing_collection_ref.document.return_value = main_billing_ref
     main_billing_ref.get.return_value = _build_snapshot(mocker, exists=True)
@@ -340,6 +345,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert meal_mutation_dedupe_doc.reference in deleted_refs
     assert badge_doc.reference in deleted_refs
     assert streak_doc.reference in deleted_refs
+    assert reminder_daily_stats_doc.reference in deleted_refs
     assert ai_credit_doc.reference in deleted_refs
     assert ai_credit_transaction_doc.reference in deleted_refs
     assert ai_credit_idempotency_doc.reference in deleted_refs
@@ -495,6 +501,121 @@ def test_delete_feedback_attachments_does_not_delete_duplicate_path_twice(
 
     bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/feedback.jpg")
     blob.delete.assert_called_once_with()
+
+
+def test_delete_feedback_attachments_ignores_missing_blob_and_continues(
+    mocker: MockerFixture,
+) -> None:
+    feedback_doc_1 = mocker.Mock()
+    feedback_doc_1.id = "feedback-1"
+    feedback_doc_1.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+        },
+    }
+    feedback_doc_2 = mocker.Mock()
+    feedback_doc_2.id = "feedback-2"
+    feedback_doc_2.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-2/feedback.jpg",
+        },
+    }
+    bucket = mocker.Mock()
+    missing_blob = mocker.Mock()
+    missing_blob.delete.side_effect = NotFound("missing")
+    existing_blob = mocker.Mock()
+    bucket.blob.side_effect = [missing_blob, existing_blob]
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    user_account_service._delete_feedback_attachments(
+        feedback_documents=[feedback_doc_1, feedback_doc_2],
+        user_id="user-1",
+    )
+
+    assert bucket.blob.call_args_list == [
+        mocker.call("feedback/user-1/feedback-1/feedback.jpg"),
+        mocker.call("feedback/user-1/feedback-2/feedback.jpg"),
+    ]
+    missing_blob.delete.assert_called_once_with()
+    existing_blob.delete.assert_called_once_with()
+
+
+def test_delete_feedback_attachments_raises_for_non_not_found_delete_error(
+    mocker: MockerFixture,
+) -> None:
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+        },
+    }
+    bucket = mocker.Mock()
+    blob = mocker.Mock()
+    blob.delete.side_effect = RuntimeError("storage unavailable")
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    with pytest.raises(
+        FirestoreServiceError,
+        match="Failed to delete feedback attachment.",
+    ):
+        user_account_service._delete_feedback_attachments(
+            feedback_documents=[feedback_doc],
+            user_id="user-1",
+        )
+
+    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/feedback.jpg")
+    blob.delete.assert_called_once_with()
+
+
+def test_delete_account_data_aborts_when_feedback_attachment_delete_fails(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, usernames_collection_ref, user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    feedback_collection_ref = mocker.Mock()
+    feedback_doc = mocker.Mock()
+    feedback_doc.id = "feedback-1"
+    feedback_doc.to_dict.return_value = {
+        "attachmentRef": {
+            "storagePath": "feedback/user-1/feedback-1/feedback.jpg",
+        },
+    }
+    feedback_collection_ref.stream.return_value = [feedback_doc]
+
+    def user_collection_side_effect(name: str):
+        if name == "feedback":
+            return feedback_collection_ref
+        raise AssertionError(f"Unexpected subcollection after attachment failure: {name}")
+
+    user_ref.collection.side_effect = user_collection_side_effect
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"username": "neo"},
+    )
+    bucket = mocker.Mock()
+    blob = mocker.Mock()
+    blob.delete.side_effect = RuntimeError("storage delete failed")
+    bucket.blob.return_value = blob
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    with pytest.raises(
+        FirestoreServiceError,
+        match="Failed to delete feedback attachment.",
+    ):
+        asyncio.run(user_account_service.delete_account_data("user-1"))
+
+    bucket.blob.assert_called_once_with("feedback/user-1/feedback-1/feedback.jpg")
+    blob.delete.assert_called_once_with()
+    client.batch.assert_not_called()
+    usernames_collection_ref.document.assert_not_called()
+    username_ref.delete.assert_not_called()
+    feedback_doc.reference.delete.assert_not_called()
+    user_ref.delete.assert_not_called()
 
 
 def test_delete_billing_data_deletes_main_children_when_parent_doc_is_missing(

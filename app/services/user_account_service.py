@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
-from google.api_core.exceptions import GoogleAPICallError, RetryError
+from google.api_core.exceptions import GoogleAPICallError, NotFound, RetryError
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -61,6 +61,7 @@ DELETE_SUBCOLLECTIONS = (
     MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
+    DAILY_STATS_SUBCOLLECTION,
 )
 TELEMETRY_EVENTS_COLLECTION = telemetry_service.COLLECTION_NAME
 BATCH_DELETE_LIMIT = 500
@@ -1228,11 +1229,19 @@ def _delete_feedback_attachments(
         ):
             try:
                 bucket.blob(storage_path).delete()
-            except Exception:
+            except NotFound:
+                continue
+            except Exception as exc:
                 logger.exception(
                     "Failed to delete feedback attachment.",
-                    extra={"feedback_id": document.id},
+                    extra={
+                        "feedback_id": document.id,
+                        "storage_path": storage_path,
+                    },
                 )
+                raise FirestoreServiceError(
+                    "Failed to delete feedback attachment."
+                ) from exc
 
 
 def _delete_billing_data(

@@ -749,9 +749,17 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     anonymous_event_ref = client.collection(telemetry_service.COLLECTION_NAME).document(
         f"telemetry-anon-delete-{run_id}"
     )
+    current_reminder_stats_ref = current_user_ref.collection(
+        DAILY_STATS_SUBCOLLECTION
+    ).document(f"2026-03-03-{run_id}")
+    other_reminder_stats_ref = other_user_ref.collection(
+        DAILY_STATS_SUBCOLLECTION
+    ).document(f"2026-03-03-{run_id}")
     seeded_refs: list[firestore.DocumentReference] = [
         current_user_ref,
         other_user_ref,
+        current_reminder_stats_ref,
+        other_reminder_stats_ref,
         current_event_ref,
         other_event_ref,
         anonymous_event_ref,
@@ -765,6 +773,24 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
 
     current_user_ref.set({"uid": current_user_id, "username": f"current-{run_id}"})
     other_user_ref.set({"uid": other_user_id, "username": f"other-{run_id}"})
+    current_reminder_stats_ref.set(
+        {
+            "sendCount": 2,
+            "emittedDecisionKeys": [
+                f"2026-03-03:breakfast:current-reminder-delete-{run_id}"
+            ],
+            "ownerMarker": f"current-reminder-daily-stats-delete-{run_id}",
+        }
+    )
+    other_reminder_stats_ref.set(
+        {
+            "sendCount": 9,
+            "emittedDecisionKeys": [
+                f"2026-03-03:breakfast:other-reminder-delete-{run_id}"
+            ],
+            "ownerMarker": f"other-reminder-daily-stats-delete-{run_id}",
+        }
+    )
     current_event_ref.set(
         {
             "eventId": current_event_ref.id,
@@ -795,6 +821,13 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     try:
         await user_account_service.delete_account_data(current_user_id)
 
+        assert current_reminder_stats_ref.get().exists is False
+        other_reminder_snapshot = other_reminder_stats_ref.get()
+        assert other_reminder_snapshot.exists is True
+        other_reminder_payload = other_reminder_snapshot.to_dict() or {}
+        assert other_reminder_payload["ownerMarker"] == (
+            f"other-reminder-daily-stats-delete-{run_id}"
+        )
         assert current_event_ref.get().exists is False
         assert other_event_ref.get().exists is True
         anonymous_snapshot = anonymous_event_ref.get()
