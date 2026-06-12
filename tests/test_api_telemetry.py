@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 from fastapi import FastAPI
@@ -275,6 +276,8 @@ def test_telemetry_batch_accepts_anonymous_event_without_auth(
 ) -> None:
     reset_telemetry_state()
     setup_telemetry_enabled(mocker, enabled=True)
+    ingest_now = datetime(2026, 3, 18, 12, 30, tzinfo=timezone.utc)
+    mocker.patch("app.services.telemetry_service.utc_now", return_value=ingest_now)
     firestore_client = FakeFirestoreClient()
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
     client = create_test_client()
@@ -292,6 +295,10 @@ def test_telemetry_batch_accepts_anonymous_event_without_auth(
     assert stored_event["anonymousId"] == "anon-1"
     assert stored_event["actorType"] == "anonymous"
     assert stored_event["actorAuthValidation"] == "anonymous"
+    assert stored_event["ingestedAt"] == "2026-03-18T12:30:00Z"
+    assert stored_event["expiresAt"] == ingest_now + timedelta(
+        days=telemetry_service.TELEMETRY_RETENTION_DAYS
+    )
 
 
 def test_telemetry_batch_rejects_mismatched_authenticated_actor(

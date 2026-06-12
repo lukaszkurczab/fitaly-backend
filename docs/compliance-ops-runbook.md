@@ -17,13 +17,31 @@ This runbook is implementation-focused and complements external legal documents 
 - Feedback and attachments
 - Telemetry events (if `TELEMETRY_ENABLED=true`)
 
+## Telemetry Account Boundary
+
+- User-scoped telemetry is account data when an event stores `userHash`.
+  Export and delete query `telemetry_events` by `userHash`, derived from the
+  authenticated Firebase uid. Client-supplied uid values are not accepted as the
+  export/delete selector.
+- Anonymous telemetry is outside account export/delete only when it has no
+  `userId` and no `userHash`. Anonymous events may keep `anonymousId` for
+  operational dedupe/rollup, but they are not linked to an account boundary.
+- Anonymous telemetry must be bounded by explicit backend retention. Current
+  ingest writes `expiresAt = ingestedAt + 30 days` through
+  `TELEMETRY_RETENTION_DAYS`.
+- Mobile clears the local telemetry buffer and anonymous identity on logout,
+  account switch, account deletion, and session loss through
+  `resetUserRuntime(...) -> resetTelemetryClientRuntime()`.
+
 ## Data Export Procedure
 
 1. User triggers data export from authenticated session.
 2. Backend endpoint:
    - `GET /api/v1/users/me/export`
 3. Backend returns export payload bound to token identity (never trust client-supplied `userId`).
-4. If export fails, capture `X-Request-ID` and investigate backend logs + Sentry.
+4. Telemetry included in the export is limited to events matching the active
+   user's `userHash`; anonymous telemetry is not mixed into the account export.
+5. If export fails, capture `X-Request-ID` and investigate backend logs + Sentry.
 
 ## Data Deletion Procedure
 
@@ -31,8 +49,12 @@ This runbook is implementation-focused and complements external legal documents 
 2. Backend endpoint:
    - `POST /api/v1/users/me/delete`
 3. Backend removes user-owned records from primary collections/subcollections,
-   user-filtered AI run telemetry, and user-owned storage prefixes.
-4. If deletion fails, retry once and escalate in Discord `launch-ops`.
+   user-filtered AI run telemetry, `userHash`-scoped telemetry events, and
+   user-owned storage prefixes.
+4. Anonymous telemetry is not deleted by account delete because it has no
+   `userId/userHash`; it remains subject to the explicit 30-day `expiresAt`
+   retention boundary.
+5. If deletion fails, retry once and escalate in Discord `launch-ops`.
 
 ## Retention & Review Cadence
 

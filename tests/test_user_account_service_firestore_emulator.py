@@ -26,7 +26,7 @@ def _emulator_client() -> firestore.Client:
     return cast(firestore.Client, client_class(project=project_id, database=database_id))
 
 
-async def test_account_export_and_delete_scope_telemetry_events_by_user_hash(
+async def test_account_export_and_delete_scope_only_user_hash_telemetry_events(
     mocker: MockerFixture,
 ) -> None:
     client = _emulator_client()
@@ -69,6 +69,10 @@ async def test_account_export_and_delete_scope_telemetry_events_by_user_hash(
         {
             "eventId": anonymous_event_ref.id,
             "name": "meal_logged",
+            "anonymousId": f"anon-{run_id}",
+            "userId": None,
+            "userHash": None,
+            "expiresAt": "2026-04-17T12:00:00Z",
         }
     )
 
@@ -100,7 +104,13 @@ async def test_account_export_and_delete_scope_telemetry_events_by_user_hash(
 
         assert current_event_ref.get().exists is False
         assert other_event_ref.get().exists is True
-        assert anonymous_event_ref.get().exists is True
+        anonymous_snapshot = anonymous_event_ref.get()
+        assert anonymous_snapshot.exists is True
+        anonymous_payload = anonymous_snapshot.to_dict() or {}
+        assert anonymous_payload["userId"] is None
+        assert anonymous_payload["userHash"] is None
+        assert anonymous_payload["anonymousId"] == f"anon-{run_id}"
+        assert anonymous_payload["expiresAt"] == "2026-04-17T12:00:00Z"
     finally:
         current_event_ref.delete()
         other_event_ref.delete()

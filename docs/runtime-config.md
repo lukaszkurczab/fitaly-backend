@@ -19,6 +19,11 @@ Notes:
 - Smoke should use separate or scoped Firebase, OpenAI, RevenueCat, and Sentry secrets where possible. The contract requires launch-like behavior, not shared secrets.
 - Local/dev fallbacks must not be used as production readiness evidence.
 - `AI_MEAL_ANALYSIS_ENABLED=false` disables v1 Add Meal photo/text analysis with a structured `503` before gateway, credit, provider, or gateway-log work. `AI_GATEWAY_ENABLED=false` only bypasses gateway enforcement/logging.
+- Telemetry retention is not an environment override in the current release:
+  ingested telemetry events receive `expiresAt = ingestedAt + 30 days`.
+  Account export/delete includes only `userHash`-scoped telemetry for the
+  authenticated user. Anonymous telemetry is retained only as non-account data
+  with no `userId/userHash` and expires through the same 30-day boundary.
 
 ## Smoke Checklist After Runtime Config Changes
 
