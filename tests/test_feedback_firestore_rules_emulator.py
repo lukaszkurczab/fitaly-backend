@@ -9,6 +9,7 @@ from urllib import error, parse, request
 from uuid import uuid4
 
 import pytest
+from google.cloud import firestore
 
 
 pytestmark = pytest.mark.skipif(
@@ -27,6 +28,14 @@ def _project_id() -> str:
 
 def _database_id() -> str:
     return os.getenv("FIRESTORE_DATABASE_ID") or "(default)"
+
+
+def _emulator_firestore_client() -> firestore.Client:
+    client_class = cast(Any, firestore.Client)
+    return cast(
+        firestore.Client,
+        client_class(project=_project_id(), database=_database_id()),
+    )
 
 
 def _emulator_origin(env_name: str) -> str:
@@ -68,6 +77,24 @@ def _delete_auth_emulator_user(id_token: str) -> None:
         _post_auth_emulator("accounts:delete", {"idToken": id_token})
     except Exception:
         return
+
+
+def _delete_feedback_document_with_admin_emulator(
+    *,
+    owner_uid: str,
+    feedback_id: str,
+    run_id: str,
+) -> None:
+    if not owner_uid or not run_id or feedback_id != f"feedback-{run_id}":
+        return
+    (
+        _emulator_firestore_client()
+        .collection("users")
+        .document(owner_uid)
+        .collection("feedback")
+        .document(feedback_id)
+        .delete()
+    )
 
 
 def _firestore_document_path(document_path: str) -> str:
@@ -156,6 +183,8 @@ def test_feedback_firestore_rules_enforce_canonical_owner_create_read_only() -> 
     run_id = uuid4().hex
     owner_email = f"ch-07-005-feedback-firestore-owner-{run_id}@example.test"
     other_email = f"ch-07-005-feedback-firestore-other-{run_id}@example.test"
+    owner_uid = ""
+    feedback_id = f"feedback-{run_id}"
     owner_token = ""
     other_token = ""
 
@@ -163,7 +192,6 @@ def test_feedback_firestore_rules_enforce_canonical_owner_create_read_only() -> 
         owner_uid, owner_token = _sign_up_auth_emulator_user(owner_email)
         _, other_token = _sign_up_auth_emulator_user(other_email)
 
-        feedback_id = f"feedback-{run_id}"
         canonical_path = f"users/{owner_uid}/feedback/{feedback_id}"
 
         assert (
@@ -225,6 +253,14 @@ def test_feedback_firestore_rules_enforce_canonical_owner_create_read_only() -> 
             )
             assert legacy_read_status == 403
     finally:
+        try:
+            _delete_feedback_document_with_admin_emulator(
+                owner_uid=owner_uid,
+                feedback_id=feedback_id,
+                run_id=run_id,
+            )
+        except Exception:
+            pass
         for token in (owner_token, other_token):
             if token:
                 _delete_auth_emulator_user(token)
