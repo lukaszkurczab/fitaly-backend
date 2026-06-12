@@ -95,6 +95,7 @@ def _emulator_firestore_client() -> firestore.Client:
 
 def _meal_payload(meal_id: str, *, updated_at: str) -> dict[str, object]:
     return {
+        "clientMutationId": f"mutation-{meal_id}",
         "mealId": meal_id,
         "timestamp": "2026-04-18T12:00:00.000Z",
         "dayKey": "2026-04-18",
@@ -272,7 +273,10 @@ def test_pr3_meals_routes_use_real_auth_token_and_firestore_emulator(
 
         deleted = client.post(
             f"/api/v1/users/me/meals/{meal_a_id}/delete",
-            json={"updatedAt": "2026-04-18T12:30:00.000Z"},
+            json={
+                "clientMutationId": f"mutation-delete-{meal_a_id}",
+                "updatedAt": "2026-04-18T12:30:00.000Z",
+            },
             headers=_auth_headers(token_a),
         )
         assert deleted.status_code == 200

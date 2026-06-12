@@ -170,7 +170,7 @@ async def test_pr3_photo_uploads_write_to_storage_emulator(
 
         assert my_meal_object_path.startswith(f"mealTemplates/{user_id}/{saved_meal_id}-")
         assert my_meal_object_path.endswith(".jpg")
-        assert my_meal_payload["mealId"] == saved_meal_id
+        assert my_meal_payload["templateId"] == saved_meal_id
         assert my_meal_payload["storagePath"] == my_meal_object_path
         assert my_meal_payload["imageId"] == my_meal_object_path.removeprefix(
             f"mealTemplates/{user_id}/{saved_meal_id}-"

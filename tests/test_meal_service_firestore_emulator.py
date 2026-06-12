@@ -167,7 +167,7 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
             },
             "imageRef": {
                 "imageId": f"image-main-{run_id}",
-                "storagePath": f"meals/test/image-main-{run_id}.jpg",
+                "storagePath": f"meals/{user_a}/image-main-{run_id}.jpg",
                 "downloadUrl": "https://cdn.example.invalid/canonical-photo.jpg",
             },
             "notes": None,
