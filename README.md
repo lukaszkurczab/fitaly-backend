@@ -411,19 +411,16 @@ Railway smoke variable checklist:
 - Keep launch feature flags aligned with prod unless the smoke test explicitly covers rollback behavior: `STATE_ENABLED=true`, `HABITS_ENABLED=true`, `SMART_REMINDERS_ENABLED=true`, `WEEKLY_REPORTS_ENABLED=true`, `AI_CHAT_ENABLED=true`, `AI_MEAL_ANALYSIS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`
 - Keep `TELEMETRY_ENABLED=true` for launch-like smoke. If a smoke run intentionally disables telemetry, record it as rollback coverage and do not count it as production readiness evidence.
 
-Bounded OpenAI provider smoke is an optional operator-triggered wiring check,
-not a default local test, pytest suite, CI gate, or product correctness test. If
-the release owner schedules it, use the smoke backend or local backend URL,
-non-production Firebase/user data, `OPENAI_API_KEY` from a smoke-only or
-quota-limited key, and `AI_CHAT_ENABLED=true`,
-`AI_MEAL_ANALYSIS_ENABLED=true`, `AI_GATEWAY_ENABLED=true`. One run is capped at
-2 total provider calls: one Chat v2 text run and one Add Meal text-meal analysis.
-Avoid photo analysis unless the release owner intentionally includes image
-cleanup/redaction evidence. Store only sanitized operational evidence
-(endpoint/status/request id/run id/structured code and bounded credits or usage
-metadata); do not attach raw prompts, raw responses, images, request/response
-bodies, auth tokens, or provider payloads. See
-[Runtime Config: Bounded OpenAI Provider Smoke Contract](../docs/runbooks/runtime-config.md#bounded-openai-provider-smoke-contract).
+CH-08-005 provider smoke is optional operator-triggered wiring evidence, not a
+default local test, pytest suite, CI gate, emulator substitute, or product
+correctness test. The bounded matrix covers OpenAI, RevenueCat sandbox/webhook,
+Railway smoke health, telemetry ingest, and backend/mobile smoke flow-contract
+checks. Use non-production Firebase/user data, quota-limited provider secrets,
+the documented per-surface call/event budgets, and sanitized operational
+evidence only; do not attach raw prompts, raw responses, images, request/response
+bodies, auth tokens, webhook bodies, telemetry payloads, or provider payloads.
+See
+[Runtime Config: CH-08-005 Bounded Provider Smoke Matrix](../docs/runbooks/runtime-config.md#ch-08-005-bounded-provider-smoke-matrix).
 
 Railway dashboard checklist:
 
