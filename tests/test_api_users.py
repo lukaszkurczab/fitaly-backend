@@ -729,6 +729,7 @@ def test_get_user_export_returns_backend_payload(
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
             [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [{"eventId": "telemetry-1", "name": "meal_logged"}],
         ),
     )
 
@@ -748,6 +749,7 @@ def test_get_user_export_returns_backend_payload(
         "mealMutationDedupe": [
             {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
         ],
+        "telemetryEvents": [{"eventId": "telemetry-1", "name": "meal_logged"}],
     }
     get_user_export_data.assert_called_once_with("user-1")
 

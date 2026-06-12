@@ -92,7 +92,7 @@ def reset_rate_limit_state() -> None:
 def build_bucket_key(context: TelemetryRequestContext) -> str:
     client_host = context.client_host.strip() or "anonymous"
     if context.user_id:
-        return f"user:{_build_user_hash(context.user_id)}"
+        return f"user:{build_user_hash(context.user_id)}"
     return f"ip:{client_host}"
 
 
@@ -135,7 +135,7 @@ def _resolve_actor(
     if event.schemaVersion >= CURRENT_TELEMETRY_SCHEMA_VERSION and event.actor is not None:
         user_id = event.actor.userId
         anonymous_id = event.actor.anonymousId
-        user_hash = _build_user_hash(user_id) if user_id else None
+        user_hash = build_user_hash(user_id) if user_id else None
         if user_id is None:
             return None, user_hash, anonymous_id, "anonymous"
         if context.user_id is None:
@@ -145,7 +145,7 @@ def _resolve_actor(
         return user_id, user_hash, None, "mismatched"
 
     user_id = context.user_id
-    user_hash = _build_user_hash(user_id) if user_id else None
+    user_hash = build_user_hash(user_id) if user_id else None
     return user_id, user_hash, None, "legacy_authenticated" if user_id else "legacy_anonymous"
 
 
@@ -215,7 +215,7 @@ def _build_document(
     }
 
 
-def _build_user_hash(user_id: str) -> str:
+def build_user_hash(user_id: str) -> str:
     return sha256(user_id.encode("utf-8")).hexdigest()
 
 
@@ -228,7 +228,7 @@ def count_events_for_user(
 ) -> int:
     collection_ref = get_firestore().collection(COLLECTION_NAME)
     query = (
-        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        collection_ref.where("userHash", "==", build_user_hash(user_id))
         .where("name", "==", event_name)
         .where("ts", ">=", _serialize_timestamp(start_at))
         .where("ts", "<=", _serialize_timestamp(end_at))
@@ -240,7 +240,7 @@ def count_events_for_user(
         logger.exception(
             "telemetry.count.firestore_error",
             extra={
-                "user_hash": _build_user_hash(user_id),
+                "user_hash": build_user_hash(user_id),
                 "event_name": event_name,
                 "start_at": _serialize_timestamp(start_at),
                 "end_at": _serialize_timestamp(end_at),
@@ -340,7 +340,7 @@ def ingest_batch(
         "telemetry.ingest.ok",
         extra={
             "session_id": request.sessionId,
-            "auth_user_hash": _build_user_hash(context.user_id) if context.user_id else None,
+            "auth_user_hash": build_user_hash(context.user_id) if context.user_id else None,
             "platform": request.app.platform,
             "app_version": request.app.appVersion,
             "events_total": len(request.events),
@@ -371,7 +371,7 @@ def get_daily_summary(
     start_at = normalized_now - timedelta(days=max(days - 1, 0))
     collection_ref = get_firestore().collection(COLLECTION_NAME)
     query = (
-        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        collection_ref.where("userHash", "==", build_user_hash(user_id))
         .where("ts", ">=", _serialize_timestamp(start_at))
         .where("ts", "<=", _serialize_timestamp(normalized_now))
     )
@@ -382,7 +382,7 @@ def get_daily_summary(
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "telemetry.summary.firestore_error",
-            extra={"user_hash": _build_user_hash(user_id), "days": days},
+            extra={"user_hash": build_user_hash(user_id), "days": days},
         )
         raise FirestoreServiceError("Failed to read telemetry summary.") from exc
 
@@ -445,7 +445,7 @@ def get_smart_reminder_summary(
 
     collection_ref = get_firestore().collection(COLLECTION_NAME)
     query = (
-        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        collection_ref.where("userHash", "==", build_user_hash(user_id))
         .where("ts", ">=", _serialize_timestamp(start_at))
         .where("ts", "<=", _serialize_timestamp(normalized_now))
     )
@@ -455,7 +455,7 @@ def get_smart_reminder_summary(
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "telemetry.smart_reminder_summary.firestore_error",
-            extra={"user_hash": _build_user_hash(user_id), "days": days},
+            extra={"user_hash": build_user_hash(user_id), "days": days},
         )
         raise FirestoreServiceError("Failed to read smart reminder summary.") from exc
 

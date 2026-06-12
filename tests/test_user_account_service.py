@@ -13,6 +13,7 @@ from starlette.datastructures import Headers
 from app.core.exceptions import FirestoreServiceError
 from app.services.meal_storage import MAX_UPLOAD_BYTES
 from app.services import user_account_service
+from app.services import telemetry_service
 from app.services.user_account_service import (
     EmailValidationError,
     OnboardingUsernameUnavailableError,
@@ -168,6 +169,11 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     client, users_collection_ref, usernames_collection_ref, user_ref, username_ref = (
         _build_client(mocker)
     )
+    telemetry_collection_ref = mocker.Mock()
+    telemetry_query = mocker.Mock()
+    telemetry_doc = mocker.Mock()
+    telemetry_doc_ref = mocker.Mock()
+    telemetry_doc.reference = telemetry_doc_ref
     meals_collection_ref = mocker.Mock()
     my_meals_collection_ref = mocker.Mock()
     legacy_chat_collection_ref = mocker.Mock()
@@ -216,11 +222,15 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return users_collection_ref
         if name == "usernames":
             return usernames_collection_ref
+        if name == "telemetry_events":
+            return telemetry_collection_ref
         if name == "ai_runs":
             return ai_runs_collection_ref
         raise AssertionError(f"Unexpected collection {name}")
 
     client.collection.side_effect = top_level_collection_side_effect
+    telemetry_collection_ref.where.return_value = telemetry_query
+    telemetry_query.stream.return_value = [telemetry_doc]
 
     def collection_side_effect(name: str):
         if name == "meals":
@@ -345,6 +355,14 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert ai_runs_filter.field_path == "userId"
     assert ai_runs_filter.op_string == "=="
     assert ai_runs_filter.value == "user-1"
+    telemetry_collection_ref.where.assert_called_once_with(
+        filter=ANY,
+    )
+    telemetry_filter = telemetry_collection_ref.where.call_args.kwargs["filter"]
+    assert telemetry_filter.field_path == "userHash"
+    assert telemetry_filter.op_string == "=="
+    assert telemetry_filter.value == telemetry_service.build_user_hash("user-1")
+    assert telemetry_doc.reference in deleted_refs
     usernames_collection_ref.document.assert_called_once_with("neo")
     username_ref.delete.assert_called_once_with()
     user_ref.delete.assert_called_once_with()
@@ -1826,6 +1844,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     client, users_collection_ref, usernames_collection_ref, user_ref, _username_ref = (
         _build_client(mocker)
     )
+    telemetry_collection_ref = mocker.Mock()
+    telemetry_query = mocker.Mock()
     meals_collection_ref = mocker.Mock()
     my_meals_collection_ref = mocker.Mock()
     notifications_collection_ref = mocker.Mock()
@@ -1852,6 +1872,13 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         "clientMutationId": "profile-mutation-1",
         "kind": "profile_update",
     }
+    telemetry_document = mocker.Mock()
+    telemetry_document.id = "telemetry-1"
+    telemetry_document.to_dict.return_value = {
+        "eventId": "telemetry-1",
+        "name": "meal_logged",
+        "userHash": telemetry_service.build_user_hash("user-1"),
+    }
     chat_thread_document = mocker.Mock()
     chat_thread_document.id = "thread-1"
     chat_thread_document.to_dict.return_value = {"title": "First chat"}
@@ -1872,11 +1899,15 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return users_collection_ref
         if name == "usernames":
             return usernames_collection_ref
+        if name == "telemetry_events":
+            return telemetry_collection_ref
         if name == "ai_runs":
             return ai_runs_collection_ref
         raise AssertionError(f"Unexpected collection {name}")
 
     client.collection.side_effect = top_level_collection_side_effect
+    telemetry_collection_ref.where.return_value = telemetry_query
+    telemetry_query.stream.return_value = [telemetry_document]
 
     def collection_side_effect(name: str):
         if name == "meals":
@@ -1938,6 +1969,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        telemetry_events,
     ) = asyncio.run(
         user_account_service.get_user_export_data("user-1")
     )
@@ -1966,11 +1998,24 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     assert meal_mutation_dedupe == [
         {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
     ]
+    assert telemetry_events == [
+        {
+            "eventId": "telemetry-1",
+            "name": "meal_logged",
+            "userHash": telemetry_service.build_user_hash("user-1"),
+            "id": "telemetry-1",
+        }
+    ]
     ai_runs_collection_ref.where.assert_called_once()
     ai_runs_filter = ai_runs_collection_ref.where.call_args.kwargs["filter"]
     assert ai_runs_filter.field_path == "userId"
     assert ai_runs_filter.op_string == "=="
     assert ai_runs_filter.value == "user-1"
+    telemetry_collection_ref.where.assert_called_once()
+    telemetry_filter = telemetry_collection_ref.where.call_args.kwargs["filter"]
+    assert telemetry_filter.field_path == "userHash"
+    assert telemetry_filter.op_string == "=="
+    assert telemetry_filter.value == telemetry_service.build_user_hash("user-1")
 
 
 def test_get_user_export_data_wraps_firestore_errors(mocker: MockerFixture) -> None:

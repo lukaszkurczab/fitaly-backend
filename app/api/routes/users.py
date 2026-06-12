@@ -239,6 +239,7 @@ async def get_user_export_me(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        telemetry_events,
     ) = await user_account_service.get_user_export_data(current_user.uid)
 
     return UserExportResponse(
@@ -252,4 +253,5 @@ async def get_user_export_me(
         notificationPrefs=notification_prefs,
         feedback=feedback,
         mealMutationDedupe=meal_mutation_dedupe,
+        telemetryEvents=telemetry_events,
     )

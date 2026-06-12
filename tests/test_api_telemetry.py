@@ -347,7 +347,7 @@ def test_telemetry_batch_rejects_mismatched_authenticated_actor(
     assert "evt-user-a" not in firestore_client.storage
     user_b_event = firestore_client.storage["evt-user-b"]
     assert user_b_event["userId"] == "user-b"
-    assert user_b_event["userHash"] == telemetry_service._build_user_hash("user-b")
+    assert user_b_event["userHash"] == telemetry_service.build_user_hash("user-b")
     assert user_b_event["actorAuthValidation"] == "matched"
 
 
@@ -1238,25 +1238,25 @@ def test_telemetry_daily_summary_returns_grouped_counts(
                 "eventId": "evt-1",
                 "name": "meal_logged",
                 "ts": "2026-03-18T09:00:00Z",
-                "userHash": telemetry_service._build_user_hash("user-123"),
+                "userHash": telemetry_service.build_user_hash("user-123"),
             },
             "evt-2": {
                 "eventId": "evt-2",
                 "name": "onboarding_completed",
                 "ts": "2026-03-18T10:00:00Z",
-                "userHash": telemetry_service._build_user_hash("user-123"),
+                "userHash": telemetry_service.build_user_hash("user-123"),
             },
             "evt-3": {
                 "eventId": "evt-3",
                 "name": "meal_logged",
                 "ts": "2026-03-17T10:00:00Z",
-                "userHash": telemetry_service._build_user_hash("user-123"),
+                "userHash": telemetry_service.build_user_hash("user-123"),
             },
             "evt-4": {
                 "eventId": "evt-4",
                 "name": "meal_logged",
                 "ts": "2026-03-18T10:00:00Z",
-                "userHash": telemetry_service._build_user_hash("other-user"),
+                "userHash": telemetry_service.build_user_hash("other-user"),
             },
         }
     )

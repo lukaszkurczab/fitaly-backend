@@ -44,6 +44,7 @@ from app.core.firestore_constants import (
     USERS_COLLECTION,
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
+from app.services import telemetry_service
 
 logger = logging.getLogger(__name__)
 AiConsentDocument = dict[str, str | None]
@@ -60,6 +61,7 @@ DELETE_SUBCOLLECTIONS = (
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
 )
+TELEMETRY_EVENTS_COLLECTION = telemetry_service.COLLECTION_NAME
 BATCH_DELETE_LIMIT = 500
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
 MIN_USERNAME_LENGTH = 3
@@ -1018,6 +1020,21 @@ def _read_subcollection_documents(
     ]
 
 
+def _read_telemetry_events(
+    client: firestore.Client,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    query = client.collection(TELEMETRY_EVENTS_COLLECTION).where(
+        filter=FieldFilter("userHash", "==", telemetry_service.build_user_hash(user_id))
+    )
+    events: list[dict[str, Any]] = []
+    for document in query.stream():
+        payload = dict(document.to_dict() or {})
+        payload.setdefault("id", document.id)
+        events.append(payload)
+    return events
+
+
 def _delete_chat_threads(
     client: firestore.Client,
     user_ref: firestore.DocumentReference,
@@ -1038,6 +1055,18 @@ def _delete_chat_threads(
 
     if thread_documents:
         _delete_documents_in_batches(client, thread_documents)
+
+
+def _delete_telemetry_events(
+    client: firestore.Client,
+    user_id: str,
+) -> None:
+    query = client.collection(TELEMETRY_EVENTS_COLLECTION).where(
+        filter=FieldFilter("userHash", "==", telemetry_service.build_user_hash(user_id))
+    )
+    documents = list(query.stream())
+    if documents:
+        _delete_documents_in_batches(client, documents)
 
 
 def _read_chat_thread_messages(
@@ -1236,6 +1265,7 @@ async def delete_account_data(user_id: str) -> None:
             feedback_documents=feedback_documents,
             user_id=user_id,
         )
+        _delete_telemetry_events(client, user_id)
         _delete_user_storage_assets(user_id)
         _delete_billing_data(client, user_ref)
         _delete_ai_runs(client, user_id)
@@ -1276,6 +1306,7 @@ async def get_user_export_data(
     dict[str, Any],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -1301,6 +1332,7 @@ async def get_user_export_data(
             if isinstance(notifications_value, dict):
                 notification_prefs = dict(cast(dict[str, Any], notifications_value))
                 break
+        telemetry_events = _read_telemetry_events(client, user_id)
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to build user export payload.",
@@ -1319,4 +1351,5 @@ async def get_user_export_data(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        telemetry_events,
     )
