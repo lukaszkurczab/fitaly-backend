@@ -9,6 +9,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from app.core.config import settings
+from app.core.logging_privacy import sanitize_sentry_event
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ def init_sentry() -> None:
         environment=settings.SENTRY_ENVIRONMENT or settings.ENVIRONMENT,
         release=settings.VERSION,
         send_default_pii=False,
+        before_send=sanitize_sentry_event,
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
         integrations=[
             FastApiIntegration(),

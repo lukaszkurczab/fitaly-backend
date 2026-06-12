@@ -33,6 +33,29 @@ This runbook is implementation-focused and complements external legal documents 
   account switch, account deletion, and session loss through
   `resetUserRuntime(...) -> resetTelemetryClientRuntime()`.
 
+## Operational Logs Account Boundary
+
+- Sentry events, Railway service logs, and backend process logs are
+  infrastructure observability records, not account export/delete data, only
+  under the release boundary in this section.
+- Backend operational logs must pass through the shared observability redaction
+  policy before Sentry ingestion or explicit Python logging of sensitive
+  fields. Redacted classes include emails, auth headers, tokens, passwords,
+  API keys, provider-looking secrets, raw provider payload markers,
+  user-authored raw body/content markers, Firebase/Google Storage URLs, Storage
+  object paths including `%2F`-encoded paths, and URL query strings.
+- Operational logs must not intentionally contain raw provider prompts,
+  provider responses, full request/response bodies, user-authored meal/chat
+  text, credentials, or raw Storage paths. If a failure needs a diagnostic
+  field, use a stable placeholder such as `[REDACTED_STORAGE_PATH]`.
+- Provider retention boundary: Sentry and Railway retain observability records
+  according to their configured project/service retention controls and external
+  processor terms. Before launch, attach the current Sentry event retention and
+  Railway log retention screenshots/settings to the release evidence packet.
+- If redaction is found to be missing for a logged surface, treat the affected
+  Sentry/Railway/backend operational log window as privacy-relevant incident
+  scope and follow the incident procedure below.
+
 ## Data Export Procedure
 
 1. User triggers data export from authenticated session.
@@ -41,7 +64,8 @@ This runbook is implementation-focused and complements external legal documents 
 3. Backend returns export payload bound to token identity (never trust client-supplied `userId`).
 4. Telemetry included in the export is limited to events matching the active
    user's `userHash`; anonymous telemetry is not mixed into the account export.
-5. If export fails, capture `X-Request-ID` and investigate backend logs + Sentry.
+5. If export fails, capture `X-Request-ID` and investigate redacted backend
+   logs + Sentry.
 
 ## Data Deletion Procedure
 
@@ -59,7 +83,8 @@ This runbook is implementation-focused and complements external legal documents 
 ## Retention & Review Cadence
 
 1. Review retention policy quarterly (engineering + product + legal owner).
-2. Review third-party processors quarterly:
+2. Review third-party processors quarterly and confirm current observability
+   retention settings:
    - OpenAI
    - Firebase/Google Cloud
    - Sentry
@@ -74,8 +99,9 @@ Before public launch approval, attach one evidence packet that contains:
 1. telemetry retention snapshot (what is stored, where, for how long),
 2. current processor matrix (service, purpose, data class, region),
 3. DPA/SCC status snapshot for each external processor,
-4. privacy-policy vs implementation redline status,
-5. export/delete/store-disclosure links for the current RC.
+4. Sentry/Railway/backend operational log retention snapshot,
+5. privacy-policy vs implementation redline status,
+6. export/delete/store-disclosure links for the current RC.
 
 ## Incident Handling (Privacy-Relevant)
 

@@ -15,6 +15,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.logging_privacy import redact_sensitive_log_text
 from app.db.firebase import (
     build_storage_download_url,
     get_storage_bucket,
@@ -205,7 +206,10 @@ async def upload_photo_to_storage(
         if not _storage_emulator_configured():
             blob.patch()
     except (FirebaseError, GoogleAPICallError, RetryError, OSError) as exc:
-        logger.exception(error_message, extra={"user_id": user_id, "object_path": object_path})
+        logger.exception(
+            error_message,
+            extra={"user_id": user_id, "object_path": redact_sensitive_log_text(object_path)},
+        )
         raise FirestoreServiceError(error_message) from exc
     finally:
         upload.file.close()
