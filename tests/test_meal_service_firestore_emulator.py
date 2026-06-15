@@ -336,6 +336,7 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         assert "Rice bowl" not in candidate_text
         assert "gpt-4o-mini" not in candidate_text
         assert "estimated_portion" not in candidate_text
+        assert list(user_ref.collection("smartMemory").stream()) == []
 
         deleted = await meal_service.mark_deleted(
             user_id,
