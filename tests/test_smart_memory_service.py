@@ -724,6 +724,43 @@ def test_candidate_upsert_rejects_existing_suppressed_candidate() -> None:
         )
 
 
+def test_candidate_upsert_returns_existing_activated_candidate_without_rewrite() -> None:
+    payload = _candidate_request()
+    existing_candidate: dict[str, Any] = {
+        "candidateId": payload.candidateId,
+        "ownerUserId": "user-1",
+        "schemaVersion": 1,
+        "memoryType": payload.memoryType,
+        "state": "activated",
+        "subject": payload.subject,
+        "evidenceSummary": payload.evidenceSummary,
+        "sourceRefs": payload.sourceRefs,
+        "confidenceReasonCodes": payload.confidenceReasonCodes,
+        "suppressionChecks": {"promotedToMemoryItemId": "memory-candidate-oats"},
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "updatedAt": "2026-06-03T10:00:00.000Z",
+        "serverRevision": 2,
+    }
+    client, transaction, candidate_ref, mutation_ref = _client_for_candidate(
+        payload,
+        existing_candidate=existing_candidate,
+    )
+
+    result = smart_memory_service._upsert_candidate_transaction(
+        cast(firestore.Transaction, transaction),
+        client=client,  # type: ignore[arg-type]
+        user_id="user-1",
+        candidate_id=payload.candidateId,
+        payload=payload,
+        client_mutation_id=payload.clientMutationId,
+        payload_hash="hash-1",
+    )
+
+    assert result == {"document": existing_candidate, "applied": False}
+    assert candidate_ref.set_calls == []
+    assert mutation_ref.set_calls == []
+
+
 def test_candidate_upsert_rejects_tombstoned_subject() -> None:
     payload = _candidate_request()
     client, transaction, _candidate_ref, _mutation_ref = _client_for_candidate(

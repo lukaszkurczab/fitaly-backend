@@ -682,18 +682,39 @@ def test_capture_ready_path_upserts_candidate_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, Any]] = []
-    mutation_result: dict[str, Any] = {
-        "document": {"candidateId": "candidate-from-capture"},
+    promotion_calls: list[tuple[str, str, str, str]] = []
+    candidate_result: dict[str, Any] = {
+        "document": {"candidateId": "candidate-from-capture", "state": "candidate"},
+        "applied": True,
+    }
+    promotion_result: dict[str, Any] = {
+        "document": {"memoryItemId": "memory-from-capture", "state": "active"},
         "applied": True,
     }
 
     async def fake_upsert_candidate(user_id: str, payload: Any) -> dict[str, Any]:
         calls.append((user_id, payload))
-        return mutation_result
+        return candidate_result
+
+    async def fake_promote_candidate(
+        user_id: str,
+        candidate_id: str,
+        *,
+        memory_item_id: str,
+        client_mutation_id: str,
+    ) -> dict[str, Any]:
+        promotion_calls.append(
+            (user_id, candidate_id, memory_item_id, client_mutation_id)
+        )
+        return promotion_result
 
     monkeypatch.setattr(
         "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
         fake_upsert_candidate,
+    )
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.promote_candidate",
+        fake_promote_candidate,
     )
 
     result = asyncio.run(
@@ -709,8 +730,60 @@ def test_capture_ready_path_upserts_candidate_once(
 
     assert result.decision.state == "candidate_ready"
     assert result.decision.candidate_request is not None
-    assert result.mutation_result == mutation_result
+    assert result.mutation_result == promotion_result
     assert calls == [("user-1", result.decision.candidate_request)]
+    assert len(promotion_calls) == 1
+    assert promotion_calls[0][0] == "user-1"
+    assert promotion_calls[0][1] == result.decision.candidate_request.candidateId
+    assert promotion_calls[0][2].startswith("memory-")
+    assert promotion_calls[0][3].startswith("activate-")
+
+
+def test_capture_ready_path_skips_promotion_for_already_activated_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    promotion_calls: list[tuple[str, str]] = []
+    activated_result: dict[str, Any] = {
+        "document": {"candidateId": "candidate-from-capture", "state": "activated"},
+        "applied": False,
+    }
+
+    async def fake_upsert_candidate(user_id: str, payload: Any) -> dict[str, Any]:
+        return activated_result
+
+    async def fake_promote_candidate(
+        user_id: str,
+        candidate_id: str,
+        *,
+        memory_item_id: str,
+        client_mutation_id: str,
+    ) -> dict[str, Any]:
+        promotion_calls.append((user_id, candidate_id))
+        return {"document": {}, "applied": False}
+
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
+        fake_upsert_candidate,
+    )
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.promote_candidate",
+        fake_promote_candidate,
+    )
+
+    result = asyncio.run(
+        capture_typical_portion_candidate_from_meal_snapshots(
+            owner_user_id="user-1",
+            meal_snapshots=[
+                _meal("meal-1", "2026-06-01", amount=60, ingredient_id="i-1"),
+                _meal("meal-2", "2026-06-02", amount=59, ingredient_id="i-2"),
+                _meal("meal-3", "2026-06-03", amount=61, ingredient_id="i-3"),
+            ],
+        )
+    )
+
+    assert result.decision.state == "candidate_ready"
+    assert result.mutation_result == activated_result
+    assert promotion_calls == []
 
 
 def test_capture_non_ready_decision_does_not_upsert(
@@ -776,18 +849,42 @@ def test_capture_review_correction_ready_path_upserts_candidate_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, Any]] = []
-    mutation_result: dict[str, Any] = {
-        "document": {"candidateId": "candidate-from-correction-capture"},
+    promotion_calls: list[tuple[str, str, str, str]] = []
+    candidate_result: dict[str, Any] = {
+        "document": {
+            "candidateId": "candidate-from-correction-capture",
+            "state": "candidate",
+        },
+        "applied": True,
+    }
+    promotion_result: dict[str, Any] = {
+        "document": {"memoryItemId": "memory-from-correction-capture", "state": "active"},
         "applied": True,
     }
 
     async def fake_upsert_candidate(user_id: str, payload: Any) -> dict[str, Any]:
         calls.append((user_id, payload))
-        return mutation_result
+        return candidate_result
+
+    async def fake_promote_candidate(
+        user_id: str,
+        candidate_id: str,
+        *,
+        memory_item_id: str,
+        client_mutation_id: str,
+    ) -> dict[str, Any]:
+        promotion_calls.append(
+            (user_id, candidate_id, memory_item_id, client_mutation_id)
+        )
+        return promotion_result
 
     monkeypatch.setattr(
         "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
         fake_upsert_candidate,
+    )
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.promote_candidate",
+        fake_promote_candidate,
     )
 
     result = asyncio.run(
@@ -804,8 +901,13 @@ def test_capture_review_correction_ready_path_upserts_candidate_once(
     assert result.decision.state == "candidate_ready"
     assert result.decision.candidate_request is not None
     assert result.decision.candidate_request.memoryType == "review_correction"
-    assert result.mutation_result == mutation_result
+    assert result.mutation_result == promotion_result
     assert calls == [("user-1", result.decision.candidate_request)]
+    assert len(promotion_calls) == 1
+    assert promotion_calls[0][0] == "user-1"
+    assert promotion_calls[0][1] == result.decision.candidate_request.candidateId
+    assert promotion_calls[0][2].startswith("memory-")
+    assert promotion_calls[0][3].startswith("activate-")
 
 
 def test_capture_review_correction_non_ready_decision_does_not_upsert(

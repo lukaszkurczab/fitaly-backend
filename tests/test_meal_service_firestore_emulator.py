@@ -314,7 +314,7 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         assert len(candidate_snapshots) == 1
         candidate_snapshot = candidate_snapshots[0]
         candidate = candidate_snapshot.to_dict() or {}
-        assert candidate["state"] == "candidate"
+        assert candidate["state"] == "activated"
         assert candidate["ownerUserId"] == user_id
         assert candidate["memoryType"] == "typical_portion"
         assert candidate["subject"]["kind"] == "ingredient_alias"
@@ -336,7 +336,19 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         assert "Rice bowl" not in candidate_text
         assert "gpt-4o-mini" not in candidate_text
         assert "estimated_portion" not in candidate_text
-        assert list(user_ref.collection("smartMemory").stream()) == []
+        active_items = [
+            snapshot.to_dict() or {}
+            for snapshot in user_ref.collection("smartMemory").stream()
+        ]
+        assert len(active_items) == 1
+        active_item = active_items[0]
+        assert active_item["state"] == "active"
+        assert active_item["stateReason"] == "threshold_met"
+        assert active_item["memoryType"] == "typical_portion"
+        assert active_item["subject"] == candidate["subject"]
+        assert active_item["sourceRefs"] == candidate["sourceRefs"]
+        assert active_item["userValue"] == {"amount": 250.0, "unit": "g"}
+        assert active_item["control"]["sourceCandidateId"] == candidate["candidateId"]
 
         deleted = await meal_service.mark_deleted(
             user_id,
@@ -349,6 +361,14 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         source_deleted_candidate = candidate_snapshot.reference.get().to_dict() or {}
         assert source_deleted_candidate["state"] == "source_deleted"
         assert source_deleted_candidate["suppressionChecks"]["sourceDeleted"] is True
+        source_deleted_items = [
+            snapshot.to_dict() or {}
+            for snapshot in user_ref.collection("smartMemory").stream()
+        ]
+        assert len(source_deleted_items) == 1
+        assert source_deleted_items[0]["state"] == "source_deleted"
+        assert source_deleted_items[0]["sourceDeletedAt"] is not None
+        assert source_deleted_items[0]["control"]["suggestionsSuppressed"] is True
         tombstones = [
             snapshot.to_dict() or {}
             for snapshot in user_ref.collection("smartMemoryTombstones").stream()

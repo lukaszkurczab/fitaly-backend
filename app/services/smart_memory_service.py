@@ -864,6 +864,14 @@ def _upsert_candidate_transaction(
     candidate_ref = _candidate_ref(client, user_id, candidate_id)
     candidate_snapshot = candidate_ref.get(transaction=transaction)
     existing = dict(candidate_snapshot.to_dict() or {}) if candidate_snapshot.exists else {}
+    if existing.get("state") == "activated":
+        return {
+            "document": _snapshot_document(
+                candidate_snapshot,
+                document_id_field="candidateId",
+            ),
+            "applied": False,
+        }
     if existing.get("state") in SUPPRESSED_CANDIDATE_STATES:
         raise ValueError("Smart Memory candidate is suppressed")
     settings_snapshot = _settings_ref(client, user_id).get(transaction=transaction)
@@ -1250,7 +1258,7 @@ async def mark_sources_deleted_by_source_hashes(
             document = _snapshot_document(snapshot, document_id_field="candidateId")
             if not _document_references_source_hash(document, normalized_source_hashes):
                 continue
-            if document.get("state") in SUPPRESSED_CANDIDATE_STATES:
+            if document.get("state") in {"deleted_suppressed", "source_deleted"}:
                 continue
             document["ownerUserId"] = user_id
             document["candidateId"] = snapshot.id

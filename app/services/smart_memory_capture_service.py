@@ -462,6 +462,18 @@ async def capture_typical_portion_candidate_from_meal_snapshots(
         owner_user_id,
         decision.candidate_request,
     )
+    document = mutation_result["document"]
+    if document.get("state") == "candidate":
+        mutation_result = await smart_memory_service.promote_candidate(
+            owner_user_id,
+            decision.candidate_request.candidateId,
+            memory_item_id=_memory_item_id_for_candidate(
+                decision.candidate_request.candidateId,
+            ),
+            client_mutation_id=_activation_mutation_id(
+                decision.candidate_request.clientMutationId,
+            ),
+        )
     return SmartMemoryCaptureUpsertResult(
         decision=decision,
         mutation_result=mutation_result,
@@ -493,6 +505,18 @@ async def capture_review_correction_candidate_from_signals(
         owner_user_id,
         decision.candidate_request,
     )
+    document = mutation_result["document"]
+    if document.get("state") == "candidate":
+        mutation_result = await smart_memory_service.promote_candidate(
+            owner_user_id,
+            decision.candidate_request.candidateId,
+            memory_item_id=_memory_item_id_for_candidate(
+                decision.candidate_request.candidateId,
+            ),
+            client_mutation_id=_activation_mutation_id(
+                decision.candidate_request.clientMutationId,
+            ),
+        )
     return SmartMemoryCaptureUpsertResult(
         decision=decision,
         mutation_result=mutation_result,
@@ -510,6 +534,16 @@ def review_correction_subject_suppression_key(
     return _review_correction_subject_suppression_key(
         _review_correction_subject_payload(subject_key, correction_field)
     )
+
+
+def _memory_item_id_for_candidate(candidate_id: str) -> str:
+    digest = _stable_hash({"candidateId": candidate_id})[:24]
+    return f"memory-{digest}"
+
+
+def _activation_mutation_id(candidate_mutation_id: str) -> str:
+    digest = _stable_hash({"candidateMutationId": candidate_mutation_id})[:24]
+    return f"activate-{digest}"
 
 
 def source_hashes_for_typical_portion_meal_snapshot(
