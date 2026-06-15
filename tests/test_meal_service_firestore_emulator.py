@@ -315,8 +315,27 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         candidate_snapshot = candidate_snapshots[0]
         candidate = candidate_snapshot.to_dict() or {}
         assert candidate["state"] == "candidate"
-        assert candidate["sourceRefs"]
-        assert all(set(source_ref) == {"kind", "sourceHash"} for source_ref in candidate["sourceRefs"])
+        assert candidate["ownerUserId"] == user_id
+        assert candidate["memoryType"] == "typical_portion"
+        assert candidate["subject"]["kind"] == "ingredient_alias"
+        assert set(candidate["subject"]) == {"kind", "aliasHash"}
+        assert candidate["confidenceReasonCodes"] == ["distinct_days_met"]
+        assert candidate["evidenceSummary"]["thresholdVersion"] == "typical_portion_v1"
+        assert candidate["evidenceSummary"]["eligibleObservationCount"] == 3
+        assert candidate["evidenceSummary"]["distinctDayCount"] == 3
+        assert candidate["evidenceSummary"]["proposedValue"] == {
+            "amount": 250.0,
+            "unit": "g",
+        }
+        assert len(candidate["sourceRefs"]) == 3
+        assert all(
+            set(source_ref) == {"kind", "sourceHash"}
+            for source_ref in candidate["sourceRefs"]
+        )
+        candidate_text = str(candidate)
+        assert "Rice bowl" not in candidate_text
+        assert "gpt-4o-mini" not in candidate_text
+        assert "estimated_portion" not in candidate_text
 
         deleted = await meal_service.mark_deleted(
             user_id,
