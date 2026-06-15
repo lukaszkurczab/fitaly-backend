@@ -155,6 +155,62 @@ def _ingredient_product_document() -> dict[str, Any]:
     }
 
 
+def _warning_ingredient_product_document() -> dict[str, Any]:
+    now = "2026-06-15T10:30:00.000Z"
+    return {
+        "ingredientProductId": "e2e-warning-oats",
+        "recordScope": "global_seed",
+        "lifecycleState": "verified",
+        "displayName": "Owies ostrzezenie",
+        "kind": "generic_ingredient",
+        "ingredientName": "Owies",
+        "brandName": None,
+        "packageName": None,
+        "category": "grain",
+        "searchPrefixes": ["ost", "ostr", "ostrzezenie", "owies ostrzezenie"],
+        "defaultServing": {"quantity": 50, "unit": "g"},
+        "nutritionPer100": {
+            "basis": "per_100g",
+            "unit": "g",
+            "kcal": 389,
+            "protein": 16.9,
+            "fat": 6.9,
+            "carbs": 66.3,
+            "fiber": None,
+            "sugar": None,
+            "salt": None,
+            "saturatedFat": None,
+        },
+        "sourceAttribution": {
+            "sourceType": "internal_seed",
+            "sourceId": "e2e-local-warning-seed",
+            "sourceName": "Fitaly local E2E seed",
+            "provider": None,
+            "license": None,
+            "observedAt": now,
+            "reviewedAt": now,
+            "reviewedBy": "e2e",
+        },
+        "confidence": {
+            "identity": "verified",
+            "nutrition": "high",
+            "profile": "medium",
+        },
+        "profileCompatibility": "warning",
+        "profileFlags": {
+            "dietaryFlags": [],
+            "allergenFlags": [],
+            "compatibilityStatus": "warning",
+        },
+        "warningReasonCodes": ["profile_warning"],
+        "servingSizes": [],
+        "dietaryFlags": [],
+        "allergenFlags": [],
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
 def main() -> None:
     _require_env("FIRESTORE_EMULATOR_HOST")
     uid, _ = _seed_auth_user()
@@ -163,6 +219,10 @@ def main() -> None:
     client.collection("users").document(uid).set(_profile_document(uid), merge=True)
     client.collection("ingredientProducts").document("e2e-local-oats").set(
         _ingredient_product_document(),
+        merge=True,
+    )
+    client.collection("ingredientProducts").document("e2e-warning-oats").set(
+        _warning_ingredient_product_document(),
         merge=True,
     )
     print(json.dumps({"uid": uid, "email": EMAIL}, sort_keys=True))
