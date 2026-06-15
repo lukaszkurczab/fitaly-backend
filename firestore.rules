@@ -98,6 +98,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Backend-owned Smart Memory source of truth. Mobile must use API v2.
+    match /users/{userId}/smartMemory/{memoryItemId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryCandidates/{candidateId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemorySettings/{settingsId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryTombstones/{tombstoneId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryMutationDedupe/{mutationId} {
+      allow read, write: if false;
+    }
+
     // Backend-owned reminder state; not exposed to client SDK.
     match /users/{userId}/reminderDailyStats/{dayKey} {
       allow read, write: if false;

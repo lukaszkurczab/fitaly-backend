@@ -91,6 +91,25 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
     sync_streak = mocker.patch(
         "app.services.meal_service.streak_service.sync_streak_from_meals"
     )
+    capture_calls: list[tuple[str, list[dict[str, object]]]] = []
+
+    async def fake_capture(
+        *,
+        owner_user_id: str,
+        meal_snapshots: list[dict[str, object]],
+        memory_enabled: bool,
+        suppressed_subject_keys: list[str],
+    ) -> object:
+        assert memory_enabled is True
+        assert suppressed_subject_keys == []
+        capture_calls.append((owner_user_id, meal_snapshots))
+        return object()
+
+    mocker.patch(
+        "app.services.meal_service.smart_memory_capture_service."
+        "capture_typical_portion_candidate_from_meal_snapshots",
+        new=fake_capture,
+    )
 
     try:
         result = await meal_service.upsert_meal(
@@ -126,6 +145,8 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
 
         assert result["id"] == main_meal_id
         assert result["userUid"] is None
+        assert capture_calls[0][0] == user_a
+        assert [snapshot["id"] for snapshot in capture_calls[0][1]] == [main_meal_id]
 
         stored_snapshot = (
             client.collection("users")
@@ -238,6 +259,16 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
             call(user_b, reference_day_key="2026-04-18"),
             call(user_a, reference_day_key="2026-04-18"),
         ]
+        assert [owner_user_id for owner_user_id, _snapshots in capture_calls] == [
+            user_a,
+            user_a,
+            user_b,
+        ]
+        assert {snapshot["id"] for snapshot in capture_calls[1][1]} == {
+            main_meal_id,
+            side_meal_id,
+        }
+        assert [snapshot["id"] for snapshot in capture_calls[2][1]] == [user_b_meal_id]
     finally:
         for uid, meal_ids in (
             (user_a, (main_meal_id, side_meal_id)),
@@ -247,3 +278,71 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
             for meal_id in meal_ids:
                 user_ref.collection("meals").document(meal_id).delete()
             user_ref.delete()
+
+
+async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
+    mocker: MockerFixture,
+) -> None:
+    client = _emulator_client()
+    run_id = uuid4().hex
+    user_id = f"l3-smart-memory-source-delete-{run_id}"
+    meal_ids = [f"meal-{index}-{run_id}" for index in range(3)]
+    logged_days = ["2026-05-01", "2026-05-02", "2026-05-03"]
+    deleted_updated_at = "2026-05-04T12:30:00.000Z"
+
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    mocker.patch("app.services.smart_memory_service.get_firestore", return_value=client)
+    mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    user_ref = client.collection("users").document(user_id)
+    try:
+        for meal_id, day_key in zip(meal_ids, logged_days, strict=True):
+            await meal_service.upsert_meal(
+                user_id,
+                _meal_payload(
+                    meal_id=meal_id,
+                    logged_at=f"{day_key}T08:00:00.000Z",
+                    day_key=day_key,
+                    updated_at=f"{day_key}T08:10:00.000Z",
+                    image_id=f"image-{meal_id}",
+                ),
+            )
+
+        candidate_snapshots = list(
+            user_ref.collection("smartMemoryCandidates").stream()
+        )
+        assert len(candidate_snapshots) == 1
+        candidate_snapshot = candidate_snapshots[0]
+        candidate = candidate_snapshot.to_dict() or {}
+        assert candidate["state"] == "candidate"
+        assert candidate["sourceRefs"]
+        assert all(set(source_ref) == {"kind", "sourceHash"} for source_ref in candidate["sourceRefs"])
+
+        deleted = await meal_service.mark_deleted(
+            user_id,
+            meal_ids[0],
+            updated_at=deleted_updated_at,
+            client_mutation_id=f"delete-{meal_ids[0]}",
+        )
+
+        assert deleted["deleted"] is True
+        source_deleted_candidate = candidate_snapshot.reference.get().to_dict() or {}
+        assert source_deleted_candidate["state"] == "source_deleted"
+        assert source_deleted_candidate["suppressionChecks"]["sourceDeleted"] is True
+        tombstones = [
+            snapshot.to_dict() or {}
+            for snapshot in user_ref.collection("smartMemoryTombstones").stream()
+        ]
+        assert any(tombstone.get("reasonCode") == "source_deleted" for tombstone in tombstones)
+    finally:
+        for subcollection_name in (
+            "meals",
+            "smartMemory",
+            "smartMemoryCandidates",
+            "smartMemoryTombstones",
+            "smartMemoryMutationDedupe",
+            "smartMemorySettings",
+        ):
+            for snapshot in user_ref.collection(subcollection_name).stream():
+                snapshot.reference.delete()
+        user_ref.delete()

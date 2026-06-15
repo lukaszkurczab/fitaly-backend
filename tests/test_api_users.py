@@ -729,6 +729,11 @@ def test_get_user_export_returns_backend_payload(
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
             [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [{"id": "memory-item-1"}],
+            [{"id": "memory-candidate-1"}],
+            [{"id": "default", "enabled": True}],
+            [{"id": "memory-tombstone-1"}],
+            [{"id": "memory-mutation-1"}],
             [{"id": "main", "status": "active"}],
             [{"id": "current", "billingId": "main", "balance": 8}],
             [{"id": "tx-1", "billingId": "main", "amount": -1}],
@@ -756,6 +761,11 @@ def test_get_user_export_returns_backend_payload(
         "mealMutationDedupe": [
             {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
         ],
+        "smartMemoryItems": [{"id": "memory-item-1"}],
+        "smartMemoryCandidates": [{"id": "memory-candidate-1"}],
+        "smartMemorySettings": [{"id": "default", "enabled": True}],
+        "smartMemoryTombstones": [{"id": "memory-tombstone-1"}],
+        "smartMemoryMutationDedupe": [{"id": "memory-mutation-1"}],
         "billing": [{"id": "main", "status": "active"}],
         "aiCredits": [{"id": "current", "billingId": "main", "balance": 8}],
         "aiCreditTransactions": [{"id": "tx-1", "billingId": "main", "amount": -1}],

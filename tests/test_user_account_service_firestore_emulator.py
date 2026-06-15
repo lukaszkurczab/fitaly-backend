@@ -23,6 +23,11 @@ from app.core.firestore_constants import (
     MEAL_TEMPLATES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
+    SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
+    SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
+    SMART_MEMORY_SETTINGS_SUBCOLLECTION,
+    SMART_MEMORY_SUBCOLLECTION,
+    SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     USERS_COLLECTION,
 )
@@ -46,26 +51,7 @@ def _emulator_client() -> firestore.Client:
 
 
 def _export_payload(
-    export_data: tuple[
-        dict[str, Any] | None,
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        dict[str, Any],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-    ],
+    export_data: tuple[Any, ...],
 ) -> dict[str, Any]:
     (
         profile,
@@ -78,6 +64,11 @@ def _export_payload(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        smart_memory_items,
+        smart_memory_candidates,
+        smart_memory_settings,
+        smart_memory_tombstones,
+        smart_memory_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
@@ -98,6 +89,11 @@ def _export_payload(
         "notificationPrefs": notification_prefs,
         "feedback": feedback,
         "mealMutationDedupe": meal_mutation_dedupe,
+        "smartMemoryItems": smart_memory_items,
+        "smartMemoryCandidates": smart_memory_candidates,
+        "smartMemorySettings": smart_memory_settings,
+        "smartMemoryTombstones": smart_memory_tombstones,
+        "smartMemoryMutationDedupe": smart_memory_mutation_dedupe,
         "billing": billing,
         "aiCredits": ai_credits,
         "aiCreditTransactions": ai_credit_transactions,
@@ -339,6 +335,122 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         ),
     )
     for document_ref, payload in surface_docs:
+        document_ref.set(payload)
+        seeded_refs.append(document_ref)
+
+    smart_memory_docs: tuple[tuple[firestore.DocumentReference, dict[str, Any]], ...] = (
+        (
+            current_user_ref.collection(SMART_MEMORY_SUBCOLLECTION).document(
+                f"memory-item-current-{run_id}"
+            ),
+            {
+                "memoryItemId": f"memory-item-current-{run_id}",
+                "ownerUserId": current_user_id,
+                "memoryType": "typical_portion",
+                "state": "active",
+                "ownerMarker": f"current-smart-memory-item-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(SMART_MEMORY_SUBCOLLECTION).document(
+                f"memory-item-other-{run_id}"
+            ),
+            {
+                "memoryItemId": f"memory-item-other-{run_id}",
+                "ownerUserId": other_user_id,
+                "memoryType": "typical_portion",
+                "state": "active",
+                "ownerMarker": f"other-smart-memory-item-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(SMART_MEMORY_CANDIDATES_SUBCOLLECTION).document(
+                f"memory-candidate-current-{run_id}"
+            ),
+            {
+                "candidateId": f"memory-candidate-current-{run_id}",
+                "ownerUserId": current_user_id,
+                "memoryType": "typical_portion",
+                "state": "candidate",
+                "ownerMarker": f"current-smart-memory-candidate-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(SMART_MEMORY_CANDIDATES_SUBCOLLECTION).document(
+                f"memory-candidate-other-{run_id}"
+            ),
+            {
+                "candidateId": f"memory-candidate-other-{run_id}",
+                "ownerUserId": other_user_id,
+                "memoryType": "typical_portion",
+                "state": "candidate",
+                "ownerMarker": f"other-smart-memory-candidate-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(SMART_MEMORY_SETTINGS_SUBCOLLECTION).document(
+                "default"
+            ),
+            {
+                "ownerUserId": current_user_id,
+                "enabled": False,
+                "ownerMarker": f"current-smart-memory-settings-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(SMART_MEMORY_SETTINGS_SUBCOLLECTION).document(
+                "default"
+            ),
+            {
+                "ownerUserId": other_user_id,
+                "enabled": True,
+                "ownerMarker": f"other-smart-memory-settings-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(SMART_MEMORY_TOMBSTONES_SUBCOLLECTION).document(
+                f"memory-tombstone-current-{run_id}"
+            ),
+            {
+                "tombstoneId": f"memory-tombstone-current-{run_id}",
+                "ownerUserId": current_user_id,
+                "subjectKey": f"typical_portion:current-{run_id}",
+                "ownerMarker": f"current-smart-memory-tombstone-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(SMART_MEMORY_TOMBSTONES_SUBCOLLECTION).document(
+                f"memory-tombstone-other-{run_id}"
+            ),
+            {
+                "tombstoneId": f"memory-tombstone-other-{run_id}",
+                "ownerUserId": other_user_id,
+                "subjectKey": f"typical_portion:other-{run_id}",
+                "ownerMarker": f"other-smart-memory-tombstone-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(
+                SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"memory-mutation-current-{run_id}"),
+            {
+                "clientMutationId": f"memory-mutation-current-{run_id}",
+                "kind": "item_delete",
+                "ownerMarker": f"current-smart-memory-mutation-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(
+                SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"memory-mutation-other-{run_id}"),
+            {
+                "clientMutationId": f"memory-mutation-other-{run_id}",
+                "kind": "item_delete",
+                "ownerMarker": f"other-smart-memory-mutation-{run_id}",
+            },
+        ),
+    )
+    for document_ref, payload in smart_memory_docs:
         document_ref.set(payload)
         seeded_refs.append(document_ref)
 
@@ -630,6 +742,11 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             "notificationPrefs",
             "feedback",
             "mealMutationDedupe",
+            "smartMemoryItems",
+            "smartMemoryCandidates",
+            "smartMemorySettings",
+            "smartMemoryTombstones",
+            "smartMemoryMutationDedupe",
             "billing",
             "aiCredits",
             "aiCreditTransactions",
@@ -661,6 +778,17 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         }
         assert _ids(export["feedback"]) == {f"feedback-current-{run_id}"}
         assert _ids(export["mealMutationDedupe"]) == {f"mutation-current-{run_id}"}
+        assert _ids(export["smartMemoryItems"]) == {f"memory-item-current-{run_id}"}
+        assert _ids(export["smartMemoryCandidates"]) == {
+            f"memory-candidate-current-{run_id}"
+        }
+        assert _ids(export["smartMemorySettings"]) == {"default"}
+        assert _ids(export["smartMemoryTombstones"]) == {
+            f"memory-tombstone-current-{run_id}"
+        }
+        assert _ids(export["smartMemoryMutationDedupe"]) == {
+            f"memory-mutation-current-{run_id}"
+        }
         assert _ids(export["billing"]) == {"main", "annual"}
         assert _ids(export["aiCredits"]) == {"current", "renewal"}
         assert _ids(export["aiCreditTransactions"]) == {f"tx-current-{run_id}"}
@@ -701,6 +829,11 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             f"other-notification-prefs-{run_id}",
             f"other-feedback-{run_id}",
             f"other-meal-mutation-{run_id}",
+            f"other-smart-memory-item-{run_id}",
+            f"other-smart-memory-candidate-{run_id}",
+            f"other-smart-memory-settings-{run_id}",
+            f"other-smart-memory-tombstone-{run_id}",
+            f"other-smart-memory-mutation-{run_id}",
             f"other-reminder-daily-stats-{run_id}",
             f"2026-03-03:breakfast:other-reminder-{run_id}",
             f"other-billing-main-{run_id}",
@@ -755,11 +888,51 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     other_reminder_stats_ref = other_user_ref.collection(
         DAILY_STATS_SUBCOLLECTION
     ).document(f"2026-03-03-{run_id}")
+    current_memory_item_ref = current_user_ref.collection(
+        SMART_MEMORY_SUBCOLLECTION
+    ).document(f"memory-item-current-delete-{run_id}")
+    other_memory_item_ref = other_user_ref.collection(SMART_MEMORY_SUBCOLLECTION).document(
+        f"memory-item-other-delete-{run_id}"
+    )
+    current_memory_candidate_ref = current_user_ref.collection(
+        SMART_MEMORY_CANDIDATES_SUBCOLLECTION
+    ).document(f"memory-candidate-current-delete-{run_id}")
+    other_memory_candidate_ref = other_user_ref.collection(
+        SMART_MEMORY_CANDIDATES_SUBCOLLECTION
+    ).document(f"memory-candidate-other-delete-{run_id}")
+    current_memory_settings_ref = current_user_ref.collection(
+        SMART_MEMORY_SETTINGS_SUBCOLLECTION
+    ).document("default")
+    other_memory_settings_ref = other_user_ref.collection(
+        SMART_MEMORY_SETTINGS_SUBCOLLECTION
+    ).document("default")
+    current_memory_tombstone_ref = current_user_ref.collection(
+        SMART_MEMORY_TOMBSTONES_SUBCOLLECTION
+    ).document(f"memory-tombstone-current-delete-{run_id}")
+    other_memory_tombstone_ref = other_user_ref.collection(
+        SMART_MEMORY_TOMBSTONES_SUBCOLLECTION
+    ).document(f"memory-tombstone-other-delete-{run_id}")
+    current_memory_mutation_ref = current_user_ref.collection(
+        SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
+    ).document(f"memory-mutation-current-delete-{run_id}")
+    other_memory_mutation_ref = other_user_ref.collection(
+        SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
+    ).document(f"memory-mutation-other-delete-{run_id}")
     seeded_refs: list[firestore.DocumentReference] = [
         current_user_ref,
         other_user_ref,
         current_reminder_stats_ref,
         other_reminder_stats_ref,
+        current_memory_item_ref,
+        other_memory_item_ref,
+        current_memory_candidate_ref,
+        other_memory_candidate_ref,
+        current_memory_settings_ref,
+        other_memory_settings_ref,
+        current_memory_tombstone_ref,
+        other_memory_tombstone_ref,
+        current_memory_mutation_ref,
+        other_memory_mutation_ref,
         current_event_ref,
         other_event_ref,
         anonymous_event_ref,
@@ -790,6 +963,48 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
             ],
             "ownerMarker": f"other-reminder-daily-stats-delete-{run_id}",
         }
+    )
+    current_memory_item_ref.set(
+        {
+            "ownerMarker": f"current-smart-memory-item-delete-{run_id}",
+            "state": "active",
+        }
+    )
+    other_memory_item_ref.set(
+        {
+            "ownerMarker": f"other-smart-memory-item-delete-{run_id}",
+            "state": "active",
+        }
+    )
+    current_memory_candidate_ref.set(
+        {
+            "ownerMarker": f"current-smart-memory-candidate-delete-{run_id}",
+            "state": "candidate",
+        }
+    )
+    other_memory_candidate_ref.set(
+        {
+            "ownerMarker": f"other-smart-memory-candidate-delete-{run_id}",
+            "state": "candidate",
+        }
+    )
+    current_memory_settings_ref.set(
+        {"ownerMarker": f"current-smart-memory-settings-delete-{run_id}"}
+    )
+    other_memory_settings_ref.set(
+        {"ownerMarker": f"other-smart-memory-settings-delete-{run_id}"}
+    )
+    current_memory_tombstone_ref.set(
+        {"ownerMarker": f"current-smart-memory-tombstone-delete-{run_id}"}
+    )
+    other_memory_tombstone_ref.set(
+        {"ownerMarker": f"other-smart-memory-tombstone-delete-{run_id}"}
+    )
+    current_memory_mutation_ref.set(
+        {"ownerMarker": f"current-smart-memory-mutation-delete-{run_id}"}
+    )
+    other_memory_mutation_ref.set(
+        {"ownerMarker": f"other-smart-memory-mutation-delete-{run_id}"}
     )
     current_event_ref.set(
         {
@@ -822,12 +1037,39 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         await user_account_service.delete_account_data(current_user_id)
 
         assert current_reminder_stats_ref.get().exists is False
+        assert current_memory_item_ref.get().exists is False
+        assert current_memory_candidate_ref.get().exists is False
+        assert current_memory_settings_ref.get().exists is False
+        assert current_memory_tombstone_ref.get().exists is False
+        assert current_memory_mutation_ref.get().exists is False
         other_reminder_snapshot = other_reminder_stats_ref.get()
         assert other_reminder_snapshot.exists is True
         other_reminder_payload = other_reminder_snapshot.to_dict() or {}
         assert other_reminder_payload["ownerMarker"] == (
             f"other-reminder-daily-stats-delete-{run_id}"
         )
+        for document_ref, owner_marker in (
+            (other_memory_item_ref, f"other-smart-memory-item-delete-{run_id}"),
+            (
+                other_memory_candidate_ref,
+                f"other-smart-memory-candidate-delete-{run_id}",
+            ),
+            (
+                other_memory_settings_ref,
+                f"other-smart-memory-settings-delete-{run_id}",
+            ),
+            (
+                other_memory_tombstone_ref,
+                f"other-smart-memory-tombstone-delete-{run_id}",
+            ),
+            (
+                other_memory_mutation_ref,
+                f"other-smart-memory-mutation-delete-{run_id}",
+            ),
+        ):
+            snapshot = document_ref.get()
+            assert snapshot.exists is True
+            assert (snapshot.to_dict() or {})["ownerMarker"] == owner_marker
         assert current_event_ref.get().exists is False
         assert other_event_ref.get().exists is True
         anonymous_snapshot = anonymous_event_ref.get()

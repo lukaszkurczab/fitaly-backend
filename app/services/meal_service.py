@@ -29,7 +29,7 @@ from app.db.firebase import (
     get_storage_bucket_name,
 )
 from app.schemas.meal import validate_day_key_format
-from app.services import meal_storage, streak_service
+from app.services import meal_storage, smart_memory_capture_service, smart_memory_service, streak_service
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
 MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text"}
 MEAL_MUTATION_DEDUPE_SUBCOLLECTION = "mealMutationDedupe"
+SMART_MEMORY_CAPTURE_RECENT_MEAL_LIMIT = 20
 
 
 class MealPhotoPayload(TypedDict):
@@ -866,6 +867,16 @@ async def list_history(
     return items, next_cursor
 
 
+async def _list_recent_meal_snapshots_for_smart_memory_capture(
+    user_id: str,
+) -> list[dict[str, Any]]:
+    items, _next_cursor = await list_history(
+        user_id,
+        limit_count=SMART_MEMORY_CAPTURE_RECENT_MEAL_LIMIT,
+    )
+    return items
+
+
 async def list_changes(
     user_id: str,
     *,
@@ -951,6 +962,66 @@ def _upsert_meal_mutation_transaction(
     }
 
 
+async def _capture_typical_portion_after_successful_upsert(
+    *,
+    user_id: str,
+    meal_id: str,
+    result_meal: dict[str, Any],
+) -> None:
+    if bool(result_meal.get("deleted")):
+        return
+
+    try:
+        settings = await smart_memory_service.get_settings(user_id)
+        if settings.get("enabled") is False:
+            return
+        meal_snapshots = await _list_recent_meal_snapshots_for_smart_memory_capture(user_id)
+        candidate_subject_keys = (
+            smart_memory_capture_service.subject_suppression_keys_for_typical_portion_meal_snapshots(
+                meal_snapshots
+            )
+        )
+        suppressed_subject_keys = await smart_memory_service.filter_existing_tombstone_subject_keys(
+            user_id,
+            candidate_subject_keys,
+        )
+        await smart_memory_capture_service.capture_typical_portion_candidate_from_meal_snapshots(
+            owner_user_id=user_id,
+            meal_snapshots=meal_snapshots,
+            memory_enabled=True,
+            suppressed_subject_keys=suppressed_subject_keys,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to capture Smart Memory typical portion after meal upsert.",
+            extra={"user_id": user_id, "meal_id": meal_id},
+        )
+
+
+async def _mark_smart_memory_sources_deleted_after_meal_delete(
+    *,
+    user_id: str,
+    meal_id: str,
+    result_meal: dict[str, Any],
+) -> None:
+    source_hashes = smart_memory_capture_service.source_hashes_for_typical_portion_meal_snapshot(
+        result_meal
+    )
+    subject_keys = (
+        smart_memory_capture_service.subject_suppression_keys_for_typical_portion_meal_snapshots(
+            [result_meal]
+        )
+    )
+    if not source_hashes and not subject_keys:
+        return
+    await smart_memory_service.mark_sources_deleted_by_source_hashes(
+        user_id,
+        source_hashes,
+        memory_type="typical_portion",
+        subject_keys=subject_keys,
+    )
+
+
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     client_mutation_id = _require_client_mutation_id(payload.get("clientMutationId"))
     meal_id, normalized_document = normalize_meal_document_payload(
@@ -987,6 +1058,11 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         await streak_service.sync_streak_from_meals(
             user_id,
             reference_day_key=result["reference_day_key"],
+        )
+        await _capture_typical_portion_after_successful_upsert(
+            user_id=user_id,
+            meal_id=meal_id,
+            result_meal=result["meal"],
         )
 
     return result["meal"]
@@ -1122,6 +1198,11 @@ async def mark_deleted(
         await streak_service.sync_streak_from_meals(
             user_id,
             reference_day_key=result["reference_day_key"],
+        )
+        await _mark_smart_memory_sources_deleted_after_meal_delete(
+            user_id=user_id,
+            meal_id=meal_id,
+            result_meal=result["meal"],
         )
 
     return result["meal"]
