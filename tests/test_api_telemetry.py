@@ -1159,6 +1159,86 @@ def test_telemetry_batch_rejects_invalid_enum_values(
     assert firestore_client.storage == {}
 
 
+def test_telemetry_batch_accepts_autocomplete_search_outcome(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=build_payload(
+            {
+                "name": "autocomplete_search_outcome",
+                "props": {
+                    "surface": "manual_ingredient_sheet",
+                    "outcome": "results",
+                    "queryLengthBucket": "4_8",
+                    "resultCountBucket": "4_6",
+                    "sourceClass": "remote",
+                    "latencyBucket": "250_750_ms",
+                    "warningReason": "profile_unknown",
+                },
+                "actor": {"userId": "user-123"},
+            }
+        ),
+    )
+
+    assert response.status_code == 202
+    assert len(firestore_client.storage) == 1
+
+
+def test_telemetry_batch_rejects_autocomplete_raw_food_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("query", "owies"),
+        ("displayName", "Owies lokalny"),
+        ("ingredientProductId", "ingredient-product-1"),
+        ("nutritionPer100", 100),
+        ("kcal", 389),
+        ("protein", 16.9),
+        ("barcode", "5901234123457"),
+    )
+
+    for prop_key, prop_value in forbidden_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-autocomplete-forbidden-{prop_key}",
+                    "name": "autocomplete_search_outcome",
+                    "props": {
+                        "surface": "manual_ingredient_sheet",
+                        "outcome": "results",
+                        "queryLengthBucket": "4_8",
+                        "resultCountBucket": "4_6",
+                        "sourceClass": "remote",
+                        "latencyBucket": "250_750_ms",
+                        prop_key: prop_value,
+                    },
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_rejects_payload_or_batch_that_is_too_large(
     mocker: MockerFixture,
 ) -> None:

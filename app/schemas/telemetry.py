@@ -61,6 +61,8 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "smart_reminder_noop",
         "smart_reminder_decision_failed",
         "smart_reminder_schedule_failed",
+        "autocomplete_search_outcome",
+        "autocomplete_result_selected",
     }
 )
 
@@ -160,6 +162,45 @@ NOTIFICATION_TYPES = frozenset(
     }
 )
 NOTIFICATION_ACTION_IDENTIFIERS = frozenset({"default", "open_chat"})
+AUTOCOMPLETE_SURFACES = frozenset({"manual_ingredient_sheet"})
+AUTOCOMPLETE_SEARCH_OUTCOMES = frozenset(
+    {
+        "results",
+        "no_results",
+        "offline",
+        "warning",
+        "stale",
+        "backend_degraded",
+        "error",
+    }
+)
+AUTOCOMPLETE_QUERY_LENGTH_BUCKETS = frozenset({"2_3", "4_8", "9_16", "17_plus"})
+AUTOCOMPLETE_RESULT_COUNT_BUCKETS = frozenset(
+    {"0", "1", "2_3", "4_6", "7_12", "13_plus"}
+)
+AUTOCOMPLETE_LATENCY_BUCKETS = frozenset(
+    {"under_250_ms", "250_750_ms", "750_1500_ms", "1500_ms_plus"}
+)
+AUTOCOMPLETE_SOURCE_CLASSES = frozenset(
+    {"remote", "cache", "none", "global", "user_scoped"}
+)
+AUTOCOMPLETE_RANK_BUCKETS = frozenset({"1", "2_3", "4_6", "7_12", "13_plus"})
+AUTOCOMPLETE_SELECTION_STATES = frozenset({"selected"})
+AUTOCOMPLETE_WARNING_REASONS = frozenset(
+    {
+        "profile_unknown",
+        "profile_warning",
+        "profile_incompatible",
+        "nutrition_low_confidence",
+        "nutrition_missing",
+        "source_candidate_only",
+        "cache_stale",
+        "offline_cache",
+        "pending_user_record",
+        "query_too_short",
+        "backend_degraded",
+    }
+)
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -219,6 +260,27 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "smart_reminder_decision_failed": frozenset({"failureReason"}),
     "smart_reminder_schedule_failed": frozenset(
         {"reminderKind", "decision", "confidenceBucket", "failureReason"}
+    ),
+    "autocomplete_search_outcome": frozenset(
+        {
+            "surface",
+            "outcome",
+            "queryLengthBucket",
+            "resultCountBucket",
+            "sourceClass",
+            "latencyBucket",
+            "warningReason",
+        }
+    ),
+    "autocomplete_result_selected": frozenset(
+        {
+            "surface",
+            "resultCountBucket",
+            "sourceClass",
+            "rankBucket",
+            "selectionState",
+            "warningReason",
+        }
     ),
 }
 
@@ -321,6 +383,23 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "insightType": COACH_INSIGHT_TYPES,
         "actionType": COACH_TAPPABLE_ACTION_TYPES,
         "freshness": COACH_INSIGHT_FRESHNESS,
+    },
+    "autocomplete_search_outcome": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "outcome": AUTOCOMPLETE_SEARCH_OUTCOMES,
+        "queryLengthBucket": AUTOCOMPLETE_QUERY_LENGTH_BUCKETS,
+        "resultCountBucket": AUTOCOMPLETE_RESULT_COUNT_BUCKETS,
+        "sourceClass": AUTOCOMPLETE_SOURCE_CLASSES,
+        "latencyBucket": AUTOCOMPLETE_LATENCY_BUCKETS,
+        "warningReason": AUTOCOMPLETE_WARNING_REASONS,
+    },
+    "autocomplete_result_selected": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "resultCountBucket": AUTOCOMPLETE_RESULT_COUNT_BUCKETS,
+        "sourceClass": AUTOCOMPLETE_SOURCE_CLASSES,
+        "rankBucket": AUTOCOMPLETE_RANK_BUCKETS,
+        "selectionState": AUTOCOMPLETE_SELECTION_STATES,
+        "warningReason": AUTOCOMPLETE_WARNING_REASONS,
     },
 }
 
