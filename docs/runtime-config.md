@@ -2,7 +2,7 @@
 
 This is the backend side of the mobile to backend runtime contract for Fitaly prod, smoke, and dev/local environments. It mirrors the workspace runtime contract in `../../docs/runbooks/runtime-config.md`.
 
-Do not commit secrets. Values such as Firebase private keys, OpenAI keys, RevenueCat secrets, and Sentry DSNs stay in Railway/EAS secret stores.
+Canonical code sources are `app/core/config.py`, `Procfile`, `.env.example`, and the workspace/mobile runtime gates. Do not commit secrets. Values such as Firebase private keys, OpenAI keys, RevenueCat secrets, and Sentry DSNs stay in Railway/EAS secret stores.
 
 ## Environment Matrix
 
@@ -18,7 +18,9 @@ Notes:
 - `SENTRY_ENVIRONMENT` should be `production` in prod and `smoke` in smoke.
 - Smoke should use separate or scoped Firebase, OpenAI, RevenueCat, and Sentry secrets where possible. The contract requires launch-like behavior, not shared secrets.
 - Local/dev fallbacks must not be used as production readiness evidence.
+- `.env.example` is a developer template, not proof of any deployed env. Smoke/prod truth lives in Railway/EAS configuration plus the readiness evidence captured for a specific release candidate.
 - `AI_MEAL_ANALYSIS_ENABLED=false` disables v1 Add Meal photo/text analysis with a structured `503` before gateway, credit, provider, or gateway-log work. `AI_GATEWAY_ENABLED=false` only bypasses gateway enforcement/logging.
+- `AI_CHAT_ENABLED=false` disables only the canonical v2 chat run endpoint with `503` / `AI_CHAT_DISABLED`; it must not route to legacy v1 chat.
 - Telemetry retention is not an environment override in the current release:
   ingested telemetry events receive `expiresAt = ingestedAt + 30 days`.
   Account export/delete includes only `userHash`-scoped telemetry for the
