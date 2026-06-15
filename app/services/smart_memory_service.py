@@ -419,6 +419,62 @@ def _validate_user_value_for_memory_type(
             raise ValueError("Smart Memory userValue requires a safe label or reference")
 
 
+def _require_positive_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"Smart Memory candidate evidence requires {field_name}")
+    return value
+
+
+def _promotable_candidate_metadata(
+    candidate: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    evidence_summary = candidate.get("evidenceSummary")
+    if not isinstance(evidence_summary, dict) or not evidence_summary:
+        raise ValueError("Smart Memory candidate evidence is missing")
+    evidence = cast(dict[str, Any], evidence_summary)
+    proposed_value = evidence.get("proposedValue")
+    if not isinstance(proposed_value, dict) or not proposed_value:
+        raise ValueError("Smart Memory candidate evidence is missing proposedValue")
+    user_value = cast(dict[str, Any], proposed_value)
+    _validate_user_value_for_memory_type(str(candidate.get("memoryType") or ""), user_value)
+
+    eligible_count = _require_positive_int(
+        evidence.get("eligibleObservationCount", evidence.get("supportingEventCount")),
+        field_name="eligibleObservationCount",
+    )
+    distinct_day_count = _require_positive_int(
+        evidence.get("distinctDayCount"),
+        field_name="distinctDayCount",
+    )
+    required_count = _require_positive_int(
+        evidence.get("requiredObservationCount", evidence.get("requiredEventCount")),
+        field_name="requiredObservationCount",
+    )
+    required_distinct_day_count = _require_positive_int(
+        evidence.get("requiredDistinctDayCount"),
+        field_name="requiredDistinctDayCount",
+    )
+    if eligible_count < required_count or distinct_day_count < required_distinct_day_count:
+        raise ValueError("Smart Memory candidate evidence has not met threshold")
+
+    threshold: dict[str, Any] = {
+        "requiredObservationCount": required_count,
+        "requiredDistinctDayCount": required_distinct_day_count,
+        "eligibleObservationCount": eligible_count,
+        "distinctDayCount": distinct_day_count,
+    }
+    threshold_version = evidence.get("thresholdVersion")
+    if isinstance(threshold_version, str) and threshold_version.strip():
+        threshold["thresholdVersion"] = threshold_version
+    confidence: dict[str, Any] = {
+        "strategy": "deterministic_threshold",
+        "thresholdMet": True,
+        "eligibleObservationCount": eligible_count,
+        "distinctDayCount": distinct_day_count,
+    }
+    return user_value, threshold, confidence
+
+
 def _settings_document(
     *,
     user_id: str,
@@ -853,6 +909,171 @@ def _upsert_candidate_transaction(
         merge=False,
     )
     return {"document": document, "applied": True}
+
+
+async def promote_candidate(
+    user_id: str,
+    candidate_id: str,
+    *,
+    memory_item_id: str,
+    client_mutation_id: str,
+) -> SmartMemoryMutationResult:
+    client = get_firestore()
+    normalized_candidate_id = _require_document_id(candidate_id, field_name="candidateId")
+    normalized_item_id = _require_document_id(memory_item_id, field_name="memoryItemId")
+    normalized_mutation_id = _require_client_mutation_id(client_mutation_id)
+    mutation_payload: dict[str, Any] = {
+        "kind": "candidate_promote",
+        "targetId": normalized_item_id,
+        "candidateId": normalized_candidate_id,
+    }
+    payload_hash = _stable_payload_hash(mutation_payload)
+    try:
+        return _promote_candidate_transaction(
+            client.transaction(),
+            client=client,
+            user_id=user_id,
+            candidate_id=normalized_candidate_id,
+            memory_item_id=normalized_item_id,
+            client_mutation_id=normalized_mutation_id,
+            payload_hash=payload_hash,
+        )
+    except (SmartMemoryMutationDedupeConflictError, SmartMemoryNotFoundError):
+        raise
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to promote Smart Memory candidate.",
+            extra={"user_id": user_id},
+        )
+        raise FirestoreServiceError("Failed to promote Smart Memory candidate.") from exc
+
+
+@firestore.transactional
+def _promote_candidate_transaction(
+    transaction: firestore.Transaction,
+    *,
+    client: firestore.Client,
+    user_id: str,
+    candidate_id: str,
+    memory_item_id: str,
+    client_mutation_id: str,
+    payload_hash: str,
+) -> SmartMemoryMutationResult:
+    kind = "candidate_promote"
+    mutation_ref = _mutation_ref(client, user_id, client_mutation_id)
+    mutation_snapshot = mutation_ref.get(transaction=transaction)
+    if mutation_snapshot.exists:
+        return _result_from_existing_mutation(
+            dict(mutation_snapshot.to_dict() or {}),
+            client_mutation_id=client_mutation_id,
+            kind=kind,
+            target_id=memory_item_id,
+            payload_hash=payload_hash,
+        )
+
+    settings_snapshot = _settings_ref(client, user_id).get(transaction=transaction)
+    settings = dict(settings_snapshot.to_dict() or {}) if settings_snapshot.exists else {}
+    if settings.get("enabled") is False:
+        raise ValueError("Smart Memory is disabled")
+
+    candidate_ref = _candidate_ref(client, user_id, candidate_id)
+    candidate_snapshot = candidate_ref.get(transaction=transaction)
+    if not candidate_snapshot.exists:
+        raise SmartMemoryNotFoundError("Smart Memory candidate was not found")
+    candidate = _snapshot_document(candidate_snapshot, document_id_field="candidateId")
+    if candidate.get("state") != "candidate":
+        raise ValueError("Smart Memory candidate is suppressed")
+    candidate["ownerUserId"] = user_id
+    candidate["candidateId"] = candidate_id
+    candidate_model = SmartMemoryCandidate.model_validate(candidate)
+    candidate = candidate_model.model_dump()
+
+    source_refs = list(candidate_model.sourceRefs)
+    _validate_bounded_evidence(
+        source_refs=source_refs,
+        confidence_reason_codes=candidate_model.confidenceReasonCodes,
+    )
+    _validate_source_refs_not_deleted(source_refs)
+    _validate_candidate_suppression_checks(candidate_model.suppressionChecks)
+    if not candidate_model.subject:
+        raise ValueError("Smart Memory candidate subject is required")
+    user_value, threshold, confidence = _promotable_candidate_metadata(candidate)
+
+    tombstone_id = _tombstone_id(
+        candidate_model.memoryType,
+        candidate_model.subject,
+        candidate_id,
+    )
+    tombstone_snapshot = _tombstone_ref(client, user_id, tombstone_id).get(
+        transaction=transaction
+    )
+    if tombstone_snapshot.exists:
+        raise ValueError("Smart Memory candidate is suppressed by user delete")
+
+    item_ref = _memory_item_ref(client, user_id, memory_item_id)
+    item_snapshot = item_ref.get(transaction=transaction)
+    if item_snapshot.exists:
+        raise ValueError("Smart Memory item already exists")
+
+    now = _now_iso()
+    item_document: dict[str, Any] = {
+        "memoryItemId": memory_item_id,
+        "ownerUserId": user_id,
+        "schemaVersion": 1,
+        "memoryType": candidate_model.memoryType,
+        "state": "active",
+        "stateReason": "threshold_met",
+        "subject": candidate_model.subject,
+        "userValue": user_value,
+        "evidenceSummary": candidate_model.evidenceSummary,
+        "sourceRefs": source_refs,
+        "threshold": threshold,
+        "confidence": confidence,
+        "confidenceReasonCodes": candidate_model.confidenceReasonCodes,
+        "control": {
+            "lastClientMutationId": client_mutation_id,
+            "lastControlKind": kind,
+            "lastControlledAt": now,
+            "sourceCandidateId": candidate_id,
+        },
+        "createdAt": now,
+        "updatedAt": now,
+        "lastEvaluatedAt": now,
+        "serverRevision": 1,
+    }
+    SmartMemoryItem.model_validate(item_document)
+
+    consumed_candidate = dict(candidate)
+    consumed_candidate["state"] = "deleted_suppressed"
+    consumed_candidate["updatedAt"] = now
+    consumed_candidate["serverRevision"] = _next_revision(candidate)
+    suppression_checks = dict(consumed_candidate.get("suppressionChecks") or {})
+    suppression_checks.update(
+        {
+            "deletedSuppressed": True,
+            "promotedToMemoryItemId": memory_item_id,
+            "promotedAt": now,
+        }
+    )
+    consumed_candidate["suppressionChecks"] = suppression_checks
+    SmartMemoryCandidate.model_validate(consumed_candidate)
+
+    transaction.set(item_ref, item_document, merge=False)
+    transaction.set(candidate_ref, consumed_candidate, merge=False)
+    transaction.set(
+        mutation_ref,
+        _mutation_record(
+            user_id=user_id,
+            client_mutation_id=client_mutation_id,
+            kind=kind,
+            target_id=memory_item_id,
+            payload_hash=payload_hash,
+            result_document=item_document,
+            applied=True,
+        ),
+        merge=False,
+    )
+    return {"document": item_document, "applied": True}
 
 
 async def patch_item(

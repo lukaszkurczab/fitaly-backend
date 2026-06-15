@@ -234,6 +234,94 @@ def _client_for_candidate(
     return FakeClient(user_ref), FakeTransaction(), candidate_ref, mutation_ref
 
 
+def _promotable_candidate() -> dict[str, Any]:
+    return {
+        "candidateId": "candidate-oats",
+        "ownerUserId": "user-1",
+        "schemaVersion": 1,
+        "memoryType": "typical_portion",
+        "state": "candidate",
+        "subject": {"kind": "ingredient_alias", "aliasHash": "alias-hash-oats"},
+        "evidenceSummary": {
+            "thresholdVersion": "typical_portion_v1",
+            "requiredObservationCount": 3,
+            "requiredDistinctDayCount": 3,
+            "eligibleObservationCount": 3,
+            "distinctDayCount": 3,
+            "proposedValue": {"amount": 60, "unit": "g"},
+        },
+        "sourceRefs": [
+            {"kind": "meal_portion_observation", "sourceHash": "source-hash-1"},
+            {"kind": "meal_portion_observation", "sourceHash": "source-hash-2"},
+            {"kind": "meal_portion_observation", "sourceHash": "source-hash-3"},
+        ],
+        "confidenceReasonCodes": ["distinct_days_met"],
+        "suppressionChecks": {
+            "deletedSuppressed": False,
+            "sourceDeleted": False,
+            "subjectSuppressionKey": "typical_portion:hash",
+        },
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "updatedAt": "2026-06-03T10:00:00.000Z",
+        "firstSeenAt": "2026-06-01T10:00:00.000Z",
+        "lastSeenAt": "2026-06-03T10:00:00.000Z",
+        "serverRevision": 1,
+    }
+
+
+def _client_for_promotion(
+    candidate: dict[str, Any],
+    *,
+    mutation_payload: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
+    tombstone_exists: bool = False,
+    item_exists: bool = False,
+) -> tuple[FakeClient, FakeTransaction, FakeDocumentRef, FakeDocumentRef, FakeDocumentRef]:
+    candidate_ref = FakeDocumentRef(
+        candidate["candidateId"],
+        FakeSnapshot(candidate["candidateId"], exists=True, data=candidate),
+    )
+    item_payload = _active_item()
+    item_payload["memoryItemId"] = "portion-oats-promoted"
+    item_ref = FakeDocumentRef(
+        "portion-oats-promoted",
+        FakeSnapshot("portion-oats-promoted", exists=item_exists, data=item_payload),
+    )
+    mutation_ref = FakeDocumentRef(
+        "mutation-promote-1",
+        FakeSnapshot(
+            "mutation-promote-1",
+            exists=mutation_payload is not None,
+            data=mutation_payload,
+        ),
+    )
+    settings_ref = FakeDocumentRef(
+        "default",
+        FakeSnapshot("default", exists=settings is not None, data=settings),
+    )
+    tombstone_id = smart_memory_service._tombstone_id(
+        candidate["memoryType"],
+        candidate.get("subject") or {},
+        candidate["candidateId"],
+    )
+    tombstone_ref = FakeDocumentRef(
+        tombstone_id,
+        FakeSnapshot(tombstone_id, exists=tombstone_exists, data={"id": tombstone_id}),
+    )
+    user_ref = FakeUserRef(
+        {
+            "smartMemory": FakeCollectionRef({item_ref.id: item_ref}),
+            "smartMemoryCandidates": FakeCollectionRef({candidate_ref.id: candidate_ref}),
+            "smartMemoryMutationDedupe": FakeCollectionRef(
+                {"mutation-promote-1": mutation_ref}
+            ),
+            "smartMemorySettings": FakeCollectionRef({"default": settings_ref}),
+            "smartMemoryTombstones": FakeCollectionRef({tombstone_ref.id: tombstone_ref}),
+        }
+    )
+    return FakeClient(user_ref), FakeTransaction(), item_ref, candidate_ref, mutation_ref
+
+
 def _active_item() -> dict[str, Any]:
     return {
         "memoryItemId": "portion-oats",
@@ -375,6 +463,219 @@ def test_existing_mutation_with_different_payload_raises_conflict() -> None:
             client_mutation_id="mutation-1",
             payload_hash="hash-1",
             patch_payload={},
+        )
+
+
+def test_promote_candidate_transaction_creates_active_item_and_consumes_candidate() -> None:
+    candidate = _promotable_candidate()
+    client, transaction, item_ref, candidate_ref, mutation_ref = _client_for_promotion(
+        candidate
+    )
+
+    result = smart_memory_service._promote_candidate_transaction(
+        cast(firestore.Transaction, transaction),
+        client=client,  # type: ignore[arg-type]
+        user_id="user-1",
+        candidate_id=candidate["candidateId"],
+        memory_item_id="portion-oats-promoted",
+        client_mutation_id="mutation-promote-1",
+        payload_hash="hash-promote-1",
+    )
+
+    assert result["applied"] is True
+    assert result["document"]["memoryItemId"] == "portion-oats-promoted"
+    assert result["document"]["state"] == "active"
+    assert result["document"]["stateReason"] == "threshold_met"
+    assert result["document"]["subject"] == candidate["subject"]
+    assert result["document"]["userValue"] == {"amount": 60, "unit": "g"}
+    assert result["document"]["sourceRefs"] == candidate["sourceRefs"]
+    assert result["document"]["evidenceSummary"] == candidate["evidenceSummary"]
+    assert result["document"]["threshold"] == {
+        "requiredObservationCount": 3,
+        "requiredDistinctDayCount": 3,
+        "eligibleObservationCount": 3,
+        "distinctDayCount": 3,
+        "thresholdVersion": "typical_portion_v1",
+    }
+    assert result["document"]["confidence"]["strategy"] == "deterministic_threshold"
+    assert result["document"]["control"]["sourceCandidateId"] == candidate["candidateId"]
+    assert item_ref.set_calls[0][0] == result["document"]
+    assert candidate_ref.set_calls[0][0]["state"] == "deleted_suppressed"
+    assert (
+        candidate_ref.set_calls[0][0]["suppressionChecks"]["promotedToMemoryItemId"]
+        == "portion-oats-promoted"
+    )
+    assert mutation_ref.set_calls[0][0]["kind"] == "candidate_promote"
+    SmartMemoryItem.model_validate(result["document"])
+
+
+def test_promote_candidate_transaction_is_idempotent_by_client_mutation_id() -> None:
+    candidate = _promotable_candidate()
+    result_document: dict[str, Any] = {
+        **_active_item(),
+        "memoryItemId": "portion-oats-promoted",
+        "subject": candidate["subject"],
+    }
+    payload_hash = smart_memory_service._stable_payload_hash(
+        {
+            "kind": "candidate_promote",
+            "targetId": "portion-oats-promoted",
+            "candidateId": candidate["candidateId"],
+        }
+    )
+    client, transaction, item_ref, candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate,
+        mutation_payload={
+            "clientMutationId": "mutation-promote-1",
+            "kind": "candidate_promote",
+            "targetId": "portion-oats-promoted",
+            "payloadHash": payload_hash,
+            "resultDocument": result_document,
+        },
+    )
+
+    result = smart_memory_service._promote_candidate_transaction(
+        cast(firestore.Transaction, transaction),
+        client=client,  # type: ignore[arg-type]
+        user_id="user-1",
+        candidate_id=candidate["candidateId"],
+        memory_item_id="portion-oats-promoted",
+        client_mutation_id="mutation-promote-1",
+        payload_hash=payload_hash,
+    )
+
+    assert result == {"document": result_document, "applied": False}
+    assert item_ref.set_calls == []
+    assert candidate_ref.set_calls == []
+
+
+def test_promote_candidate_rejects_disabled_settings() -> None:
+    candidate = _promotable_candidate()
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate,
+        settings={"enabled": False},
+    )
+
+    with pytest.raises(ValueError, match="disabled"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
+        )
+
+
+def test_promote_candidate_rejects_tombstoned_subject() -> None:
+    candidate = _promotable_candidate()
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate,
+        tombstone_exists=True,
+    )
+
+    with pytest.raises(ValueError, match="user delete"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
+        )
+
+
+@pytest.mark.parametrize("state", ["source_deleted", "deleted_suppressed"])
+def test_promote_candidate_rejects_suppressed_candidate(state: str) -> None:
+    candidate = _promotable_candidate()
+    candidate["state"] = state
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate
+    )
+
+    with pytest.raises(ValueError, match="suppressed"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
+        )
+
+
+def test_promote_candidate_rejects_deleted_source_refs() -> None:
+    candidate = _promotable_candidate()
+    candidate["sourceRefs"] = [
+        {
+            "kind": "meal_portion_observation",
+            "sourceHash": "source-hash-1",
+            "state": "deleted",
+        }
+    ]
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate
+    )
+
+    with pytest.raises(ValueError, match="sourceRef is unavailable"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
+        )
+
+
+def test_promote_candidate_rejects_missing_or_insufficient_evidence() -> None:
+    candidate = _promotable_candidate()
+    candidate["evidenceSummary"] = {
+        "requiredObservationCount": 3,
+        "requiredDistinctDayCount": 3,
+        "eligibleObservationCount": 2,
+        "distinctDayCount": 2,
+        "proposedValue": {"amount": 60, "unit": "g"},
+    }
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate
+    )
+
+    with pytest.raises(ValueError, match="threshold"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
+        )
+
+
+def test_promote_candidate_rejects_raw_payload_leakage() -> None:
+    candidate = _promotable_candidate()
+    candidate["evidenceSummary"] = {
+        **candidate["evidenceSummary"],
+        "providerPayload": {"mealName": "Rice bowl"},
+    }
+    client, transaction, _item_ref, _candidate_ref, _mutation_ref = _client_for_promotion(
+        candidate
+    )
+
+    with pytest.raises(ValueError, match="providerPayload"):
+        smart_memory_service._promote_candidate_transaction(
+            cast(firestore.Transaction, transaction),
+            client=client,  # type: ignore[arg-type]
+            user_id="user-1",
+            candidate_id=candidate["candidateId"],
+            memory_item_id="portion-oats-promoted",
+            client_mutation_id="mutation-promote-1",
+            payload_hash="hash-promote-1",
         )
 
 
