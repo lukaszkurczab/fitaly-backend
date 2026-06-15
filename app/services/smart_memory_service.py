@@ -1137,8 +1137,6 @@ def _mutate_item_transaction(
     state = str(document.get("state") or "")
     if kind != "item_delete" and state in {"deleted_suppressed", "source_deleted"}:
         raise ValueError("Smart Memory item is not mutable in its current state")
-    if kind != "item_source_deleted" and state == "source_deleted":
-        raise ValueError("Smart Memory item source is deleted")
 
     next_revision = _next_revision(document)
     document["ownerUserId"] = user_id

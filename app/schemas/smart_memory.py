@@ -228,6 +228,21 @@ def _require_hash_only_source_ref(value: dict[str, Any], *, message: str) -> dic
     return checked
 
 
+def _require_hashed_subject(value: dict[str, Any], *, message: str) -> dict[str, Any]:
+    checked = cast(dict[str, Any], _reject_forbidden_payload_keys(value))
+    if not checked:
+        return checked
+    raw_subject_keys = set(checked) & RAW_SUBJECT_KEYS
+    if raw_subject_keys:
+        raise ValueError(message)
+    kind = checked.get("kind")
+    has_subject_hash = isinstance(checked.get("subjectHash"), str)
+    has_alias_hash = isinstance(checked.get("aliasHash"), str)
+    if not isinstance(kind, str) or not (has_subject_hash or has_alias_hash):
+        raise ValueError(message)
+    return checked
+
+
 def _reject_invalid_user_value_reason_code(value: dict[str, Any]) -> dict[str, Any]:
     reason_code = value.get("reasonCode")
     if (
@@ -294,6 +309,21 @@ class SmartMemoryItem(BaseModel):
         value: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         return cast(list[dict[str, Any]], _reject_forbidden_payload_keys(value))
+
+    @model_validator(mode="after")
+    def _require_hashed_subject_and_source_refs(self) -> "SmartMemoryItem":
+        self.subject = _require_hashed_subject(
+            self.subject,
+            message="Smart Memory item subject must use hashed identifiers",
+        )
+        self.sourceRefs = [
+            _require_hash_only_source_ref(
+                source_ref,
+                message="Smart Memory item sourceRefs must use hashed identifiers",
+            )
+            for source_ref in self.sourceRefs
+        ]
+        return self
 
 
 class SmartMemoryCandidate(BaseModel):
@@ -432,16 +462,10 @@ class SmartMemoryCandidateUpsertRequest(SmartMemoryMutationRequest):
 
     @model_validator(mode="after")
     def _require_hashed_subject_and_source_refs(self) -> "SmartMemoryCandidateUpsertRequest":
-        if not self.subject:
-            return self
-        raw_subject_keys = set(self.subject) & RAW_SUBJECT_KEYS
-        if raw_subject_keys:
-            raise ValueError("Smart Memory candidate subject must use hashed identifiers")
-        kind = self.subject.get("kind")
-        has_subject_hash = isinstance(self.subject.get("subjectHash"), str)
-        has_alias_hash = isinstance(self.subject.get("aliasHash"), str)
-        if not isinstance(kind, str) or not (has_subject_hash or has_alias_hash):
-            raise ValueError("Smart Memory candidate subject must include a hash")
+        _require_hashed_subject(
+            self.subject,
+            message="Smart Memory candidate subject must use hashed identifiers",
+        )
         for source_ref in self.sourceRefs:
             _require_hash_only_source_ref(
                 source_ref,

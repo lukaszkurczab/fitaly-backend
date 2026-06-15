@@ -5,6 +5,7 @@ import pytest
 from google.cloud import firestore
 
 from app.schemas.smart_memory import (
+    SmartMemoryItem,
     SmartMemoryCandidateUpsertRequest,
     SmartMemoryItemPatchRequest,
     SmartMemorySettingsUpdateRequest,
@@ -241,10 +242,10 @@ def _active_item() -> dict[str, Any]:
         "memoryType": "typical_portion",
         "state": "active",
         "stateReason": "threshold_met",
-        "subject": {"kind": "ingredient", "key": "oats"},
+        "subject": {"kind": "ingredient_alias", "aliasHash": "alias-hash-oats"},
         "userValue": {"amount": 60, "unit": "g"},
         "evidenceSummary": {"supportingEventCount": 3, "distinctDayCount": 3},
-        "sourceRefs": [{"kind": "meal", "mealId": "meal-1"}],
+        "sourceRefs": [{"kind": "meal_portion_observation", "sourceHash": "source-hash-1"}],
         "threshold": {"requiredEventCount": 3},
         "confidence": {"sourceConfidence": "high"},
         "confidenceReasonCodes": ["distinct_days_met"],
@@ -319,6 +320,36 @@ def test_source_deleted_transaction_suppresses_suggestions() -> None:
     assert result["document"]["control"]["suggestionsSuppressed"] is True
     assert item_ref.set_calls[0][0]["sourceDeletedAt"] is not None
     assert tombstone_ref.set_calls[0][0]["reasonCode"] == "source_deleted"
+
+
+def test_delete_source_deleted_item_forgets_memory_and_writes_user_tombstone() -> None:
+    item = _active_item()
+    item["state"] = "source_deleted"
+    item["stateReason"] = "source_deleted"
+    item["sourceDeletedAt"] = "2026-06-04T10:00:00.000Z"
+    client, transaction, item_ref, mutation_ref, tombstone_ref = _client_for_item(item)
+
+    result = smart_memory_service._mutate_item_transaction(
+        cast(firestore.Transaction, transaction),
+        client=client,  # type: ignore[arg-type]
+        user_id="user-1",
+        memory_item_id="portion-oats",
+        kind="item_delete",
+        client_mutation_id="mutation-1",
+        payload_hash="hash-1",
+        patch_payload={},
+    )
+
+    assert result["applied"] is True
+    assert result["document"]["state"] == "deleted_suppressed"
+    assert result["document"]["stateReason"] == "user_deleted"
+    assert result["document"]["sourceDeletedAt"] is None
+    assert result["document"]["sourceRefs"] == []
+    assert result["document"]["subject"] == {}
+    assert result["document"]["userValue"] == {}
+    assert item_ref.set_calls[0][0]["control"]["suggestionsSuppressed"] is True
+    assert tombstone_ref.set_calls[0][0]["reasonCode"] == "user_deleted"
+    assert mutation_ref.set_calls[0][0]["kind"] == "item_delete"
 
 
 def test_existing_mutation_with_different_payload_raises_conflict() -> None:
@@ -765,6 +796,23 @@ def test_candidate_request_rejects_raw_subject_and_source_refs() -> None:
                 "candidateId": "candidate-oats",
                 "memoryType": "typical_portion",
                 "subject": {"kind": "ingredient", "key": "oats"},
+                "sourceRefs": [{"kind": "meal", "mealId": "meal-1"}],
+            }
+        )
+
+
+def test_item_rejects_raw_subject_and_source_refs() -> None:
+    with pytest.raises(ValueError, match="hashed identifiers"):
+        SmartMemoryItem.model_validate(
+            {
+                **_active_item(),
+                "subject": {"kind": "ingredient", "key": "oats"},
+            }
+        )
+    with pytest.raises(ValueError, match="hashed identifiers"):
+        SmartMemoryItem.model_validate(
+            {
+                **_active_item(),
                 "sourceRefs": [{"kind": "meal", "mealId": "meal-1"}],
             }
         )
