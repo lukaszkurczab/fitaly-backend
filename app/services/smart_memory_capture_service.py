@@ -30,14 +30,26 @@ SmartMemoryCaptureReasonCode = Literal[
     "conflicting_amount_clusters",
 ]
 PortionUnit = Literal["g", "ml", "piece", "serving"]
+ReviewCorrectionField = Literal["amount", "unit"]
+ReviewCorrectionSurface = Literal["review", "edit"]
+SmartMemoryCaptureMemoryType = Literal["typical_portion", "review_correction"]
 
 SUPPORTED_PORTION_UNITS: tuple[PortionUnit, ...] = ("g", "ml", "piece", "serving")
+SUPPORTED_REVIEW_CORRECTION_FIELDS: tuple[ReviewCorrectionField, ...] = (
+    "amount",
+    "unit",
+)
+SUPPORTED_REVIEW_CORRECTION_SURFACES: tuple[ReviewCorrectionSurface, ...] = (
+    "review",
+    "edit",
+)
 REQUIRED_PORTION_OBSERVATIONS = 3
 REQUIRED_PORTION_DISTINCT_DAYS = 3
 MAX_CANDIDATE_SOURCE_REFS = 3
 AMOUNT_CLUSTER_RELATIVE_TOLERANCE = 0.10
 AMOUNT_CLUSTER_ABSOLUTE_TOLERANCE = 5.0
-THRESHOLD_VERSION = "typical_portion_v1"
+TYPICAL_PORTION_THRESHOLD_VERSION = "typical_portion_v1"
+REVIEW_CORRECTION_THRESHOLD_VERSION = "review_correction_v1"
 DELETED_SOURCE_STATES = {"deleted", "deleted_suppressed", "source_deleted"}
 
 
@@ -53,10 +65,24 @@ class TypicalPortionObservation:
 
 
 @dataclass(frozen=True)
+class ReviewCorrectionSignal:
+    subject_key: str
+    correction_field: ReviewCorrectionField
+    before_amount: float
+    before_unit: PortionUnit
+    after_amount: float
+    after_unit: PortionUnit
+    day_key: str
+    source_ref: dict[str, Any]
+    surface: ReviewCorrectionSurface
+    observed_at: str | None = None
+
+
+@dataclass(frozen=True)
 class SmartMemoryCaptureDecision:
     state: SmartMemoryCaptureDecisionState
     reason_code: SmartMemoryCaptureReasonCode
-    memory_type: Literal["typical_portion"]
+    memory_type: SmartMemoryCaptureMemoryType
     subject: dict[str, Any]
     evidence_summary: dict[str, Any]
     source_refs: list[dict[str, Any]]
@@ -230,6 +256,187 @@ def evaluate_typical_portion_candidate(
     )
 
 
+def build_review_correction_signals_from_signal_payloads(
+    correction_signals: Sequence[Mapping[str, object]],
+    *,
+    source_deleted_refs: Collection[str] = (),
+) -> list[ReviewCorrectionSignal]:
+    signals: list[ReviewCorrectionSignal] = []
+    seen_source_keys: set[str] = set()
+    for payload in correction_signals:
+        if _is_source_deleted(payload):
+            continue
+        signal = _review_correction_signal_from_payload(payload)
+        if signal is None:
+            continue
+        source_key = _review_correction_source_hash(signal.source_ref)
+        if source_key in source_deleted_refs or source_key in seen_source_keys:
+            continue
+        seen_source_keys.add(source_key)
+        signals.append(signal)
+    return sorted(signals, key=_review_correction_sort_key)
+
+
+def evaluate_review_correction_candidate(
+    *,
+    owner_user_id: str,
+    signals: Sequence[ReviewCorrectionSignal],
+    memory_enabled: bool = True,
+    suppressed_subject_keys: Collection[str] = (),
+) -> SmartMemoryCaptureDecision:
+    if not memory_enabled:
+        return _decision(
+            state="suppressed",
+            reason_code="memory_disabled",
+            memory_type="review_correction",
+            evidence_summary={"eligibleObservationCount": 0, "distinctDayCount": 0},
+        )
+
+    eligible = sorted(signals, key=_review_correction_sort_key)
+    if not eligible:
+        return _decision(
+            state="insufficient",
+            reason_code="no_eligible_observations",
+            memory_type="review_correction",
+            evidence_summary={"eligibleObservationCount": 0, "distinctDayCount": 0},
+        )
+
+    subject_groups = _group_review_corrections_by_subject_and_field(eligible)
+    suppressed_groups = [
+        group
+        for group_key, group in subject_groups.items()
+        if _review_correction_subject_suppression_key(
+            _review_correction_subject_payload(group_key[0], group_key[1])
+        )
+        in suppressed_subject_keys
+        or group_key[0] in suppressed_subject_keys
+    ]
+    available_groups = [
+        group
+        for group_key, group in subject_groups.items()
+        if _review_correction_subject_suppression_key(
+            _review_correction_subject_payload(group_key[0], group_key[1])
+        )
+        not in suppressed_subject_keys
+        and group_key[0] not in suppressed_subject_keys
+    ]
+    if suppressed_groups and not available_groups:
+        group = suppressed_groups[0]
+        subject = _review_correction_subject_payload(
+            group[0].subject_key,
+            group[0].correction_field,
+        )
+        return _decision(
+            state="suppressed",
+            reason_code="subject_suppressed",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=_review_correction_evidence_summary(group, subject=subject),
+        )
+
+    ranked_groups = sorted(
+        available_groups,
+        key=lambda group: (
+            -len(_review_correction_distinct_days(group)),
+            -len(group),
+            group[0].subject_key,
+            group[0].correction_field,
+        ),
+    )
+    if not ranked_groups:
+        return _decision(
+            state="insufficient",
+            reason_code="no_eligible_observations",
+            memory_type="review_correction",
+            evidence_summary={"eligibleObservationCount": 0, "distinctDayCount": 0},
+        )
+
+    group = ranked_groups[0]
+    subject = _review_correction_subject_payload(
+        group[0].subject_key,
+        group[0].correction_field,
+    )
+    after_units = {signal.after_unit for signal in group}
+    if len(after_units) > 1:
+        return _decision(
+            state="conflict",
+            reason_code="mixed_incompatible_units",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=_review_correction_evidence_summary(group, subject=subject),
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+
+    before_units = {signal.before_unit for signal in group}
+    if len(before_units) > 1:
+        return _decision(
+            state="conflict",
+            reason_code="mixed_incompatible_units",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=_review_correction_evidence_summary(group, subject=subject),
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+
+    if not _amounts_are_clustered([signal.before_amount for signal in group]):
+        return _decision(
+            state="conflict",
+            reason_code="conflicting_amount_clusters",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=_review_correction_evidence_summary(group, subject=subject),
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+
+    if not _amounts_are_clustered([signal.after_amount for signal in group]):
+        return _decision(
+            state="conflict",
+            reason_code="conflicting_amount_clusters",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=_review_correction_evidence_summary(group, subject=subject),
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+
+    evidence_summary = _review_correction_evidence_summary(group, subject=subject)
+    distinct_day_count = cast(int, evidence_summary["distinctDayCount"])
+    eligible_count = cast(int, evidence_summary["eligibleObservationCount"])
+    if eligible_count < REQUIRED_PORTION_OBSERVATIONS:
+        return _decision(
+            state="insufficient",
+            reason_code="insufficient_eligible_observations",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=evidence_summary,
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+    if distinct_day_count < REQUIRED_PORTION_DISTINCT_DAYS:
+        return _decision(
+            state="insufficient",
+            reason_code="insufficient_distinct_days",
+            memory_type="review_correction",
+            subject=subject,
+            evidence_summary=evidence_summary,
+            source_refs=_bounded_review_correction_source_refs(group),
+        )
+
+    candidate = _review_correction_candidate_request(
+        owner_user_id=owner_user_id,
+        subject=subject,
+        group=group,
+        evidence_summary=evidence_summary,
+    )
+    return _decision(
+        state="candidate_ready",
+        reason_code="threshold_met",
+        memory_type="review_correction",
+        subject=subject,
+        evidence_summary=evidence_summary,
+        source_refs=candidate.sourceRefs,
+        candidate_request=candidate,
+    )
+
+
 async def capture_typical_portion_candidate_from_meal_snapshots(
     *,
     owner_user_id: str,
@@ -261,8 +468,48 @@ async def capture_typical_portion_candidate_from_meal_snapshots(
     )
 
 
+async def capture_review_correction_candidate_from_signals(
+    *,
+    owner_user_id: str,
+    correction_signals: Sequence[Mapping[str, object]],
+    memory_enabled: bool = True,
+    suppressed_subject_keys: Collection[str] = (),
+    source_deleted_refs: Collection[str] = (),
+) -> SmartMemoryCaptureUpsertResult:
+    signals = build_review_correction_signals_from_signal_payloads(
+        correction_signals,
+        source_deleted_refs=source_deleted_refs,
+    )
+    decision = evaluate_review_correction_candidate(
+        owner_user_id=owner_user_id,
+        signals=signals,
+        memory_enabled=memory_enabled,
+        suppressed_subject_keys=suppressed_subject_keys,
+    )
+    if decision.state != "candidate_ready" or decision.candidate_request is None:
+        return SmartMemoryCaptureUpsertResult(decision=decision)
+
+    mutation_result = await smart_memory_service.upsert_candidate(
+        owner_user_id,
+        decision.candidate_request,
+    )
+    return SmartMemoryCaptureUpsertResult(
+        decision=decision,
+        mutation_result=mutation_result,
+    )
+
+
 def subject_suppression_key(subject_key: str) -> str:
     return _subject_suppression_key(_subject_payload(subject_key))
+
+
+def review_correction_subject_suppression_key(
+    subject_key: str,
+    correction_field: ReviewCorrectionField,
+) -> str:
+    return _review_correction_subject_suppression_key(
+        _review_correction_subject_payload(subject_key, correction_field)
+    )
 
 
 def source_hashes_for_typical_portion_meal_snapshot(
@@ -294,6 +541,25 @@ def source_hashes_for_typical_portion_meal_snapshot(
             continue
         seen.add(source_hash)
         source_hashes.append(str(source_hash))
+    return source_hashes
+
+
+def source_hashes_for_review_correction_signals(
+    correction_signals: Sequence[Mapping[str, object]],
+) -> list[str]:
+    source_hashes: list[str] = []
+    seen: set[str] = set()
+    for payload in correction_signals:
+        if _is_source_deleted(payload):
+            continue
+        signal = _review_correction_signal_from_payload(payload)
+        if signal is None:
+            continue
+        source_hash = _review_correction_source_hash(signal.source_ref)
+        if source_hash in seen:
+            continue
+        seen.add(source_hash)
+        source_hashes.append(source_hash)
     return source_hashes
 
 
@@ -363,6 +629,42 @@ def _candidate_request(
     return SmartMemoryCandidateUpsertRequest.model_validate(payload)
 
 
+def _review_correction_candidate_request(
+    *,
+    owner_user_id: str,
+    subject: dict[str, Any],
+    group: list[ReviewCorrectionSignal],
+    evidence_summary: dict[str, Any],
+) -> SmartMemoryCandidateUpsertRequest:
+    source_refs = _bounded_review_correction_source_refs(group)
+    candidate_id = _review_correction_candidate_id(
+        owner_user_id,
+        subject,
+        evidence_summary,
+    )
+    payload: dict[str, Any] = {
+        "clientMutationId": _client_mutation_id(
+            candidate_id,
+            evidence_summary,
+            source_refs,
+        ),
+        "candidateId": candidate_id,
+        "memoryType": "review_correction",
+        "subject": subject,
+        "evidenceSummary": evidence_summary,
+        "sourceRefs": source_refs,
+        "confidenceReasonCodes": ["distinct_days_met", "consistent_user_review"],
+        "suppressionChecks": {
+            "deletedSuppressed": False,
+            "sourceDeleted": False,
+            "subjectSuppressionKey": _review_correction_subject_suppression_key(subject),
+        },
+        "firstSeenAt": cast(str | None, evidence_summary.get("firstSeenAt")),
+        "lastSeenAt": cast(str | None, evidence_summary.get("lastSeenAt")),
+    }
+    return SmartMemoryCandidateUpsertRequest.model_validate(payload)
+
+
 def _observation_from_ingredient(
     ingredient: Mapping[object, object],
     *,
@@ -397,7 +699,7 @@ def _decision(
     *,
     state: SmartMemoryCaptureDecisionState,
     reason_code: SmartMemoryCaptureReasonCode,
-    memory_type: Literal["typical_portion"] = "typical_portion",
+    memory_type: SmartMemoryCaptureMemoryType = "typical_portion",
     subject: dict[str, Any] | None = None,
     evidence_summary: dict[str, Any] | None = None,
     source_refs: list[dict[str, Any]] | None = None,
@@ -414,12 +716,89 @@ def _decision(
     )
 
 
+def _review_correction_signal_from_payload(
+    payload: Mapping[str, object],
+) -> ReviewCorrectionSignal | None:
+    source_signal_id = _coerce_str(
+        payload.get("sourceSignalId") or payload.get("signalId") or payload.get("id")
+    )
+    day_key = _coerce_str(payload.get("dayKey"))
+    if source_signal_id is None or day_key is None:
+        return None
+
+    subject_key = _normalize_subject_key(
+        _coerce_str(payload.get("subjectKey"))
+        or _coerce_str(payload.get("normalizedSubjectKey"))
+    )
+    correction_field = _coerce_review_correction_field(payload.get("correctionField"))
+    surface = _coerce_review_correction_surface(payload.get("surface"))
+    before = payload.get("before")
+    after = payload.get("after")
+    if (
+        subject_key is None
+        or correction_field is None
+        or surface is None
+        or not isinstance(before, Mapping)
+        or not isinstance(after, Mapping)
+    ):
+        return None
+
+    before_payload = cast(Mapping[object, object], before)
+    after_payload = cast(Mapping[object, object], after)
+    before_amount = _coerce_positive_float(before_payload.get("amount"))
+    before_unit = _coerce_unit(before_payload.get("unit"))
+    after_amount = _coerce_positive_float(after_payload.get("amount"))
+    after_unit = _coerce_unit(after_payload.get("unit"))
+    if (
+        before_amount is None
+        or before_unit is None
+        or after_amount is None
+        or after_unit is None
+    ):
+        return None
+
+    if correction_field == "amount":
+        if before_unit != after_unit or before_amount == after_amount:
+            return None
+    elif before_unit == after_unit:
+        return None
+
+    return ReviewCorrectionSignal(
+        subject_key=subject_key,
+        correction_field=correction_field,
+        before_amount=before_amount,
+        before_unit=before_unit,
+        after_amount=after_amount,
+        after_unit=after_unit,
+        day_key=day_key,
+        source_ref={
+            "kind": "review_correction_signal",
+            "sourceSignalId": source_signal_id,
+            "dayKey": day_key,
+            "surface": surface,
+            "correctionField": correction_field,
+        },
+        surface=surface,
+        observed_at=_coerce_str(payload.get("observedAt"))
+        or _coerce_str(payload.get("updatedAt")),
+    )
+
+
 def _group_by_subject(
     observations: Sequence[TypicalPortionObservation],
 ) -> dict[str, list[TypicalPortionObservation]]:
     groups: dict[str, list[TypicalPortionObservation]] = {}
     for observation in observations:
         groups.setdefault(observation.subject_key, []).append(observation)
+    return groups
+
+
+def _group_review_corrections_by_subject_and_field(
+    signals: Sequence[ReviewCorrectionSignal],
+) -> dict[tuple[str, ReviewCorrectionField], list[ReviewCorrectionSignal]]:
+    groups: dict[tuple[str, ReviewCorrectionField], list[ReviewCorrectionSignal]] = {}
+    for signal in signals:
+        groups.setdefault((signal.subject_key, signal.correction_field), []).append(signal)
     return groups
 
 
@@ -436,7 +815,7 @@ def _evidence_summary(
     proposed_amount = _bounded_amount(median(amounts))
     unit = ordered[0].unit
     return {
-        "thresholdVersion": THRESHOLD_VERSION,
+        "thresholdVersion": TYPICAL_PORTION_THRESHOLD_VERSION,
         "requiredObservationCount": REQUIRED_PORTION_OBSERVATIONS,
         "requiredDistinctDayCount": REQUIRED_PORTION_DISTINCT_DAYS,
         "eligibleObservationCount": len(ordered),
@@ -459,6 +838,62 @@ def _evidence_summary(
     }
 
 
+def _review_correction_evidence_summary(
+    group: list[ReviewCorrectionSignal],
+    *,
+    subject: dict[str, Any],
+) -> dict[str, Any]:
+    ordered = sorted(group, key=_review_correction_sort_key)
+    before_amounts = [signal.before_amount for signal in ordered]
+    after_amounts = [signal.after_amount for signal in ordered]
+    distinct_days = sorted(_review_correction_distinct_days(ordered))
+    first_seen_at = _first_seen_at_for_review_corrections(ordered)
+    last_seen_at = _last_seen_at_for_review_corrections(ordered)
+    before_amount = _bounded_amount(median(before_amounts))
+    proposed_amount = _bounded_amount(median(after_amounts))
+    before_unit = ordered[0].before_unit
+    unit = ordered[0].after_unit
+    correction_field = ordered[0].correction_field
+    surfaces = sorted({signal.surface for signal in ordered})
+    return {
+        "thresholdVersion": REVIEW_CORRECTION_THRESHOLD_VERSION,
+        "requiredObservationCount": REQUIRED_PORTION_OBSERVATIONS,
+        "requiredDistinctDayCount": REQUIRED_PORTION_DISTINCT_DAYS,
+        "eligibleObservationCount": len(ordered),
+        "distinctDayCount": len(distinct_days),
+        "firstSeenAt": first_seen_at,
+        "lastSeenAt": last_seen_at,
+        "subjectHash": subject["aliasHash"],
+        "correctionField": correction_field,
+        "surfaces": surfaces,
+        "unit": unit,
+        "beforeValueCluster": {
+            "strategy": "median_with_fixed_tolerance",
+            "amount": before_amount,
+            "unit": before_unit,
+            "absoluteTolerance": AMOUNT_CLUSTER_ABSOLUTE_TOLERANCE,
+            "relativeTolerance": AMOUNT_CLUSTER_RELATIVE_TOLERANCE,
+        },
+        "afterValueCluster": {
+            "strategy": "median_with_fixed_tolerance",
+            "amount": proposed_amount,
+            "unit": unit,
+            "absoluteTolerance": AMOUNT_CLUSTER_ABSOLUTE_TOLERANCE,
+            "relativeTolerance": AMOUNT_CLUSTER_RELATIVE_TOLERANCE,
+        },
+        "proposedValue": {
+            "amount": proposed_amount,
+            "unit": unit,
+            "reasonCode": "user_corrected",
+        },
+        "sourceRefCount": len(_bounded_review_correction_source_refs(ordered)),
+        "reasonCodes": [
+            "explicit_review_correction_signal",
+            "bounded_correction_fields",
+        ],
+    }
+
+
 def _bounded_source_refs(
     observations: Sequence[TypicalPortionObservation],
 ) -> list[dict[str, Any]]:
@@ -468,6 +903,20 @@ def _bounded_source_refs(
     return [
         _hashed_source_ref(observation.source_ref)
         for observation in sorted(by_day.values(), key=_observation_sort_key)[
+            :MAX_CANDIDATE_SOURCE_REFS
+        ]
+    ]
+
+
+def _bounded_review_correction_source_refs(
+    signals: Sequence[ReviewCorrectionSignal],
+) -> list[dict[str, Any]]:
+    by_day: dict[str, ReviewCorrectionSignal] = {}
+    for signal in sorted(signals, key=_review_correction_sort_key):
+        by_day.setdefault(signal.day_key, signal)
+    return [
+        _hashed_review_correction_source_ref(signal.source_ref)
+        for signal in sorted(by_day.values(), key=_review_correction_sort_key)[
             :MAX_CANDIDATE_SOURCE_REFS
         ]
     ]
@@ -488,6 +937,12 @@ def _distinct_days(observations: Sequence[TypicalPortionObservation]) -> set[str
     return {observation.day_key for observation in observations}
 
 
+def _review_correction_distinct_days(
+    signals: Sequence[ReviewCorrectionSignal],
+) -> set[str]:
+    return {signal.day_key for signal in signals}
+
+
 def _first_seen_at(observations: Sequence[TypicalPortionObservation]) -> str | None:
     values = sorted(
         observed_at
@@ -506,6 +961,28 @@ def _last_seen_at(observations: Sequence[TypicalPortionObservation]) -> str | No
     return values[-1] if values else None
 
 
+def _first_seen_at_for_review_corrections(
+    signals: Sequence[ReviewCorrectionSignal],
+) -> str | None:
+    values = sorted(
+        observed_at
+        for observed_at in (signal.observed_at for signal in signals)
+        if observed_at
+    )
+    return values[0] if values else None
+
+
+def _last_seen_at_for_review_corrections(
+    signals: Sequence[ReviewCorrectionSignal],
+) -> str | None:
+    values = sorted(
+        observed_at
+        for observed_at in (signal.observed_at for signal in signals)
+        if observed_at
+    )
+    return values[-1] if values else None
+
+
 def _candidate_id(
     owner_user_id: str,
     subject: dict[str, Any],
@@ -519,6 +996,22 @@ def _candidate_id(
     }
     digest = _stable_hash(stable_parts)[:24]
     return f"typical-portion-{digest}"
+
+
+def _review_correction_candidate_id(
+    owner_user_id: str,
+    subject: dict[str, Any],
+    evidence_summary: dict[str, Any],
+) -> str:
+    stable_parts: dict[str, Any] = {
+        "memoryType": "review_correction",
+        "ownerUserId": owner_user_id,
+        "subject": subject,
+        "correctionField": evidence_summary.get("correctionField"),
+        "unit": evidence_summary.get("unit"),
+    }
+    digest = _stable_hash(stable_parts)[:24]
+    return f"review-correction-{digest}"
 
 
 def _client_mutation_id(
@@ -540,8 +1033,24 @@ def _subject_payload(subject_key: str) -> dict[str, Any]:
     return {"kind": "ingredient_alias", "aliasHash": _stable_hash({"key": subject_key})}
 
 
+def _review_correction_subject_payload(
+    subject_key: str,
+    correction_field: ReviewCorrectionField,
+) -> dict[str, Any]:
+    normalized_subject_key = _normalize_subject_key(subject_key) or subject_key
+    return {
+        "kind": "ingredient_alias",
+        "aliasHash": _stable_hash({"key": normalized_subject_key}),
+        "correctionField": correction_field,
+    }
+
+
 def _subject_suppression_key(subject: dict[str, Any]) -> str:
     return f"typical_portion:{_stable_hash(subject)}"
+
+
+def _review_correction_subject_suppression_key(subject: dict[str, Any]) -> str:
+    return f"review_correction:{_stable_hash(subject)}"
 
 
 def _hashed_source_ref(source_ref: Mapping[str, Any]) -> dict[str, Any]:
@@ -556,6 +1065,25 @@ def _hashed_source_ref(source_ref: Mapping[str, Any]) -> dict[str, Any]:
             }
         ),
     }
+
+
+def _hashed_review_correction_source_ref(source_ref: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": "review_correction_signal",
+        "sourceHash": _review_correction_source_hash(source_ref),
+    }
+
+
+def _review_correction_source_hash(source_ref: Mapping[str, Any]) -> str:
+    return _stable_hash(
+        {
+            "kind": source_ref.get("kind"),
+            "sourceSignalId": source_ref.get("sourceSignalId"),
+            "dayKey": source_ref.get("dayKey"),
+            "surface": source_ref.get("surface"),
+            "correctionField": source_ref.get("correctionField"),
+        }
+    )
 
 
 def _stable_hash(value: Mapping[str, Any]) -> str:
@@ -604,6 +1132,24 @@ def _coerce_unit(value: object) -> PortionUnit | None:
     return None
 
 
+def _coerce_review_correction_field(value: object) -> ReviewCorrectionField | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if normalized in SUPPORTED_REVIEW_CORRECTION_FIELDS:
+        return cast(ReviewCorrectionField, normalized)
+    return None
+
+
+def _coerce_review_correction_surface(value: object) -> ReviewCorrectionSurface | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if normalized in SUPPORTED_REVIEW_CORRECTION_SURFACES:
+        return cast(ReviewCorrectionSurface, normalized)
+    return None
+
+
 def _is_source_deleted(snapshot: Mapping[str, object]) -> bool:
     if snapshot.get("deleted") is True or snapshot.get("sourceDeleted") is True:
         return True
@@ -622,6 +1168,18 @@ def _observation_sort_key(
     )
 
 
+def _review_correction_sort_key(
+    signal: ReviewCorrectionSignal,
+) -> tuple[str, str, str, float, str]:
+    return (
+        signal.subject_key,
+        signal.correction_field,
+        signal.day_key,
+        signal.after_amount,
+        _review_correction_source_ref_key(signal.source_ref),
+    )
+
+
 def _source_ref_key(source_ref: Mapping[str, Any]) -> str:
     return "|".join(
         [
@@ -629,5 +1187,17 @@ def _source_ref_key(source_ref: Mapping[str, Any]) -> str:
             str(source_ref.get("mealId") or ""),
             str(source_ref.get("ingredientId") or ""),
             str(source_ref.get("dayKey") or ""),
+        ]
+    )
+
+
+def _review_correction_source_ref_key(source_ref: Mapping[str, Any]) -> str:
+    return "|".join(
+        [
+            str(source_ref.get("kind") or ""),
+            str(source_ref.get("sourceSignalId") or ""),
+            str(source_ref.get("dayKey") or ""),
+            str(source_ref.get("surface") or ""),
+            str(source_ref.get("correctionField") or ""),
         ]
     )
