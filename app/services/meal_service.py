@@ -992,9 +992,17 @@ async def _capture_typical_portion_after_successful_upsert(
             suppressed_subject_keys=suppressed_subject_keys,
         )
     except Exception:
-        logger.exception(
-            "Failed to capture Smart Memory typical portion after meal upsert.",
-            extra={"user_id": user_id, "meal_id": meal_id},
+        logger.warning(
+            "smart_memory.capture.typical_portion.failed",
+            extra={
+                "user_id": user_id,
+                "meal_id": meal_id,
+                "operation": "capture_typical_portion",
+                "store_mode": "degraded",
+                "memory_type": "typical_portion",
+                "capture_stage": "after_meal_upsert",
+            },
+            exc_info=True,
         )
 
 

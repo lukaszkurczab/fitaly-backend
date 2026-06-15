@@ -715,7 +715,7 @@ def test_upsert_meal_logs_typical_portion_capture_failure_and_returns_meal(
         new=mocker.AsyncMock(side_effect=RuntimeError("capture failed")),
     )
 
-    with caplog.at_level(logging.ERROR, logger=meal_service.logger.name):
+    with caplog.at_level(logging.WARNING, logger=meal_service.logger.name):
         result = asyncio.run(
             meal_service.upsert_meal(
                 "user-1",
@@ -738,12 +738,16 @@ def test_upsert_meal_logs_typical_portion_capture_failure_and_returns_meal(
     log_records = [
         record
         for record in caplog.records
-        if record.message
-        == "Failed to capture Smart Memory typical portion after meal upsert."
+        if record.message == "smart_memory.capture.typical_portion.failed"
     ]
     assert len(log_records) == 1
     assert getattr(log_records[0], "user_id") == "user-1"
     assert getattr(log_records[0], "meal_id") == "meal-1"
+    assert getattr(log_records[0], "operation") == "capture_typical_portion"
+    assert getattr(log_records[0], "store_mode") == "degraded"
+    assert getattr(log_records[0], "memory_type") == "typical_portion"
+    assert getattr(log_records[0], "capture_stage") == "after_meal_upsert"
+    assert log_records[0].exc_info is not None
 
 
 def test_upsert_meal_duplicate_replay_uses_dedupe_record_without_second_write(
