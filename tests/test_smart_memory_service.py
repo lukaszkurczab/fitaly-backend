@@ -500,10 +500,14 @@ def test_promote_candidate_transaction_creates_active_item_and_consumes_candidat
     assert result["document"]["confidence"]["strategy"] == "deterministic_threshold"
     assert result["document"]["control"]["sourceCandidateId"] == candidate["candidateId"]
     assert item_ref.set_calls[0][0] == result["document"]
-    assert candidate_ref.set_calls[0][0]["state"] == "deleted_suppressed"
+    assert candidate_ref.set_calls[0][0]["state"] == "activated"
     assert (
         candidate_ref.set_calls[0][0]["suppressionChecks"]["promotedToMemoryItemId"]
         == "portion-oats-promoted"
+    )
+    assert (
+        candidate_ref.set_calls[0][0]["suppressionChecks"].get("deletedSuppressed")
+        is not True
     )
     assert mutation_ref.set_calls[0][0]["kind"] == "candidate_promote"
     SmartMemoryItem.model_validate(result["document"])
@@ -587,7 +591,7 @@ def test_promote_candidate_rejects_tombstoned_subject() -> None:
         )
 
 
-@pytest.mark.parametrize("state", ["source_deleted", "deleted_suppressed"])
+@pytest.mark.parametrize("state", ["activated", "source_deleted", "deleted_suppressed"])
 def test_promote_candidate_rejects_suppressed_candidate(state: str) -> None:
     candidate = _promotable_candidate()
     candidate["state"] = state

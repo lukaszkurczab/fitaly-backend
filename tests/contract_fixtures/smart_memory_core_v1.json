@@ -18,6 +18,7 @@
   ],
   "candidateStates": [
     "candidate",
+    "activated",
     "deleted_suppressed",
     "source_deleted"
   ],

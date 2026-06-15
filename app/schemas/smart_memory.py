@@ -18,7 +18,12 @@ SmartMemoryState = Literal[
     "sync_failed",
     "conflicted",
 ]
-SmartMemoryCandidateState = Literal["candidate", "deleted_suppressed", "source_deleted"]
+SmartMemoryCandidateState = Literal[
+    "candidate",
+    "activated",
+    "deleted_suppressed",
+    "source_deleted",
+]
 SmartMemoryStateReasonCode = Literal[
     "threshold_met",
     "user_muted",
@@ -91,6 +96,7 @@ SMART_MEMORY_STATES: tuple[SmartMemoryState, ...] = (
 )
 SMART_MEMORY_CANDIDATE_STATES: tuple[SmartMemoryCandidateState, ...] = (
     "candidate",
+    "activated",
     "deleted_suppressed",
     "source_deleted",
 )
@@ -333,7 +339,7 @@ class SmartMemoryCandidate(BaseModel):
     ownerUserId: str = Field(min_length=1)
     schemaVersion: int = Field(default=1, ge=1)
     memoryType: SmartMemoryType
-    state: Literal["candidate", "deleted_suppressed", "source_deleted"] = "candidate"
+    state: SmartMemoryCandidateState = "candidate"
     subject: dict[str, Any] = Field(default_factory=_dict_default)
     evidenceSummary: dict[str, Any] = Field(default_factory=_dict_default)
     sourceRefs: list[dict[str, Any]] = Field(default_factory=_list_default)

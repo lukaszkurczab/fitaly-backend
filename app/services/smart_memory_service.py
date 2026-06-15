@@ -45,7 +45,7 @@ MAX_EXPORT_COLLECTION_DOCS = 250
 SOURCE_DELETION_SOURCE_REF_KIND = "meal_portion_observation"
 MUTABLE_ITEM_STATES = {"active", "muted", "candidate"}
 NON_SUGGESTING_STATES = {"muted", "deleted_suppressed", "disabled", "source_deleted"}
-SUPPRESSED_CANDIDATE_STATES = {"deleted_suppressed", "source_deleted"}
+SUPPRESSED_CANDIDATE_STATES = {"activated", "deleted_suppressed", "source_deleted"}
 USER_VALUE_ALLOWED_KEYS: dict[str, set[str]] = {
     "typical_portion": {"amount", "unit"},
     "review_correction": {"amount", "unit", "reasonCode"},
@@ -1044,13 +1044,12 @@ def _promote_candidate_transaction(
     SmartMemoryItem.model_validate(item_document)
 
     consumed_candidate = dict(candidate)
-    consumed_candidate["state"] = "deleted_suppressed"
+    consumed_candidate["state"] = "activated"
     consumed_candidate["updatedAt"] = now
     consumed_candidate["serverRevision"] = _next_revision(candidate)
     suppression_checks = dict(consumed_candidate.get("suppressionChecks") or {})
     suppression_checks.update(
         {
-            "deletedSuppressed": True,
             "promotedToMemoryItemId": memory_item_id,
             "promotedAt": now,
         }
