@@ -119,6 +119,30 @@ IngredientProductProfileCompatibilityStatus = Literal[
     "incompatible",
     "warning",
 ]
+IngredientProductWarningReasonCode = Literal[
+    "profile_unknown",
+    "profile_warning",
+    "profile_incompatible",
+    "nutrition_low_confidence",
+    "nutrition_missing",
+    "source_candidate_only",
+    "cache_stale",
+    "offline_cache",
+    "pending_user_record",
+    "query_too_short",
+    "backend_degraded",
+]
+IngredientProductRankingSignal = Literal[
+    "exact_user",
+    "exact_match",
+    "user_scoped",
+    "verified_seed",
+    "verified_global",
+    "profile_warning",
+    "nutrition_warning",
+    "pending_user_record",
+]
+IngredientProductCacheState = Literal["fresh", "stale", "offline", "pending_local"]
 IngredientProductDietaryFlag = Literal[
     "vegan",
     "vegetarian",
@@ -278,6 +302,38 @@ INGREDIENT_PRODUCT_PROFILE_COMPATIBILITY_STATUSES: tuple[
     "compatible",
     "incompatible",
     "warning",
+)
+INGREDIENT_PRODUCT_WARNING_REASON_CODES: tuple[
+    IngredientProductWarningReasonCode,
+    ...,
+] = (
+    "profile_unknown",
+    "profile_warning",
+    "profile_incompatible",
+    "nutrition_low_confidence",
+    "nutrition_missing",
+    "source_candidate_only",
+    "cache_stale",
+    "offline_cache",
+    "pending_user_record",
+    "query_too_short",
+    "backend_degraded",
+)
+INGREDIENT_PRODUCT_RANKING_SIGNALS: tuple[IngredientProductRankingSignal, ...] = (
+    "exact_user",
+    "exact_match",
+    "user_scoped",
+    "verified_seed",
+    "verified_global",
+    "profile_warning",
+    "nutrition_warning",
+    "pending_user_record",
+)
+INGREDIENT_PRODUCT_CACHE_STATES: tuple[IngredientProductCacheState, ...] = (
+    "fresh",
+    "stale",
+    "offline",
+    "pending_local",
 )
 INGREDIENT_PRODUCT_DIETARY_FLAGS: tuple[IngredientProductDietaryFlag, ...] = (
     "vegan",
@@ -473,6 +529,121 @@ class BarcodeBoundary(BaseModel):
     createsFirstPartyProductCatalogInThisSlice: Literal[False]
     mustNotWriteLibraryDomains: list[Literal["Ingredient/Product"]]
     rationale: str = Field(min_length=1)
+
+
+class IngredientProductSourceAttribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sourceType: IngredientProductSourceType
+    sourceId: str = Field(min_length=1)
+    sourceName: str = Field(min_length=1)
+    provider: str | None = None
+    license: str | None = None
+    observedAt: str | None = None
+    reviewedAt: str | None = None
+    reviewedBy: str | None = None
+
+
+class IngredientProductConfidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    identity: IngredientProductConfidenceLevel
+    nutrition: IngredientProductConfidenceLevel
+    profile: IngredientProductConfidenceLevel
+
+
+class IngredientProductNutritionPer100(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    basis: IngredientProductNutritionBasis
+    unit: IngredientProductServingUnit
+    kcal: float = Field(ge=0)
+    protein: float = Field(ge=0)
+    fat: float = Field(ge=0)
+    carbs: float = Field(ge=0)
+    fiber: float | None = Field(default=None, ge=0)
+    sugar: float | None = Field(default=None, ge=0)
+    salt: float | None = Field(default=None, ge=0)
+    saturatedFat: float | None = Field(default=None, ge=0)
+
+
+class IngredientProductServing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: float = Field(gt=0)
+    unit: IngredientProductServingUnit
+
+
+class IngredientProductServingSize(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    servingSizeId: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    quantity: float = Field(gt=0)
+    unit: IngredientProductServingUnit
+
+
+class IngredientProductProfileCompatibility(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: IngredientProductProfileCompatibilityStatus
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+
+
+class IngredientProductSearchRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    recordScope: IngredientProductRecordScope
+    lifecycleState: IngredientProductLifecycleState
+    displayName: str = Field(min_length=1)
+    kind: IngredientProductKind
+    defaultServing: IngredientProductServing
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    confidence: IngredientProductConfidence
+    sourceAttribution: IngredientProductSourceAttribution
+    profileCompatibility: IngredientProductProfileCompatibility
+    warningReasonCodes: list[IngredientProductWarningReasonCode] = Field(
+        default_factory=list
+    )
+    rankingSignals: list[IngredientProductRankingSignal] = Field(default_factory=list)
+    brandName: str | None = None
+    ingredientName: str | None = None
+    packageName: str | None = None
+    category: str | None = None
+    servingSizes: list[IngredientProductServingSize] = Field(default_factory=list)
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+    cacheState: IngredientProductCacheState | None = None
+    ownerUserId: str | None = None
+
+
+class IngredientProductSearchQueryEcho(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    normalizedQuery: str = Field(min_length=1)
+    queryLength: int = Field(ge=1)
+    limit: int = Field(ge=1, le=12)
+    includeUserScoped: bool
+    includeGlobal: bool
+    locale: str | None = None
+
+
+class IngredientProductSearchCachePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cacheGeneration: Literal["ingredient_product_search_v1"]
+    maxAgeSeconds: int = Field(ge=0)
+
+
+class IngredientProductSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[IngredientProductSearchRow] = Field(default_factory=list)
+    queryEcho: IngredientProductSearchQueryEcho
+    cachePolicy: IngredientProductSearchCachePolicy | None = None
+    warnings: list[IngredientProductWarningReasonCode] = Field(default_factory=list)
 
 
 class FoodLibraryDomainContract(BaseModel):
