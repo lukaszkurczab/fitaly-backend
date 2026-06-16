@@ -219,6 +219,113 @@ def test_search_caps_limit_and_orders_exact_user_before_verified_global(
     assert global_collection.limit_calls == [12]
 
 
+def test_search_orders_profile_warnings_deterministically_without_medical_payload(
+    mocker: MockerFixture,
+) -> None:
+    user_collection = FakeCollectionRef([])
+    global_collection = FakeCollectionRef(
+        [
+            _record(
+                {
+                    "ingredientProductId": "profile-warning-oats",
+                    "displayName": "Owies profil warning",
+                    "profileFlags": {
+                        "compatibilityStatus": "warning",
+                        "dietaryFlags": ["vegetarian"],
+                        "allergenFlags": ["wheat"],
+                        "medicalConditionMatches": ["diabetes"],
+                    },
+                }
+            ),
+            _record(
+                {
+                    "ingredientProductId": "nutrition-low-oats",
+                    "displayName": "Owies niski confidence",
+                    "confidence": {
+                        "identity": "high",
+                        "nutrition": "low",
+                        "profile": "high",
+                    },
+                    "profileFlags": {
+                        "compatibilityStatus": "compatible",
+                        "dietaryFlags": [],
+                        "allergenFlags": [],
+                    },
+                }
+            ),
+            _record(
+                {
+                    "ingredientProductId": "profile-incompatible-oats",
+                    "displayName": "Owies incompatible",
+                    "profileFlags": {
+                        "compatibilityStatus": "incompatible",
+                        "dietaryFlags": [],
+                        "allergenFlags": ["wheat"],
+                        "medicalAdvice": "Do not eat this product.",
+                    },
+                }
+            ),
+            _record(
+                {
+                    "ingredientProductId": "clean-oats",
+                    "displayName": "Owies czysty",
+                }
+            ),
+        ]
+    )
+    mocker.patch(
+        "app.services.food_library_service.get_firestore",
+        return_value=FakeClient(
+            user_collection=user_collection,
+            global_collection=global_collection,
+        ),
+    )
+
+    response = asyncio.run(
+        food_library_service.search_ingredient_products("user-1", query="owies")
+    )
+
+    assert [item.ingredientProductId for item in response.items] == [
+        "clean-oats",
+        "profile-warning-oats",
+        "nutrition-low-oats",
+        "profile-incompatible-oats",
+    ]
+    warning_row = response.items[1]
+    assert warning_row.profileCompatibility.status == "warning"
+    assert warning_row.profileCompatibility.dietaryFlags == ["vegetarian"]
+    assert warning_row.profileCompatibility.allergenFlags == ["wheat"]
+    assert warning_row.warningReasonCodes == ["profile_warning"]
+    assert warning_row.rankingSignals == [
+        "exact_match",
+        "verified_seed",
+        "profile_warning",
+    ]
+
+    low_confidence_row = response.items[2]
+    assert low_confidence_row.warningReasonCodes == ["nutrition_low_confidence"]
+    assert low_confidence_row.rankingSignals == [
+        "exact_match",
+        "verified_seed",
+        "nutrition_warning",
+    ]
+
+    incompatible_row = response.items[3]
+    assert incompatible_row.profileCompatibility.status == "incompatible"
+    assert incompatible_row.warningReasonCodes == ["profile_incompatible"]
+    assert incompatible_row.rankingSignals == [
+        "exact_match",
+        "verified_seed",
+        "profile_warning",
+    ]
+
+    serialized = response.model_dump(mode="json")
+    assert "medicalConditionMatches" not in str(serialized)
+    assert "medicalAdvice" not in str(serialized)
+    assert "diabetes" not in str(serialized)
+    assert "Do not eat" not in str(serialized)
+
+
 def test_search_enforces_ownership_and_excludes_rejected_and_candidate_only(
     mocker: MockerFixture,
 ) -> None:
