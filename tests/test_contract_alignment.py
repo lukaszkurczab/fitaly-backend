@@ -1447,6 +1447,7 @@ class TestSmartMemoryCoreContract:
         assert cases == set(SMART_MEMORY_PROJECTION_STATES)
         blocked_cases = {
             "no_signal",
+            "activated",
             "muted",
             "deleted_suppressed",
             "disabled",

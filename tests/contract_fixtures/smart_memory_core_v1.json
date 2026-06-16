@@ -58,6 +58,7 @@
     "no_signal",
     "backend_candidate",
     "pending_offline_candidate",
+    "activated",
     "active",
     "muted",
     "deleted_suppressed",
@@ -342,6 +343,17 @@
         "clientMutationId": "contract-mutation-candidate"
       },
       "suggestionUse": "pending_only"
+    },
+    {
+      "case": "activated",
+      "memoryType": "typical_portion",
+      "backendState": null,
+      "projectionState": "activated",
+      "reviewState": "new",
+      "memoryItemId": null,
+      "candidateId": "candidate-activated-001",
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
     },
     {
       "case": "active",
