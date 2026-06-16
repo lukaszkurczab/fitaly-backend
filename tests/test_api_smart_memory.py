@@ -328,6 +328,41 @@ def test_upsert_candidate_returns_existing_activated_candidate_without_item(
     upsert_candidate.assert_awaited_once()
 
 
+def test_upsert_candidate_rejects_stale_user_delete_without_item_fallback(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_candidate = mocker.patch(
+        "app.api.routes.smart_memory.smart_memory_service.upsert_candidate",
+        side_effect=ValueError("Smart Memory candidate is suppressed by user delete"),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/smart-memory/candidates",
+        json={
+            "clientMutationId": "candidate-upsert-stale-user-delete",
+            "candidateId": "candidate-oats",
+            "memoryType": "typical_portion",
+            "subject": {"kind": "ingredient_alias", "aliasHash": "alias-hash-oats"},
+            "evidenceSummary": {"supportingEventCount": 3, "distinctDayCount": 3},
+            "sourceRefs": [
+                {"kind": "meal_portion_observation", "sourceHash": "source-hash-1"}
+            ],
+            "confidenceReasonCodes": ["distinct_days_met"],
+            "suppressionChecks": {},
+            "firstSeenAt": "2026-06-01T10:00:00.000Z",
+            "lastSeenAt": "2026-06-03T10:00:00.000Z",
+        },
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Smart Memory candidate is suppressed by user delete"
+    }
+    upsert_candidate.assert_awaited_once()
+
+
 def test_disable_smart_memory_settings_uses_backend_service(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
