@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import re
 import unicodedata
@@ -22,6 +23,7 @@ from app.db.firebase import get_firestore
 from app.schemas.food_library import (
     IngredientProductConfidence,
     IngredientProductConfidenceLevel,
+    IngredientProductCreateRequest,
     IngredientProductProfileCompatibilityStatus,
     IngredientProductRankingSignal,
     IngredientProductSearchCachePolicy,
@@ -43,6 +45,10 @@ CANDIDATE_ONLY_SOURCE_TYPES: set[IngredientProductSourceType] = {
     "runtime_ai_candidate",
 }
 LOW_CONFIDENCE_LEVELS: set[IngredientProductConfidenceLevel] = {"unknown", "low"}
+
+
+class IngredientProductMutationConflictError(ValueError):
+    """Raised when a user-scoped Product/Ingredient create conflicts."""
 
 
 def normalize_search_query(query: str) -> str:
@@ -125,6 +131,30 @@ def _as_string_list(value: object) -> list[str]:
         return []
     raw_items = cast(list[object], value)
     return [item for item in raw_items if isinstance(item, str)]
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00",
+        "Z",
+    )
+
+
+def _search_prefixes(*values: str | None) -> list[str]:
+    prefixes: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        normalized = normalize_search_query(value)
+        if len(normalized) >= MIN_SEARCH_QUERY_LENGTH:
+            for end_index in range(MIN_SEARCH_QUERY_LENGTH, len(normalized) + 1):
+                prefixes.add(normalized[:end_index])
+        for token in normalized.split():
+            if len(token) < MIN_SEARCH_QUERY_LENGTH:
+                continue
+            for end_index in range(MIN_SEARCH_QUERY_LENGTH, len(token) + 1):
+                prefixes.add(token[:end_index])
+    return sorted(prefixes)[:120]
 
 
 def _snapshot_payload(snapshot: Any) -> dict[str, Any]:
@@ -393,3 +423,92 @@ async def search_ingredient_products(
         ),
         warnings=request_warnings,
     )
+
+
+async def create_user_ingredient_product(
+    user_id: str,
+    request: IngredientProductCreateRequest,
+) -> tuple[IngredientProductSearchRow, bool]:
+    product_id = request.ingredientProductId
+    now = _utc_timestamp()
+    collection_ref = (
+        get_firestore()
+        .collection(USERS_COLLECTION)
+        .document(user_id)
+        .collection(INGREDIENT_PRODUCTS_SUBCOLLECTION)
+    )
+    document_ref = collection_ref.document(product_id)
+
+    try:
+        existing_snapshot = document_ref.get()
+        if existing_snapshot.exists:
+            existing_payload = _snapshot_payload(existing_snapshot)
+            if existing_payload.get("creationClientMutationId") == request.clientMutationId:
+                return _to_search_row(
+                    existing_payload,
+                    normalized_query=normalize_search_query(request.displayName),
+                ), False
+            raise IngredientProductMutationConflictError(
+                "Ingredient/Product record already exists for a different mutation."
+            )
+
+        nutrition_confidence: IngredientProductConfidenceLevel = (
+            "low" if request.nutritionPer100 is not None else "unknown"
+        )
+        payload: dict[str, Any] = {
+            "ingredientProductId": product_id,
+            "recordScope": "user_scoped",
+            "lifecycleState": "candidate",
+            "ownerUserId": user_id,
+            "kind": request.kind,
+            "displayName": request.displayName,
+            "defaultServing": request.defaultServing.model_dump(mode="json"),
+            "nutritionPer100": (
+                request.nutritionPer100.model_dump(mode="json")
+                if request.nutritionPer100 is not None
+                else None
+            ),
+            "confidence": {
+                "identity": "low",
+                "nutrition": nutrition_confidence,
+                "profile": "unknown",
+            },
+            "sourceAttribution": {
+                "sourceType": "user_created",
+                "sourceId": request.clientMutationId,
+                "sourceName": "manual_entry",
+                "observedAt": now,
+            },
+            "profileFlags": {
+                "compatibilityStatus": "unknown",
+                "dietaryFlags": request.dietaryFlags,
+                "allergenFlags": request.allergenFlags,
+            },
+            "servingSizes": [
+                serving.model_dump(mode="json") for serving in request.servingSizes
+            ],
+            "dietaryFlags": request.dietaryFlags,
+            "allergenFlags": request.allergenFlags,
+            "searchPrefixes": _search_prefixes(
+                request.displayName,
+                request.ingredientName,
+                request.brandName,
+                request.packageName,
+                request.category,
+            ),
+            "creationClientMutationId": request.clientMutationId,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        for field_name in ("brandName", "ingredientName", "packageName", "category"):
+            value = getattr(request, field_name)
+            if value:
+                payload[field_name] = value
+
+        document_ref.set(payload)
+    except IngredientProductMutationConflictError:
+        raise
+    except (GoogleAPICallError, RetryError, FirebaseError, ValueError) as exc:
+        raise FirestoreServiceError("Failed to create Ingredient/Product record.") from exc
+
+    return _to_search_row(payload, normalized_query=normalize_search_query(request.displayName)), True

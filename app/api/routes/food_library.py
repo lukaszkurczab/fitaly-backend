@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
 from app.core.exceptions import FirestoreServiceError
-from app.schemas.food_library import IngredientProductSearchResponse
+from app.schemas.food_library import (
+    IngredientProductCreateRequest,
+    IngredientProductCreateResponse,
+    IngredientProductSearchResponse,
+)
 from app.services import food_library_service
+from app.services.food_library_service import IngredientProductMutationConflictError
 
 router = APIRouter()
 
@@ -40,3 +45,24 @@ async def search_ingredient_products_me(
             include_user_scoped=includeUserScoped,
             include_global=includeGlobal,
         )
+
+
+@router.post(
+    "/users/me/ingredient-products",
+    response_model=IngredientProductCreateResponse,
+)
+async def create_ingredient_product_me(
+    request: IngredientProductCreateRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> IngredientProductCreateResponse:
+    try:
+        item, updated = await food_library_service.create_user_ingredient_product(
+            current_user.uid,
+            request,
+        )
+    except IngredientProductMutationConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise_bad_request(exc)
+
+    return IngredientProductCreateResponse(item=item, updated=updated)

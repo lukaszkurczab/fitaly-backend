@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 FoodLibraryDomain = Literal[
@@ -644,6 +644,54 @@ class IngredientProductSearchResponse(BaseModel):
     queryEcho: IngredientProductSearchQueryEcho
     cachePolicy: IngredientProductSearchCachePolicy | None = None
     warnings: list[IngredientProductWarningReasonCode] = Field(default_factory=list)
+
+
+class IngredientProductCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+    ingredientProductId: str = Field(min_length=1, max_length=128)
+    displayName: str = Field(min_length=1, max_length=160)
+    kind: IngredientProductKind = "generic_ingredient"
+    defaultServing: IngredientProductServing
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    brandName: str | None = Field(default=None, max_length=120)
+    ingredientName: str | None = Field(default=None, max_length=160)
+    packageName: str | None = Field(default=None, max_length=120)
+    category: str | None = Field(default=None, max_length=80)
+    servingSizes: list[IngredientProductServingSize] = Field(default_factory=list)
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+
+    @field_validator(
+        "clientMutationId",
+        "ingredientProductId",
+        "displayName",
+        "brandName",
+        "ingredientName",
+        "packageName",
+        "category",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("ingredientProductId")
+    @classmethod
+    def _validate_document_id(cls, value: str) -> str:
+        if "/" in value:
+            raise ValueError("ingredientProductId must be a document id, not a path.")
+        return value
+
+
+class IngredientProductCreateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updated: bool
 
 
 class FoodLibraryDomainContract(BaseModel):

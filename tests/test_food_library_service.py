@@ -6,6 +6,7 @@ from google.api_core.exceptions import GoogleAPICallError
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
+from app.schemas.food_library import IngredientProductCreateRequest
 from app.services import food_library_service
 
 
@@ -152,6 +153,31 @@ def _record(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     return payload
 
 
+def _create_request(
+    overrides: dict[str, Any] | None = None,
+) -> IngredientProductCreateRequest:
+    payload: dict[str, Any] = {
+        "clientMutationId": "mutation-1",
+        "ingredientProductId": "user-oats-1",
+        "displayName": "Owsianka domowa",
+        "kind": "generic_ingredient",
+        "defaultServing": {"quantity": 50, "unit": "g"},
+        "nutritionPer100": {
+            "basis": "per_100g",
+            "unit": "g",
+            "kcal": 370,
+            "protein": 13,
+            "fat": 7,
+            "carbs": 60,
+        },
+        "dietaryFlags": ["vegetarian"],
+        "allergenFlags": ["wheat"],
+    }
+    if overrides:
+        payload.update(overrides)
+    return IngredientProductCreateRequest.model_validate(payload)
+
+
 def test_search_caps_limit_and_orders_exact_user_before_verified_global(
     mocker: MockerFixture,
 ) -> None:
@@ -217,6 +243,147 @@ def test_search_caps_limit_and_orders_exact_user_before_verified_global(
     assert global_collection.where_calls == [("searchPrefixes", "array_contains", "owies")]
     assert user_collection.limit_calls == [12]
     assert global_collection.limit_calls == [12]
+
+
+def test_create_user_ingredient_product_enforces_user_scope_and_candidate(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection_ref = mocker.Mock()
+    user_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
+    document_ref = mocker.Mock()
+    document_ref.get.return_value.exists = False
+
+    def collection_side_effect(name: str) -> Any:
+        if name == "users":
+            return users_collection_ref
+        pytest.fail(f"Unexpected {name}")
+
+    client.collection.side_effect = collection_side_effect
+    users_collection_ref.document.return_value = user_ref
+    user_ref.collection.return_value = ingredient_products_collection_ref
+    ingredient_products_collection_ref.document.return_value = document_ref
+    mocker.patch(
+        "app.services.food_library_service.get_firestore",
+        return_value=client,
+    )
+
+    row, updated = asyncio.run(
+        food_library_service.create_user_ingredient_product(
+            "user-1",
+            _create_request(),
+        )
+    )
+
+    assert updated is True
+    users_collection_ref.document.assert_called_once_with("user-1")
+    user_ref.collection.assert_called_once_with("ingredientProducts")
+    ingredient_products_collection_ref.document.assert_called_once_with("user-oats-1")
+    document_ref.set.assert_called_once()
+    payload = document_ref.set.call_args.args[0]
+    assert payload["recordScope"] == "user_scoped"
+    assert payload["lifecycleState"] == "candidate"
+    assert payload["ownerUserId"] == "user-1"
+    assert payload["sourceAttribution"]["sourceType"] == "user_created"
+    assert payload["confidence"] == {
+        "identity": "low",
+        "nutrition": "low",
+        "profile": "unknown",
+    }
+    assert "ow" in payload["searchPrefixes"]
+    assert "owsianka" in payload["searchPrefixes"]
+    assert row.ingredientProductId == "user-oats-1"
+    assert row.recordScope == "user_scoped"
+    assert row.lifecycleState == "candidate"
+    assert row.ownerUserId == "user-1"
+    assert "pending_user_record" in row.warningReasonCodes
+
+
+def test_create_user_ingredient_product_is_idempotent_for_same_mutation(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    users_collection_ref = mocker.Mock()
+    user_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
+    document_ref = mocker.Mock()
+    existing_snapshot = FakeSnapshot(
+        "user-oats-1",
+        _record(
+            {
+                "ingredientProductId": "user-oats-1",
+                "recordScope": "user_scoped",
+                "ownerUserId": "user-1",
+                "lifecycleState": "candidate",
+                "displayName": "Owsianka domowa",
+                "sourceAttribution": {
+                    "sourceType": "user_created",
+                    "sourceId": "mutation-1",
+                    "sourceName": "manual_entry",
+                },
+                "confidence": {
+                    "identity": "low",
+                    "nutrition": "low",
+                    "profile": "unknown",
+                },
+                "creationClientMutationId": "mutation-1",
+            }
+        ),
+    )
+    existing_snapshot.exists = True  # type: ignore[attr-defined]
+    document_ref.get.return_value = existing_snapshot
+
+    client.collection.return_value = users_collection_ref
+    users_collection_ref.document.return_value = user_ref
+    user_ref.collection.return_value = ingredient_products_collection_ref
+    ingredient_products_collection_ref.document.return_value = document_ref
+    mocker.patch("app.services.food_library_service.get_firestore", return_value=client)
+
+    row, updated = asyncio.run(
+        food_library_service.create_user_ingredient_product(
+            "user-1",
+            _create_request(),
+        )
+    )
+
+    assert updated is False
+    assert row.ingredientProductId == "user-oats-1"
+    document_ref.set.assert_not_called()
+
+
+def test_create_user_ingredient_product_rejects_existing_different_mutation(
+    mocker: MockerFixture,
+) -> None:
+    client = mocker.Mock()
+    document_ref = mocker.Mock()
+    existing_snapshot = FakeSnapshot(
+        "user-oats-1",
+        _record(
+            {
+                "ingredientProductId": "user-oats-1",
+                "recordScope": "user_scoped",
+                "ownerUserId": "user-1",
+                "lifecycleState": "candidate",
+                "creationClientMutationId": "other-mutation",
+            }
+        ),
+    )
+    existing_snapshot.exists = True  # type: ignore[attr-defined]
+    document_ref.get.return_value = existing_snapshot
+    client.collection.return_value.document.return_value.collection.return_value.document.return_value = (
+        document_ref
+    )
+    mocker.patch("app.services.food_library_service.get_firestore", return_value=client)
+
+    with pytest.raises(food_library_service.IngredientProductMutationConflictError):
+        asyncio.run(
+            food_library_service.create_user_ingredient_product(
+                "user-1",
+                _create_request(),
+            )
+        )
+    document_ref.set.assert_not_called()
 
 
 def test_search_respects_scope_flags_without_cross_scope_fallback(
