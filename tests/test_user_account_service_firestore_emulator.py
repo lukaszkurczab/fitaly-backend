@@ -20,6 +20,7 @@ from app.core.firestore_constants import (
     BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
+    INGREDIENT_PRODUCTS_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
@@ -64,6 +65,7 @@ def _export_payload(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        ingredient_products,
         smart_memory_items,
         smart_memory_candidates,
         smart_memory_settings,
@@ -89,6 +91,7 @@ def _export_payload(
         "notificationPrefs": notification_prefs,
         "feedback": feedback,
         "mealMutationDedupe": meal_mutation_dedupe,
+        "ingredientProducts": ingredient_products,
         "smartMemoryItems": smart_memory_items,
         "smartMemoryCandidates": smart_memory_candidates,
         "smartMemorySettings": smart_memory_settings,
@@ -307,6 +310,26 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
                 "id": f"mutation-other-{run_id}",
                 "ownerMarker": f"other-meal-mutation-{run_id}",
                 "clientMutationId": f"other-mutation-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(INGREDIENT_PRODUCTS_SUBCOLLECTION).document(
+                f"ingredient-product-current-{run_id}"
+            ),
+            {
+                "ingredientProductId": f"ingredient-product-current-{run_id}",
+                "recordScope": "user_scoped",
+                "ownerMarker": f"current-ingredient-product-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(INGREDIENT_PRODUCTS_SUBCOLLECTION).document(
+                f"ingredient-product-other-{run_id}"
+            ),
+            {
+                "ingredientProductId": f"ingredient-product-other-{run_id}",
+                "recordScope": "user_scoped",
+                "ownerMarker": f"other-ingredient-product-{run_id}",
             },
         ),
         (
@@ -742,6 +765,7 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             "notificationPrefs",
             "feedback",
             "mealMutationDedupe",
+            "ingredientProducts",
             "smartMemoryItems",
             "smartMemoryCandidates",
             "smartMemorySettings",
@@ -778,6 +802,9 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         }
         assert _ids(export["feedback"]) == {f"feedback-current-{run_id}"}
         assert _ids(export["mealMutationDedupe"]) == {f"mutation-current-{run_id}"}
+        assert _ids(export["ingredientProducts"]) == {
+            f"ingredient-product-current-{run_id}"
+        }
         assert _ids(export["smartMemoryItems"]) == {f"memory-item-current-{run_id}"}
         assert _ids(export["smartMemoryCandidates"]) == {
             f"memory-candidate-current-{run_id}"
@@ -829,6 +856,7 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             f"other-notification-prefs-{run_id}",
             f"other-feedback-{run_id}",
             f"other-meal-mutation-{run_id}",
+            f"other-ingredient-product-{run_id}",
             f"other-smart-memory-item-{run_id}",
             f"other-smart-memory-candidate-{run_id}",
             f"other-smart-memory-settings-{run_id}",
@@ -918,6 +946,12 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     other_memory_mutation_ref = other_user_ref.collection(
         SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
     ).document(f"memory-mutation-other-delete-{run_id}")
+    current_ingredient_product_ref = current_user_ref.collection(
+        INGREDIENT_PRODUCTS_SUBCOLLECTION
+    ).document(f"ingredient-product-current-delete-{run_id}")
+    other_ingredient_product_ref = other_user_ref.collection(
+        INGREDIENT_PRODUCTS_SUBCOLLECTION
+    ).document(f"ingredient-product-other-delete-{run_id}")
     seeded_refs: list[firestore.DocumentReference] = [
         current_user_ref,
         other_user_ref,
@@ -933,6 +967,8 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         other_memory_tombstone_ref,
         current_memory_mutation_ref,
         other_memory_mutation_ref,
+        current_ingredient_product_ref,
+        other_ingredient_product_ref,
         current_event_ref,
         other_event_ref,
         anonymous_event_ref,
@@ -1006,6 +1042,20 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     other_memory_mutation_ref.set(
         {"ownerMarker": f"other-smart-memory-mutation-delete-{run_id}"}
     )
+    current_ingredient_product_ref.set(
+        {
+            "ingredientProductId": f"ingredient-product-current-delete-{run_id}",
+            "recordScope": "user_scoped",
+            "ownerMarker": f"current-ingredient-product-delete-{run_id}",
+        }
+    )
+    other_ingredient_product_ref.set(
+        {
+            "ingredientProductId": f"ingredient-product-other-delete-{run_id}",
+            "recordScope": "user_scoped",
+            "ownerMarker": f"other-ingredient-product-delete-{run_id}",
+        }
+    )
     current_event_ref.set(
         {
             "eventId": current_event_ref.id,
@@ -1042,6 +1092,7 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         assert current_memory_settings_ref.get().exists is False
         assert current_memory_tombstone_ref.get().exists is False
         assert current_memory_mutation_ref.get().exists is False
+        assert current_ingredient_product_ref.get().exists is False
         other_reminder_snapshot = other_reminder_stats_ref.get()
         assert other_reminder_snapshot.exists is True
         other_reminder_payload = other_reminder_snapshot.to_dict() or {}
@@ -1065,6 +1116,10 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
             (
                 other_memory_mutation_ref,
                 f"other-smart-memory-mutation-delete-{run_id}",
+            ),
+            (
+                other_ingredient_product_ref,
+                f"other-ingredient-product-delete-{run_id}",
             ),
         ):
             snapshot = document_ref.get()

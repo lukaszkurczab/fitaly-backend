@@ -182,6 +182,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     meal_mutation_dedupe_collection_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
     smart_memory_collection_ref = mocker.Mock()
     smart_memory_candidates_collection_ref = mocker.Mock()
     smart_memory_settings_collection_ref = mocker.Mock()
@@ -204,6 +205,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_doc = mocker.Mock()
     feedback_doc.to_dict.return_value = {}
     meal_mutation_dedupe_doc = mocker.Mock()
+    ingredient_product_doc = mocker.Mock()
     smart_memory_doc = mocker.Mock()
     smart_memory_candidate_doc = mocker.Mock()
     smart_memory_settings_doc = mocker.Mock()
@@ -261,6 +263,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return feedback_collection_ref
         if name == "mealMutationDedupe":
             return meal_mutation_dedupe_collection_ref
+        if name == "ingredientProducts":
+            return ingredient_products_collection_ref
         if name == "smartMemory":
             return smart_memory_collection_ref
         if name == "smartMemoryCandidates":
@@ -292,6 +296,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_collection_ref.stream.return_value = [notif_meta_doc]
     feedback_collection_ref.stream.return_value = [feedback_doc]
     meal_mutation_dedupe_collection_ref.stream.return_value = [meal_mutation_dedupe_doc]
+    ingredient_products_collection_ref.stream.return_value = [ingredient_product_doc]
     smart_memory_collection_ref.stream.return_value = [smart_memory_doc]
     smart_memory_candidates_collection_ref.stream.return_value = [smart_memory_candidate_doc]
     smart_memory_settings_collection_ref.stream.return_value = [smart_memory_settings_doc]
@@ -370,6 +375,7 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert notif_meta_doc.reference in deleted_refs
     assert feedback_doc.reference in deleted_refs
     assert meal_mutation_dedupe_doc.reference in deleted_refs
+    assert ingredient_product_doc.reference in deleted_refs
     assert smart_memory_doc.reference in deleted_refs
     assert smart_memory_candidate_doc.reference in deleted_refs
     assert smart_memory_settings_doc.reference in deleted_refs
@@ -2005,6 +2011,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     prefs_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     meal_mutation_dedupe_collection_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
     smart_memory_collection_ref = mocker.Mock()
     smart_memory_candidates_collection_ref = mocker.Mock()
     smart_memory_settings_collection_ref = mocker.Mock()
@@ -2047,6 +2054,12 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     meal_mutation_dedupe_document.to_dict.return_value = {
         "clientMutationId": "profile-mutation-1",
         "kind": "profile_update",
+    }
+    ingredient_product_document = mocker.Mock()
+    ingredient_product_document.id = "ingredient-product-1"
+    ingredient_product_document.to_dict.return_value = {
+        "ingredientProductId": "ingredient-product-1",
+        "recordScope": "user_scoped",
     }
     smart_memory_document = mocker.Mock()
     smart_memory_document.id = "memory-item-1"
@@ -2162,6 +2175,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return feedback_collection_ref
         if name == "mealMutationDedupe":
             return meal_mutation_dedupe_collection_ref
+        if name == "ingredientProducts":
+            return ingredient_products_collection_ref
         if name == "smartMemory":
             return smart_memory_collection_ref
         if name == "smartMemoryCandidates":
@@ -2193,6 +2208,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     meal_mutation_dedupe_collection_ref.stream.return_value = [
         meal_mutation_dedupe_document
     ]
+    ingredient_products_collection_ref.stream.return_value = [ingredient_product_document]
     smart_memory_collection_ref.stream.return_value = [smart_memory_document]
     smart_memory_candidates_collection_ref.stream.return_value = [
         smart_memory_candidate_document
@@ -2300,6 +2316,7 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        ingredient_products,
         smart_memory_items,
         smart_memory_candidates,
         smart_memory_settings,
@@ -2343,6 +2360,13 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             "clientMutationId": "profile-mutation-1",
             "kind": "profile_update",
             "id": "profile-mutation-1",
+        }
+    ]
+    assert ingredient_products == [
+        {
+            "ingredientProductId": "ingredient-product-1",
+            "recordScope": "user_scoped",
+            "id": "ingredient-product-1",
         }
     ]
     assert smart_memory_items == [

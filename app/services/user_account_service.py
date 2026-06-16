@@ -36,6 +36,7 @@ from app.core.firestore_constants import (
     BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
+    INGREDIENT_PRODUCTS_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
@@ -64,6 +65,7 @@ DELETE_SUBCOLLECTIONS = (
     "notif_meta",
     "feedback",
     MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    INGREDIENT_PRODUCTS_SUBCOLLECTION,
     SMART_MEMORY_SUBCOLLECTION,
     SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
     SMART_MEMORY_SETTINGS_SUBCOLLECTION,
@@ -1359,6 +1361,7 @@ async def get_user_export_data(
     dict[str, Any],  # notification prefs
     list[dict[str, Any]],  # feedback
     list[dict[str, Any]],  # meal mutation dedupe
+    list[dict[str, Any]],  # ingredient products
     list[dict[str, Any]],  # smart memory items
     list[dict[str, Any]],  # smart memory candidates
     list[dict[str, Any]],  # smart memory settings
@@ -1390,6 +1393,10 @@ async def get_user_export_data(
         meal_mutation_dedupe = _read_subcollection_documents(
             user_ref,
             MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+        )
+        ingredient_products = _read_subcollection_documents(
+            user_ref,
+            INGREDIENT_PRODUCTS_SUBCOLLECTION,
         )
         smart_memory_export = smart_memory_service.read_export(user_ref)
         smart_memory_items = smart_memory_export["items"]
@@ -1434,6 +1441,7 @@ async def get_user_export_data(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        ingredient_products,
         smart_memory_items,
         smart_memory_candidates,
         smart_memory_settings,

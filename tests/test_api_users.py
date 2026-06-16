@@ -729,6 +729,7 @@ def test_get_user_export_returns_backend_payload(
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
             [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [{"id": "ingredient-product-1", "recordScope": "user_scoped"}],
             [{"id": "memory-item-1"}],
             [{"id": "memory-candidate-1"}],
             [{"id": "default", "enabled": True}],
@@ -760,6 +761,9 @@ def test_get_user_export_returns_backend_payload(
         "feedback": [{"id": "feedback-1"}],
         "mealMutationDedupe": [
             {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
+        ],
+        "ingredientProducts": [
+            {"id": "ingredient-product-1", "recordScope": "user_scoped"}
         ],
         "smartMemoryItems": [{"id": "memory-item-1"}],
         "smartMemoryCandidates": [{"id": "memory-candidate-1"}],

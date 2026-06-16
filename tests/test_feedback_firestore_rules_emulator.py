@@ -119,6 +119,16 @@ def _feedback_payload(message: str) -> dict[str, Any]:
     }
 
 
+def _ingredient_product_payload(run_id: str) -> dict[str, Any]:
+    return {
+        "fields": {
+            "ingredientProductId": {"stringValue": f"ingredient-product-{run_id}"},
+            "recordScope": {"stringValue": "user_scoped"},
+            "displayName": {"stringValue": "Owsianka"},
+        }
+    }
+
+
 def _write_firestore_document(
     document_path: str,
     *,
@@ -261,6 +271,47 @@ def test_feedback_firestore_rules_enforce_canonical_owner_create_read_only() -> 
             )
         except Exception:
             pass
+        for token in (owner_token, other_token):
+            if token:
+                _delete_auth_emulator_user(token)
+
+
+def test_product_ingredient_firestore_rules_deny_client_sdk_access() -> None:
+    run_id = uuid4().hex
+    owner_email = f"product-ingredient-rules-owner-{run_id}@example.test"
+    other_email = f"product-ingredient-rules-other-{run_id}@example.test"
+    owner_uid = ""
+    owner_token = ""
+    other_token = ""
+
+    try:
+        owner_uid, owner_token = _sign_up_auth_emulator_user(owner_email)
+        _, other_token = _sign_up_auth_emulator_user(other_email)
+
+        paths = (
+            f"ingredientProducts/global-{run_id}",
+            f"users/{owner_uid}/ingredientProducts/user-{run_id}",
+        )
+        for document_path in paths:
+            for denied_token in (owner_token, other_token):
+                assert (
+                    _write_firestore_document(
+                        document_path,
+                        id_token=denied_token,
+                        payload=_ingredient_product_payload(run_id),
+                    )
+                    == 403
+                )
+                read_status, _ = _read_firestore_document(
+                    document_path,
+                    id_token=denied_token,
+                )
+                assert read_status == 403
+                assert _delete_firestore_document(
+                    document_path,
+                    id_token=denied_token,
+                ) == 403
+    finally:
         for token in (owner_token, other_token):
             if token:
                 _delete_auth_emulator_user(token)

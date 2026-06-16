@@ -43,6 +43,9 @@ class UserExportResponse(BaseModel):
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
     feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     mealMutationDedupe: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    ingredientProducts: list[dict[str, Any]] = Field(
+        default_factory=_dict_items_default
+    )
     smartMemoryItems: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     smartMemoryCandidates: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     smartMemorySettings: list[dict[str, Any]] = Field(default_factory=_dict_items_default)

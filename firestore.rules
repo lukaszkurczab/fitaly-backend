@@ -119,6 +119,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Backend-owned Product/Ingredient user records. Mobile must use API v2.
+    match /users/{userId}/ingredientProducts/{ingredientProductId} {
+      allow read, write: if false;
+    }
+
     // Backend-owned reminder state; not exposed to client SDK.
     match /users/{userId}/reminderDailyStats/{dayKey} {
       allow read, write: if false;
@@ -173,6 +178,11 @@ service cloud.firestore {
     }
 
     match /rate_limits/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Backend-owned Product/Ingredient global catalog.
+    match /ingredientProducts/{document=**} {
       allow read, write: if false;
     }
 
