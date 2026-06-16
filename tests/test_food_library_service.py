@@ -219,6 +219,94 @@ def test_search_caps_limit_and_orders_exact_user_before_verified_global(
     assert global_collection.limit_calls == [12]
 
 
+def test_search_respects_scope_flags_without_cross_scope_fallback(
+    mocker: MockerFixture,
+) -> None:
+    user_collection = FakeCollectionRef(
+        [
+            _record(
+                {
+                    "ingredientProductId": "user-oats",
+                    "recordScope": "user_scoped",
+                    "ownerUserId": "user-1",
+                    "displayName": "Owies prywatny",
+                    "sourceAttribution": {
+                        "sourceType": "user_created",
+                        "sourceId": "user-oats",
+                        "sourceName": "User created",
+                    },
+                }
+            )
+        ]
+    )
+    global_collection = FakeCollectionRef(
+        [_record({"ingredientProductId": "global-oats"})]
+    )
+    mocker.patch(
+        "app.services.food_library_service.get_firestore",
+        return_value=FakeClient(
+            user_collection=user_collection,
+            global_collection=global_collection,
+        ),
+    )
+
+    global_only = asyncio.run(
+        food_library_service.search_ingredient_products(
+            "user-1",
+            query="owies",
+            include_user_scoped=False,
+            include_global=True,
+        )
+    )
+
+    assert [item.ingredientProductId for item in global_only.items] == ["global-oats"]
+    assert global_only.queryEcho.includeUserScoped is False
+    assert global_only.queryEcho.includeGlobal is True
+    assert user_collection.where_calls == []
+    assert global_collection.where_calls == [
+        ("searchPrefixes", "array_contains", "owies")
+    ]
+
+    user_collection.where_calls.clear()
+    global_collection.where_calls.clear()
+
+    user_only = asyncio.run(
+        food_library_service.search_ingredient_products(
+            "user-1",
+            query="owies",
+            include_user_scoped=True,
+            include_global=False,
+        )
+    )
+
+    assert [item.ingredientProductId for item in user_only.items] == ["user-oats"]
+    assert user_only.queryEcho.includeUserScoped is True
+    assert user_only.queryEcho.includeGlobal is False
+    assert user_collection.where_calls == [
+        ("searchPrefixes", "array_contains", "owies")
+    ]
+    assert global_collection.where_calls == []
+
+    user_collection.where_calls.clear()
+    global_collection.where_calls.clear()
+
+    disabled_scopes = asyncio.run(
+        food_library_service.search_ingredient_products(
+            "user-1",
+            query="owies",
+            include_user_scoped=False,
+            include_global=False,
+        )
+    )
+
+    assert disabled_scopes.items == []
+    assert disabled_scopes.warnings == []
+    assert disabled_scopes.queryEcho.includeUserScoped is False
+    assert disabled_scopes.queryEcho.includeGlobal is False
+    assert user_collection.where_calls == []
+    assert global_collection.where_calls == []
+
+
 def test_search_orders_profile_warnings_deterministically_without_medical_payload(
     mocker: MockerFixture,
 ) -> None:
