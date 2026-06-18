@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v2.endpoints.ai_chat import router as ai_chat_router
+from app.api.v2.endpoints.known_patterns import router as known_patterns_router
 from app.api.v2.endpoints.recipe_catalog import router as recipe_catalog_router
 from app.api.routes.chat_threads import router as chat_threads_router
 from app.api.routes.coach import router as coach_router
@@ -24,5 +25,6 @@ router.include_router(weekly_reports_router, tags=["weekly-reports"], prefix="")
 router.include_router(smart_memory_router, prefix="")
 router.include_router(food_library_router, tags=["food-library"], prefix="")
 router.include_router(ai_chat_router, prefix="")
+router.include_router(known_patterns_router, prefix="")
 router.include_router(recipe_catalog_router, prefix="")
 router.include_router(chat_threads_router, tags=["ai-chat"], prefix="")
