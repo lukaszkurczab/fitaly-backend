@@ -169,8 +169,8 @@ def test_recipe_catalog_route_returns_default_catalog_shape(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["totalCatalogCount"] == 6
-    assert body["visibleCount"] == 6
+    assert body["totalCatalogCount"] == 7
+    assert body["visibleCount"] == 7
     assert body["emptyCatalog"] is False
     assert body["items"][0]["recipe"]["recipeId"] == "berry-yogurt-bowl"
 

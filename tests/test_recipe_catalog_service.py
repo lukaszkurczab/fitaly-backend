@@ -14,7 +14,11 @@ from app.schemas.recipes import (
     RecipeCatalogRecord,
 )
 from app.services import recipe_catalog_service
-from app.services.recipe_catalog_service import evaluate_recipe_catalog
+from app.services.recipe_catalog_service import (
+    RecipeCatalogCoverageCase,
+    evaluate_default_recipe_catalog_coverage,
+    evaluate_recipe_catalog,
+)
 
 
 def _recipe(
@@ -291,3 +295,155 @@ def test_nutrition_snapshot_thresholds_are_deterministic() -> None:
         "lowCarb",
         "lowFat",
     ]
+
+
+def test_default_catalog_coverage_gate_reports_accepted_cases() -> None:
+    report = evaluate_default_recipe_catalog_coverage()
+    rows = {row.case_id: row for row in report}
+
+    assert set(rows) == {
+        "no-filters",
+        "one-allergy",
+        "one-restriction",
+        "one-macro-style",
+        "allergy-plus-restriction",
+        "low-results",
+        "empty-catalog",
+        "unknown-reveal",
+    }
+    assert all(row.passes_coverage_gate for row in rows.values())
+
+    no_filters = rows["no-filters"]
+    assert no_filters.name == "No profile filters"
+    assert no_filters.visible_count > 0
+    assert no_filters.hidden_hard_exclusion_count == 0
+    assert no_filters.unknown_reveal_required_count == 0
+    assert no_filters.threshold == 0
+    assert no_filters.low_results is False
+    assert no_filters.empty_catalog is False
+    assert no_filters.low_results_state_required is False
+    assert no_filters.query_echo.activeAllergies == []
+    assert no_filters.query_echo.activeRestrictions == []
+    assert no_filters.query_echo.activeSoftPreferences == []
+
+    one_allergy = rows["one-allergy"]
+    assert one_allergy.request.allergies == ["lactose"]
+    assert one_allergy.query_echo.activeAllergies == ["lactose"]
+    assert one_allergy.hidden_hard_exclusion_count == 1
+    assert one_allergy.threshold == 6
+
+    one_restriction = rows["one-restriction"]
+    assert one_restriction.query_echo.activeRestrictions == ["vegan"]
+    assert one_restriction.hidden_hard_exclusion_count > 0
+    assert one_restriction.threshold == 6
+
+    macro_style = rows["one-macro-style"]
+    assert macro_style.query_echo.activeSoftPreferences == ["highProtein"]
+    assert macro_style.visible_count == macro_style.total_catalog_count
+    assert macro_style.hidden_hard_exclusion_count == 0
+    assert macro_style.threshold == 6
+
+    combined = rows["allergy-plus-restriction"]
+    assert combined.query_echo.activeAllergies == ["peanuts"]
+    assert combined.query_echo.activeRestrictions == ["vegan"]
+    assert combined.threshold == 3
+    assert combined.hidden_hard_exclusion_count > 0
+
+
+def test_default_catalog_coverage_gate_reports_low_empty_and_unknown_states() -> None:
+    rows = {row.case_id: row for row in evaluate_default_recipe_catalog_coverage()}
+
+    low_results = rows["low-results"]
+    assert low_results.query_echo.activeRestrictions == ["pescatarian"]
+    assert low_results.visible_count < low_results.threshold
+    assert low_results.low_results is True
+    assert low_results.empty_catalog is False
+    assert low_results.low_results_state_required is True
+    assert low_results.passes_coverage_gate is True
+
+    empty_catalog = rows["empty-catalog"]
+    assert empty_catalog.total_catalog_count == 0
+    assert empty_catalog.returned_item_count == 0
+    assert empty_catalog.visible_count == 0
+    assert empty_catalog.hidden_hard_exclusion_count == 0
+    assert empty_catalog.unknown_reveal_required_count == 0
+    assert empty_catalog.threshold == 0
+    assert empty_catalog.low_results is False
+    assert empty_catalog.empty_catalog is True
+    assert empty_catalog.low_results_state_required is False
+    assert empty_catalog.passes_coverage_gate is True
+
+    unknown_reveal = rows["unknown-reveal"]
+    assert unknown_reveal.request.revealUnknown is True
+    assert unknown_reveal.query_echo.revealUnknown is True
+    assert unknown_reveal.query_echo.activeAllergies == ["peanuts"]
+    assert unknown_reveal.total_catalog_count == rows["no-filters"].total_catalog_count
+    assert unknown_reveal.unknown_reveal_required_count == 1
+    assert unknown_reveal.revealed_unknown_count == 1
+    assert (
+        unknown_reveal.returned_item_count
+        == unknown_reveal.visible_count + unknown_reveal.revealed_unknown_count
+    )
+    assert unknown_reveal.passes_coverage_gate is True
+
+
+def test_coverage_gate_keeps_empty_catalog_separate_from_low_results() -> None:
+    report = evaluate_default_recipe_catalog_coverage(
+        cases=[
+            RecipeCatalogCoverageCase(
+                case_id="empty-without-empty-expectation",
+                name="Empty catalog without explicit empty state expectation",
+                request=_request(allergies=["peanuts"]),
+                catalog=[],
+            )
+        ]
+    )
+
+    assert report[0].empty_catalog is True
+    assert report[0].low_results is False
+    assert report[0].passes_coverage_gate is False
+
+
+def test_coverage_gate_rejects_non_empty_filtered_case_with_zero_visible_results() -> None:
+    report = evaluate_default_recipe_catalog_coverage(
+        cases=[
+            RecipeCatalogCoverageCase(
+                case_id="zero-visible-low-results",
+                name="Filtered non-empty catalog with no usable visible rows",
+                request=_request(allergies=["peanuts"]),
+                catalog=[_recipe("hidden-peanut", allergen_flags=["peanuts"])],
+            )
+        ]
+    )
+
+    assert report[0].total_catalog_count == 1
+    assert report[0].visible_count == 0
+    assert report[0].hidden_hard_exclusion_count == 1
+    assert report[0].low_results is True
+    assert report[0].empty_catalog is False
+    assert report[0].passes_coverage_gate is False
+
+
+def test_coverage_gate_requires_unknown_reveal_to_be_visible_when_expected() -> None:
+    report = evaluate_default_recipe_catalog_coverage(
+        cases=[
+            RecipeCatalogCoverageCase(
+                case_id="unknown-not-revealed",
+                name="Unknown case without reveal control",
+                request=_request(allergies=["peanuts"]),
+                catalog=[
+                    _recipe(
+                        "unknown-peanut-status",
+                        profile_flag_state="partial",
+                        unknown_allergen_flags=["peanuts"],
+                    ),
+                    _recipe("safe-bowl"),
+                ],
+                expected_unknown_reveal=True,
+            )
+        ]
+    )
+
+    assert report[0].unknown_reveal_required_count == 1
+    assert report[0].revealed_unknown_count == 0
+    assert report[0].passes_coverage_gate is False

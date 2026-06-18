@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from app.schemas.recipes import (
     RecipeCatalogAllergenFlag,
@@ -16,6 +17,35 @@ from app.schemas.recipes import (
     RecipeCatalogSourceAttribution,
 )
 from app.schemas.user_account import AllergyValue, PreferenceValue
+
+
+@dataclass(frozen=True, slots=True)
+class RecipeCatalogCoverageCase:
+    case_id: str
+    name: str
+    request: RecipeCatalogFilterRequest
+    catalog: Sequence[RecipeCatalogRecord] | None = None
+    expected_empty_catalog: bool = False
+    expected_unknown_reveal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RecipeCatalogCoverageResult:
+    case_id: str
+    name: str
+    request: RecipeCatalogFilterRequest
+    query_echo: RecipeCatalogFilterQueryEcho
+    total_catalog_count: int
+    returned_item_count: int
+    visible_count: int
+    hidden_hard_exclusion_count: int
+    unknown_reveal_required_count: int
+    revealed_unknown_count: int
+    threshold: int
+    low_results: bool
+    empty_catalog: bool
+    low_results_state_required: bool
+    passes_coverage_gate: bool
 
 
 ALLERGY_FLAG_BY_PROFILE_VALUE: dict[str, RecipeCatalogAllergenFlag] = {
@@ -168,6 +198,47 @@ CURATED_RECIPE_CATALOG: tuple[RecipeCatalogRecord, ...] = (
         dietary_flags=["vegan", "vegetarian", "dairy_free"],
         allergen_flags=["peanuts", "gluten"],
     ),
+    RecipeCatalogRecord.model_validate(
+        {
+            "recipeId": "chickpea-vegetable-pan",
+            "version": 1,
+            "lifecycleState": "active",
+            "locale": "pl-PL",
+            "title": "Chickpea vegetable pan",
+            "description": "Curated recipe with partial profile flag review.",
+            "servings": 2,
+            "yield": "2 servings",
+            "sourceAttribution": _source().model_dump(mode="json"),
+            "updatedAt": "2026-06-18T00:00:00.000Z",
+            "reviewState": "curated",
+            "ingredients": [
+                {
+                    "ingredientProductId": None,
+                    "snapshotName": "Curated ingredient snapshot",
+                    "quantity": 100,
+                    "unit": "g",
+                }
+            ],
+            "steps": ["Prepare curated recipe."],
+            "prepTimeMin": 10,
+            "cookTimeMin": 20,
+            "nutritionSnapshot": RecipeCatalogNutritionSnapshot(
+                kcal=470,
+                proteinGrams=22,
+                fatGrams=15,
+                carbsGrams=54,
+                confidence="medium",
+                isPartial=False,
+            ).model_dump(mode="json"),
+            "imageRef": None,
+            "profileFlagState": "partial",
+            "dietaryFlags": ["vegan", "vegetarian", "gluten_free", "dairy_free"],
+            "allergenFlags": [],
+            "unknownDietaryFlags": [],
+            "unknownAllergenFlags": ["peanuts"],
+            "styleTags": ["balanced", "mediterranean"],
+        }
+    ),
     _record(
         recipe_id="chicken-quinoa-salad",
         title="Chicken quinoa salad",
@@ -183,6 +254,13 @@ CURATED_RECIPE_CATALOG: tuple[RecipeCatalogRecord, ...] = (
         style_tags=["balanced", "mediterranean"],
     ),
 )
+
+
+def evaluate_default_recipe_catalog_coverage(
+    cases: Sequence[RecipeCatalogCoverageCase] | None = None,
+) -> tuple[RecipeCatalogCoverageResult, ...]:
+    coverage_cases = list(_default_coverage_cases() if cases is None else cases)
+    return tuple(_evaluate_coverage_case(case) for case in coverage_cases)
 
 
 def evaluate_recipe_catalog(
@@ -248,6 +326,124 @@ def evaluate_recipe_catalog(
         lowResults=bool(threshold and visible_count < threshold),
         emptyCatalog=len(records) == 0,
     )
+
+
+def _evaluate_coverage_case(
+    case: RecipeCatalogCoverageCase,
+) -> RecipeCatalogCoverageResult:
+    response = evaluate_recipe_catalog(case.request, catalog=case.catalog)
+    revealed_unknown_count = sum(
+        1 for result in response.items if result.status == "unknown_reveal_required"
+    )
+    return RecipeCatalogCoverageResult(
+        case_id=case.case_id,
+        name=case.name,
+        request=case.request,
+        query_echo=response.queryEcho,
+        total_catalog_count=response.totalCatalogCount,
+        returned_item_count=len(response.items),
+        visible_count=response.visibleCount,
+        hidden_hard_exclusion_count=response.hiddenHardExclusionCount,
+        unknown_reveal_required_count=response.unknownRevealRequiredCount,
+        revealed_unknown_count=revealed_unknown_count,
+        threshold=response.queryEcho.lowResultsThreshold,
+        low_results=response.lowResults,
+        empty_catalog=response.emptyCatalog,
+        low_results_state_required=response.lowResults and not response.emptyCatalog,
+        passes_coverage_gate=_passes_coverage_gate(
+            case=case,
+            response=response,
+            revealed_unknown_count=revealed_unknown_count,
+        ),
+    )
+
+
+def _passes_coverage_gate(
+    *,
+    case: RecipeCatalogCoverageCase,
+    response: RecipeCatalogFilterResponse,
+    revealed_unknown_count: int,
+) -> bool:
+    if case.expected_empty_catalog:
+        return response.emptyCatalog and not response.lowResults
+
+    if case.expected_unknown_reveal and (
+        not response.queryEcho.revealUnknown
+        or response.unknownRevealRequiredCount <= 0
+        or revealed_unknown_count <= 0
+    ):
+        return False
+
+    if response.emptyCatalog:
+        return False
+
+    has_active_filters = bool(
+        response.queryEcho.activeAllergies
+        or response.queryEcho.activeRestrictions
+        or response.queryEcho.activeSoftPreferences
+    )
+    if not has_active_filters:
+        return response.visibleCount > 0
+
+    if response.visibleCount <= 0:
+        return False
+
+    return (
+        response.visibleCount >= response.queryEcho.lowResultsThreshold
+        or response.lowResults
+    )
+
+
+def _default_coverage_cases() -> tuple[RecipeCatalogCoverageCase, ...]:
+    return (
+        RecipeCatalogCoverageCase(
+            case_id="no-filters",
+            name="No profile filters",
+            request=_coverage_request(),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="one-allergy",
+            name="One allergy hard exclusion",
+            request=_coverage_request(allergies=["lactose"]),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="one-restriction",
+            name="One restriction-like preference",
+            request=_coverage_request(preferences=["vegan"]),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="one-macro-style",
+            name="One macro/style preference",
+            request=_coverage_request(preferences=["highProtein"]),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="allergy-plus-restriction",
+            name="Allergy plus restriction-like preference",
+            request=_coverage_request(allergies=["peanuts"], preferences=["vegan"]),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="low-results",
+            name="Low-results state required",
+            request=_coverage_request(preferences=["pescatarian"]),
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="empty-catalog",
+            name="Empty catalog state",
+            request=_coverage_request(allergies=["peanuts"]),
+            catalog=(),
+            expected_empty_catalog=True,
+        ),
+        RecipeCatalogCoverageCase(
+            case_id="unknown-reveal",
+            name="Unknown flags revealed explicitly",
+            request=_coverage_request(allergies=["peanuts"], revealUnknown=True),
+            expected_unknown_reveal=True,
+        ),
+    )
+
+
+def _coverage_request(**values: object) -> RecipeCatalogFilterRequest:
+    return RecipeCatalogFilterRequest.model_validate(values)
 
 
 def _active_allergies(values: list[AllergyValue]) -> list[AllergyValue]:
