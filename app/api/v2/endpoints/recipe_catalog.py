@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import ValidationError
 
@@ -21,6 +23,19 @@ def _profile_preferences(profile: UserProfile | None) -> list[str]:
     return list(profile.preferences) if profile is not None else []
 
 
+def _resolve_profile_filter(
+    *,
+    query_values: Sequence[str] | None,
+    profile_values: Sequence[str],
+    use_profile: bool,
+) -> list[str]:
+    if query_values is not None:
+        return list(query_values)
+    if use_profile:
+        return list(profile_values)
+    return []
+
+
 @router.get("/catalog", response_model=RecipeCatalogFilterResponse)
 async def list_recipe_catalog_me(
     allergies: list[AllergyValue] | None = Query(default=None),
@@ -28,6 +43,8 @@ async def list_recipe_catalog_me(
     chronicDiseases: list[ChronicDiseaseValue] | None = Query(default=None),
     allergiesOther: str | None = Query(default=None, max_length=120),
     lifestyle: str | None = Query(default=None, max_length=160),
+    useProfileAllergies: bool = Query(default=True),
+    useProfilePreferences: bool = Query(default=True),
     showHidden: bool = Query(default=False),
     revealUnknown: bool = Query(default=False),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
@@ -43,13 +60,15 @@ async def list_recipe_catalog_me(
     try:
         request = RecipeCatalogFilterRequest.model_validate(
             {
-                "allergies": (
-                    list(allergies) if allergies is not None else _profile_allergies(profile)
+                "allergies": _resolve_profile_filter(
+                    query_values=allergies,
+                    profile_values=_profile_allergies(profile),
+                    use_profile=useProfileAllergies,
                 ),
-                "preferences": (
-                    list(preferences)
-                    if preferences is not None
-                    else _profile_preferences(profile)
+                "preferences": _resolve_profile_filter(
+                    query_values=preferences,
+                    profile_values=_profile_preferences(profile),
+                    use_profile=useProfilePreferences,
                 ),
                 "chronicDiseases": list(chronicDiseases or []),
                 "allergiesOther": allergiesOther,

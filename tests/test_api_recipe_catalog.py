@@ -116,6 +116,43 @@ def test_recipe_catalog_route_query_filters_override_profile_defaults(
     assert captured_requests[0].revealUnknown is True
 
 
+def test_recipe_catalog_route_can_clear_profile_default_filters(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    captured_requests: list[RecipeCatalogFilterRequest] = []
+
+    def _evaluate(
+        request: RecipeCatalogFilterRequest,
+    ) -> object:
+        captured_requests.append(request)
+        return evaluate_recipe_catalog(request, catalog=[])
+
+    mocker.patch(
+        "app.api.v2.endpoints.recipe_catalog.evaluate_recipe_catalog",
+        side_effect=_evaluate,
+    )
+    mocker.patch(
+        "app.api.v2.endpoints.recipe_catalog.UserProfileService.get_profile",
+        return_value=_profile(
+            allergies=["lactose"],
+            preferences=["balanced"],
+        ),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/recipes/catalog"
+        "?useProfileAllergies=false"
+        "&useProfilePreferences=false",
+        headers=auth_headers("recipe-user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["emptyCatalog"] is True
+    assert captured_requests[0].allergies == []
+    assert captured_requests[0].preferences == []
+
+
 def test_recipe_catalog_route_returns_default_catalog_shape(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
