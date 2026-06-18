@@ -1,0 +1,60 @@
+{
+  "eventNames": [
+    "home_next_action_shown",
+    "home_next_action_started",
+    "home_next_action_dismissed"
+  ],
+  "propsByEvent": {
+    "home_next_action_shown": [
+      "actionType",
+      "state",
+      "reasonCode",
+      "sourceDomain"
+    ],
+    "home_next_action_started": [
+      "actionType",
+      "ownerFlow",
+      "state"
+    ],
+    "home_next_action_dismissed": [
+      "actionType",
+      "reasonCode",
+      "cooldownBucket"
+    ]
+  },
+  "disallowedEventNames": [
+    "home_next_action_available",
+    "home_next_action_completed",
+    "home_next_action_failed",
+    "home_next_action_candidate_logged"
+  ],
+  "disallowedPropNames": [
+    "suggestionText",
+    "rawSuggestionText",
+    "mealText",
+    "recipeName",
+    "productName",
+    "ingredientName",
+    "candidateId",
+    "mealId",
+    "userId",
+    "anonymousId",
+    "barcode",
+    "kcal",
+    "calories",
+    "macros",
+    "protein",
+    "carbs",
+    "fat",
+    "sourceRef",
+    "memoryId",
+    "patternId",
+    "profileHealth",
+    "profileFreeText",
+    "healthConditions",
+    "rawPrompt",
+    "rawResponse",
+    "providerPayload",
+    "rawProviderPayload"
+  ]
+}

@@ -64,6 +64,9 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "autocomplete_search_outcome",
         "autocomplete_result_selected",
         "ingredient_product_create_outcome",
+        "home_next_action_shown",
+        "home_next_action_started",
+        "home_next_action_dismissed",
     }
 )
 
@@ -203,6 +206,12 @@ AUTOCOMPLETE_WARNING_REASONS = frozenset(
         "backend_degraded",
     }
 )
+HOME_NEXT_ACTION_TYPES = frozenset({"continue_review"})
+HOME_NEXT_ACTION_STATES = frozenset({"eligible"})
+HOME_NEXT_ACTION_REASON_CODES = frozenset({"review_draft_available"})
+HOME_NEXT_ACTION_SOURCE_DOMAINS = frozenset({"review_draft"})
+HOME_NEXT_ACTION_OWNER_FLOWS = frozenset({"ReviewMeal"})
+HOME_NEXT_ACTION_COOLDOWN_BUCKETS = frozenset({"24h"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -285,6 +294,13 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
         }
     ),
     "ingredient_product_create_outcome": frozenset({"surface", "outcome"}),
+    "home_next_action_shown": frozenset(
+        {"actionType", "state", "reasonCode", "sourceDomain"}
+    ),
+    "home_next_action_started": frozenset({"actionType", "ownerFlow", "state"}),
+    "home_next_action_dismissed": frozenset(
+        {"actionType", "reasonCode", "cooldownBucket"}
+    ),
 }
 
 ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
@@ -407,6 +423,22 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
     "ingredient_product_create_outcome": {
         "surface": AUTOCOMPLETE_SURFACES,
         "outcome": INGREDIENT_PRODUCT_CREATE_OUTCOMES,
+    },
+    "home_next_action_shown": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "state": HOME_NEXT_ACTION_STATES,
+        "reasonCode": HOME_NEXT_ACTION_REASON_CODES,
+        "sourceDomain": HOME_NEXT_ACTION_SOURCE_DOMAINS,
+    },
+    "home_next_action_started": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "ownerFlow": HOME_NEXT_ACTION_OWNER_FLOWS,
+        "state": HOME_NEXT_ACTION_STATES,
+    },
+    "home_next_action_dismissed": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "reasonCode": HOME_NEXT_ACTION_REASON_CODES,
+        "cooldownBucket": HOME_NEXT_ACTION_COOLDOWN_BUCKETS,
     },
 }
 

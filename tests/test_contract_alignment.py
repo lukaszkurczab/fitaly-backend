@@ -750,6 +750,61 @@ class TestAutocompleteTelemetryContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: home_next_action_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestHomeNextActionTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("home_next_action_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown",
+            "home_next_action_started",
+            "home_next_action_dismissed",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown": {
+                "actionType",
+                "state",
+                "reasonCode",
+                "sourceDomain",
+            },
+            "home_next_action_started": {
+                "actionType",
+                "ownerFlow",
+                "state",
+            },
+            "home_next_action_dismissed": {
+                "actionType",
+                "reasonCode",
+                "cooldownBucket",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+    def test_disallowed_props_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        allowed_props: set[str] = set()
+        for prop_names in ALLOWED_TELEMETRY_EVENT_PROPS.values():
+            allowed_props.update(prop_names)
+        for prop_name in fixture["disallowedPropNames"]:
+            assert prop_name not in allowed_props
+
+
+# ---------------------------------------------------------------------------
 # Fixture: gateway_reject.json
 # ---------------------------------------------------------------------------
 
