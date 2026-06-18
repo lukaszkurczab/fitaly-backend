@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 import re
 import unicodedata
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
+from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import ValidationError
 
@@ -25,12 +28,16 @@ from app.schemas.food_library import (
     IngredientProductConfidenceLevel,
     IngredientProductCreateRequest,
     IngredientProductProfileCompatibilityStatus,
+    IngredientProductPulledRecord,
+    IngredientProductPullResponse,
     IngredientProductRankingSignal,
+    IngredientProductRemovedRecord,
     IngredientProductSearchCachePolicy,
     IngredientProductSearchQueryEcho,
     IngredientProductSearchResponse,
     IngredientProductSearchRow,
     IngredientProductSourceType,
+    IngredientProductUpdateRequest,
     IngredientProductWarningReasonCode,
 )
 
@@ -39,7 +46,20 @@ logger = logging.getLogger(__name__)
 MIN_SEARCH_QUERY_LENGTH = 2
 DEFAULT_SEARCH_LIMIT = 8
 MAX_SEARCH_LIMIT = 12
+DEFAULT_PULL_LIMIT = 100
+MAX_PULL_LIMIT = 250
 SEARCH_INDEX_FIELD = "searchPrefixes"
+UPDATE_MUTATION_HISTORY_FIELD = "updateMutationHistory"
+UPDATE_MUTATION_HISTORY_LIMIT = 12
+UPDATE_MUTATION_FINGERPRINT_VERSION = "ingredient_product_update_v1"
+UPDATE_SCALAR_FIELDS = (
+    "displayName",
+    "kind",
+    "brandName",
+    "ingredientName",
+    "packageName",
+    "category",
+)
 CANDIDATE_ONLY_SOURCE_TYPES: set[IngredientProductSourceType] = {
     "barcode_identity",
     "runtime_ai_candidate",
@@ -48,7 +68,28 @@ LOW_CONFIDENCE_LEVELS: set[IngredientProductConfidenceLevel] = {"unknown", "low"
 
 
 class IngredientProductMutationConflictError(ValueError):
-    """Raised when a user-scoped Product/Ingredient create conflicts."""
+    """Raised when a user-scoped Product/Ingredient mutation conflicts."""
+
+
+class IngredientProductInvalidUpdateError(ValueError):
+    """Raised when an Ingredient/Product update would violate the record contract."""
+
+
+class IngredientProductNotFoundError(ValueError):
+    """Raised when a user-scoped Product/Ingredient record is not owned by the user."""
+
+
+def _raise_malformed_pull_record(payload: dict[str, Any], reason: str) -> NoReturn:
+    logger.warning(
+        "Rejecting malformed Ingredient/Product pull record.",
+        extra={
+            "ingredient_product_id": _as_str(payload.get("ingredientProductId")),
+            "record_scope": _as_str(payload.get("recordScope")),
+            "owner_user_id_present": bool(_as_str(payload.get("ownerUserId"))),
+            "reason": reason,
+        },
+    )
+    raise FirestoreServiceError("Malformed Ingredient/Product pull record.")
 
 
 def normalize_search_query(query: str) -> str:
@@ -63,6 +104,49 @@ def clamp_search_limit(limit_count: int | None) -> int:
     if limit_count is None:
         return DEFAULT_SEARCH_LIMIT
     return min(max(limit_count, 1), MAX_SEARCH_LIMIT)
+
+
+def clamp_pull_limit(limit_count: int | None) -> int:
+    if limit_count is None:
+        return DEFAULT_PULL_LIMIT
+    return min(max(limit_count, 1), MAX_PULL_LIMIT)
+
+
+def _parse_pull_cursor(updated_after: str | None) -> tuple[str | None, str | None]:
+    if updated_after is None:
+        return None, None
+    stripped = updated_after.strip()
+    if not stripped:
+        raise ValueError("updatedAfter must be a non-empty timestamp when provided")
+    if "|" not in stripped:
+        return stripped, None
+    updated_at, product_id = stripped.rsplit("|", 1)
+    updated_at = updated_at.strip()
+    product_id = product_id.strip()
+    if not updated_at or not product_id:
+        raise ValueError("updatedAfter cursor is malformed")
+    return updated_at, product_id
+
+
+def _pull_cursor(updated_at: str, ingredient_product_id: str) -> str:
+    return f"{updated_at}|{ingredient_product_id}"
+
+
+def _validate_document_id(value: str) -> str:
+    document_id = value.strip()
+    if not document_id:
+        raise ValueError("ingredientProductId must be non-empty")
+    if "/" in document_id:
+        raise ValueError("ingredientProductId must be a document id, not a path.")
+    return document_id
+
+
+def _pull_snapshot_cursor(payload: dict[str, Any]) -> tuple[str, str] | None:
+    updated_at = _as_str(payload.get("updatedAt"))
+    ingredient_product_id = _as_str(payload.get("ingredientProductId"))
+    if not updated_at or not ingredient_product_id:
+        return None
+    return updated_at, ingredient_product_id
 
 
 def _validate_query(query: str) -> str:
@@ -167,6 +251,27 @@ def _stream_prefix_matches(collection_ref: Any, normalized_query: str, limit_cou
     query = collection_ref.where(
         filter=FieldFilter(SEARCH_INDEX_FIELD, "array_contains", normalized_query)
     )
+    return list(query.limit(limit_count).stream())[:limit_count]
+
+
+def _stream_user_pull_records(
+    collection_ref: Any,
+    *,
+    updated_after: str | None,
+    after_product_id: str | None,
+    limit_count: int,
+) -> list[Any]:
+    query = collection_ref
+    if updated_after and not after_product_id:
+        query = query.where(filter=FieldFilter("updatedAt", ">=", updated_after))
+    query = query.order_by("updatedAt").order_by("ingredientProductId")
+    if updated_after and after_product_id:
+        query = query.start_after(
+            {
+                "updatedAt": updated_after,
+                "ingredientProductId": after_product_id,
+            }
+        )
     return list(query.limit(limit_count).stream())[:limit_count]
 
 
@@ -354,6 +459,140 @@ def _row_sort_key(row: IngredientProductSearchRow) -> tuple[int, str, str]:
     return (bucket, normalize_search_query(row.displayName), row.ingredientProductId)
 
 
+def _ensure_kind_specific_fields(payload: dict[str, Any]) -> None:
+    kind = payload.get("kind")
+    if kind == "generic_ingredient" and not _as_str(payload.get("ingredientName")):
+        raise IngredientProductInvalidUpdateError(
+            "ingredientName is required for generic Ingredient/Product records."
+        )
+    if kind == "branded_product" and not _as_str(payload.get("brandName")):
+        raise IngredientProductInvalidUpdateError(
+            "brandName is required for branded Ingredient/Product records."
+        )
+
+
+def _normalized_update_request_payload(
+    request: IngredientProductUpdateRequest,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for field_name in UPDATE_SCALAR_FIELDS:
+        if field_name not in request.model_fields_set:
+            continue
+        value = getattr(request, field_name)
+        payload[field_name] = value if value != "" else None
+
+    if "defaultServing" in request.model_fields_set:
+        payload["defaultServing"] = (
+            request.defaultServing.model_dump(mode="json")
+            if request.defaultServing is not None
+            else None
+        )
+    if "nutritionPer100" in request.model_fields_set:
+        payload["nutritionPer100"] = (
+            request.nutritionPer100.model_dump(mode="json")
+            if request.nutritionPer100 is not None
+            else None
+        )
+    if "servingSizes" in request.model_fields_set:
+        payload["servingSizes"] = [
+            serving.model_dump(mode="json") for serving in (request.servingSizes or [])
+        ]
+    if "dietaryFlags" in request.model_fields_set:
+        payload["dietaryFlags"] = request.dietaryFlags or []
+    if "allergenFlags" in request.model_fields_set:
+        payload["allergenFlags"] = request.allergenFlags or []
+    return payload
+
+
+def _update_request_fingerprint(request: IngredientProductUpdateRequest) -> str:
+    fingerprint_payload: dict[str, Any] = {
+        "version": UPDATE_MUTATION_FINGERPRINT_VERSION,
+        "payload": _normalized_update_request_payload(request),
+    }
+    encoded = json.dumps(
+        fingerprint_payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _update_request_matches_payload(
+    request: IngredientProductUpdateRequest,
+    payload: dict[str, Any],
+) -> bool:
+    for field_name, value in _normalized_update_request_payload(request).items():
+        if payload.get(field_name) != value:
+            return False
+    return True
+
+
+def _update_mutation_history(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw_history = payload.get(UPDATE_MUTATION_HISTORY_FIELD)
+    if not isinstance(raw_history, list):
+        return []
+
+    history: list[dict[str, str]] = []
+    for raw_entry in cast(list[object], raw_history):
+        if not isinstance(raw_entry, dict):
+            continue
+        raw_entry_payload = cast(dict[str, Any], raw_entry)
+        mutation_id = _as_str(raw_entry_payload.get("clientMutationId"))
+        payload_fingerprint = _as_str(raw_entry_payload.get("payloadFingerprint"))
+        if not mutation_id or not payload_fingerprint:
+            continue
+        entry = {
+            "clientMutationId": mutation_id,
+            "payloadFingerprint": payload_fingerprint,
+            "fingerprintVersion": (
+                _as_str(raw_entry_payload.get("fingerprintVersion"))
+                or UPDATE_MUTATION_FINGERPRINT_VERSION
+            ),
+        }
+        updated_at = _as_str(raw_entry_payload.get("updatedAt"))
+        if updated_at:
+            entry["updatedAt"] = updated_at
+        history.append(entry)
+        if len(history) >= UPDATE_MUTATION_HISTORY_LIMIT:
+            break
+    return history
+
+
+def _update_mutation_history_entry(
+    history: list[dict[str, str]],
+    mutation_id: str,
+) -> dict[str, str] | None:
+    for entry in history:
+        if entry.get("clientMutationId") == mutation_id:
+            return entry
+    return None
+
+
+def _next_update_mutation_history(
+    payload: dict[str, Any],
+    *,
+    mutation_id: str,
+    payload_fingerprint: str,
+    updated_at: str,
+) -> list[dict[str, str]]:
+    next_history = [
+        {
+            "clientMutationId": mutation_id,
+            "payloadFingerprint": payload_fingerprint,
+            "fingerprintVersion": UPDATE_MUTATION_FINGERPRINT_VERSION,
+            "updatedAt": updated_at,
+        }
+    ]
+    for entry in _update_mutation_history(payload):
+        if entry.get("clientMutationId") == mutation_id:
+            continue
+        next_history.append(entry)
+        if len(next_history) >= UPDATE_MUTATION_HISTORY_LIMIT:
+            break
+    return next_history
+
+
 async def search_ingredient_products(
     user_id: str,
     *,
@@ -425,12 +664,122 @@ async def search_ingredient_products(
     )
 
 
+async def pull_user_ingredient_products(
+    user_id: str,
+    *,
+    updated_after: str | None = None,
+    limit_count: int | None = None,
+) -> IngredientProductPullResponse:
+    resolved_limit = clamp_pull_limit(limit_count)
+    cursor_updated_at, cursor_product_id = _parse_pull_cursor(updated_after)
+
+    try:
+        collection_ref = (
+            get_firestore()
+            .collection(USERS_COLLECTION)
+            .document(user_id)
+            .collection(INGREDIENT_PRODUCTS_SUBCOLLECTION)
+        )
+        snapshots = _stream_user_pull_records(
+            collection_ref,
+            updated_after=cursor_updated_at,
+            after_product_id=cursor_product_id,
+            limit_count=resolved_limit,
+        )
+    except (GoogleAPICallError, RetryError, FirebaseError, ValueError) as exc:
+        raise FirestoreServiceError("Failed to pull Ingredient/Product records.") from exc
+
+    records: list[IngredientProductPulledRecord] = []
+    removed_records: list[IngredientProductRemovedRecord] = []
+    last_cursor: tuple[str, str] | None = None
+    for snapshot in snapshots:
+        payload = _snapshot_payload(snapshot)
+        snapshot_cursor = _pull_snapshot_cursor(payload)
+        if snapshot_cursor is None:
+            _raise_malformed_pull_record(payload, "missing_cursor")
+        updated_at, ingredient_product_id = snapshot_cursor
+
+        if (
+            payload.get("recordScope") == "user_scoped"
+            and payload.get("ownerUserId") == user_id
+            and payload.get("lifecycleState") == "rejected"
+        ):
+            try:
+                removed_records.append(
+                    IngredientProductRemovedRecord(
+                        ingredientProductId=ingredient_product_id,
+                        updatedAt=updated_at,
+                        removalReason="rejected",
+                    )
+                )
+            except (ValidationError, ValueError):
+                _raise_malformed_pull_record(payload, "invalid_removed_record")
+            last_cursor = snapshot_cursor
+            continue
+
+        if (
+            payload.get("recordScope") != "user_scoped"
+            or payload.get("ownerUserId") != user_id
+        ):
+            _raise_malformed_pull_record(payload, "scope_owner_mismatch")
+
+        eligible, _warning = _is_eligible(payload, user_id=user_id)
+        if not eligible:
+            _raise_malformed_pull_record(payload, "ineligible_user_record")
+        try:
+            row = _to_search_row(
+                payload,
+                normalized_query=normalize_search_query(
+                    _as_str(payload.get("displayName")) or ingredient_product_id
+                ),
+            )
+        except (ValidationError, ValueError):
+            _raise_malformed_pull_record(payload, "invalid_search_row")
+        source_attribution = _as_dict(payload.get("sourceAttribution"))
+        creation_client_mutation_id = (
+            _as_str(payload.get("creationClientMutationId"))
+            or _as_str(source_attribution.get("sourceId"))
+            or None
+        )
+        records.append(
+            IngredientProductPulledRecord(
+                item=row,
+                updatedAt=updated_at,
+                creationClientMutationId=creation_client_mutation_id,
+            )
+        )
+        last_cursor = snapshot_cursor
+
+    records = sorted(
+        records,
+        key=lambda record: (record.updatedAt, record.item.ingredientProductId),
+    )
+    removed_records = sorted(
+        removed_records,
+        key=lambda record: (record.updatedAt, record.ingredientProductId),
+    )
+    next_updated_after = (
+        _pull_cursor(last_cursor[0], last_cursor[1]) if last_cursor else None
+    )
+    return IngredientProductPullResponse(
+        records=records,
+        removedRecords=removed_records,
+        nextUpdatedAfter=next_updated_after,
+    )
+
+
 async def create_user_ingredient_product(
     user_id: str,
     request: IngredientProductCreateRequest,
 ) -> tuple[IngredientProductSearchRow, bool]:
     product_id = request.ingredientProductId
     now = _utc_timestamp()
+    derived_ingredient_name = (
+        request.ingredientName
+        or (request.displayName if request.kind == "generic_ingredient" else None)
+    )
+    if request.kind == "branded_product" and not request.brandName:
+        raise ValueError("brandName is required for branded Ingredient/Product records.")
     collection_ref = (
         get_firestore()
         .collection(USERS_COLLECTION)
@@ -500,10 +849,12 @@ async def create_user_ingredient_product(
             "createdAt": now,
             "updatedAt": now,
         }
-        for field_name in ("brandName", "ingredientName", "packageName", "category"):
+        for field_name in ("brandName", "packageName", "category"):
             value = getattr(request, field_name)
             if value:
                 payload[field_name] = value
+        if derived_ingredient_name:
+            payload["ingredientName"] = derived_ingredient_name
 
         document_ref.set(payload)
     except IngredientProductMutationConflictError:
@@ -512,3 +863,208 @@ async def create_user_ingredient_product(
         raise FirestoreServiceError("Failed to create Ingredient/Product record.") from exc
 
     return _to_search_row(payload, normalized_query=normalize_search_query(request.displayName)), True
+
+
+@firestore.transactional
+def _update_user_ingredient_product_transaction(
+    transaction: firestore.Transaction,
+    *,
+    document_ref: firestore.DocumentReference,
+    user_id: str,
+    product_id: str,
+    request: IngredientProductUpdateRequest,
+    mutation_id: str,
+    request_fingerprint: str,
+) -> tuple[IngredientProductSearchRow, bool]:
+    existing_snapshot = document_ref.get(transaction=transaction)
+    if not existing_snapshot.exists:
+        raise IngredientProductNotFoundError("Ingredient/Product record was not found.")
+
+    existing_payload = _snapshot_payload(existing_snapshot)
+    if (
+        existing_payload.get("recordScope") != "user_scoped"
+        or existing_payload.get("ownerUserId") != user_id
+        or existing_payload.get("lifecycleState") == "rejected"
+    ):
+        raise IngredientProductNotFoundError("Ingredient/Product record was not found.")
+
+    history = _update_mutation_history(existing_payload)
+    history_entry = _update_mutation_history_entry(history, mutation_id)
+    if history_entry is not None:
+        if history_entry.get("payloadFingerprint") != request_fingerprint:
+            raise IngredientProductMutationConflictError(
+                "Ingredient/Product update mutation id was reused with a different payload."
+            )
+        return _to_search_row(
+            existing_payload,
+            normalized_query=normalize_search_query(
+                _as_str(existing_payload.get("displayName")) or product_id
+            ),
+        ), False
+
+    if existing_payload.get("updateClientMutationId") == mutation_id:
+        if not _update_request_matches_payload(request, existing_payload):
+            raise IngredientProductMutationConflictError(
+                "Ingredient/Product update mutation id was reused with a different payload."
+            )
+        return _to_search_row(
+            existing_payload,
+            normalized_query=normalize_search_query(
+                _as_str(existing_payload.get("displayName")) or product_id
+            ),
+        ), False
+
+    now = _utc_timestamp()
+    merged_payload = dict(existing_payload)
+    normalized_update_payload = _normalized_update_request_payload(request)
+    update_payload: dict[str, Any] = {
+        "ingredientProductId": product_id,
+        "recordScope": "user_scoped",
+        "ownerUserId": user_id,
+        "updateClientMutationId": mutation_id,
+        "updatedAt": now,
+        UPDATE_MUTATION_HISTORY_FIELD: _next_update_mutation_history(
+            existing_payload,
+            mutation_id=mutation_id,
+            payload_fingerprint=request_fingerprint,
+            updated_at=now,
+        ),
+    }
+    update_payload.update(normalized_update_payload)
+
+    if "nutritionPer100" in request.model_fields_set:
+        confidence = _as_dict(merged_payload.get("confidence"))
+        confidence["nutrition"] = (
+            "low" if request.nutritionPer100 is not None else "unknown"
+        )
+        update_payload["confidence"] = confidence
+    profile_flags = _as_dict(merged_payload.get("profileFlags"))
+    if "dietaryFlags" in request.model_fields_set:
+        profile_flags["dietaryFlags"] = update_payload["dietaryFlags"]
+    if "allergenFlags" in request.model_fields_set:
+        profile_flags["allergenFlags"] = update_payload["allergenFlags"]
+    if (
+        "dietaryFlags" in request.model_fields_set
+        or "allergenFlags" in request.model_fields_set
+    ):
+        profile_flags.setdefault("compatibilityStatus", "unknown")
+        update_payload["profileFlags"] = profile_flags
+
+    merged_payload.update(update_payload)
+    update_payload["searchPrefixes"] = _search_prefixes(
+        _as_str(merged_payload.get("displayName")),
+        _as_str(merged_payload.get("ingredientName")),
+        _as_str(merged_payload.get("brandName")),
+        _as_str(merged_payload.get("packageName")),
+        _as_str(merged_payload.get("category")),
+    )
+    merged_payload["searchPrefixes"] = update_payload["searchPrefixes"]
+    _ensure_kind_specific_fields(merged_payload)
+    try:
+        row = _to_search_row(
+            merged_payload,
+            normalized_query=normalize_search_query(
+                _as_str(merged_payload.get("displayName")) or product_id
+            ),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise FirestoreServiceError(
+            "Malformed Ingredient/Product record after update."
+        ) from exc
+
+    transaction.set(document_ref, update_payload, merge=True)
+    return row, True
+
+
+async def update_user_ingredient_product(
+    user_id: str,
+    *,
+    ingredient_product_id: str,
+    request: IngredientProductUpdateRequest,
+) -> tuple[IngredientProductSearchRow, bool]:
+    product_id = _validate_document_id(ingredient_product_id)
+    mutation_id = request.clientMutationId.strip()
+    if not mutation_id:
+        raise ValueError("clientMutationId must be non-empty")
+
+    request_fingerprint = _update_request_fingerprint(request)
+    client = get_firestore()
+    document_ref = (
+        client
+        .collection(USERS_COLLECTION)
+        .document(user_id)
+        .collection(INGREDIENT_PRODUCTS_SUBCOLLECTION)
+        .document(product_id)
+    )
+
+    try:
+        return _update_user_ingredient_product_transaction(
+            client.transaction(),
+            document_ref=document_ref,
+            user_id=user_id,
+            product_id=product_id,
+            request=request,
+            mutation_id=mutation_id,
+            request_fingerprint=request_fingerprint,
+        )
+    except IngredientProductMutationConflictError:
+        raise
+    except IngredientProductInvalidUpdateError:
+        raise
+    except IngredientProductNotFoundError:
+        raise
+    except (GoogleAPICallError, RetryError, FirebaseError, ValueError) as exc:
+        raise FirestoreServiceError("Failed to update Ingredient/Product record.") from exc
+
+
+async def delete_user_ingredient_product(
+    user_id: str,
+    *,
+    ingredient_product_id: str,
+    client_mutation_id: str,
+) -> tuple[str, str, bool]:
+    product_id = _validate_document_id(ingredient_product_id)
+    mutation_id = client_mutation_id.strip()
+    if not mutation_id:
+        raise ValueError("clientMutationId must be non-empty")
+
+    now = _utc_timestamp()
+    document_ref = (
+        get_firestore()
+        .collection(USERS_COLLECTION)
+        .document(user_id)
+        .collection(INGREDIENT_PRODUCTS_SUBCOLLECTION)
+        .document(product_id)
+    )
+
+    try:
+        existing_snapshot = document_ref.get()
+        if not existing_snapshot.exists:
+            raise IngredientProductNotFoundError("Ingredient/Product record was not found.")
+        payload = _snapshot_payload(existing_snapshot)
+        if (
+            payload.get("recordScope") != "user_scoped"
+            or payload.get("ownerUserId") != user_id
+        ):
+            raise IngredientProductNotFoundError("Ingredient/Product record was not found.")
+
+        existing_updated_at = _as_str(payload.get("updatedAt"))
+        if payload.get("lifecycleState") == "rejected" and existing_updated_at:
+            return product_id, existing_updated_at, False
+
+        update_payload = {
+            "ingredientProductId": product_id,
+            "recordScope": "user_scoped",
+            "ownerUserId": user_id,
+            "lifecycleState": "rejected",
+            "deletionClientMutationId": mutation_id,
+            "rejectedAt": now,
+            "rejectionReason": "user_deleted",
+            "updatedAt": now,
+        }
+        document_ref.set(update_payload, merge=True)
+        return product_id, now, True
+    except IngredientProductNotFoundError:
+        raise
+    except (GoogleAPICallError, RetryError, FirebaseError, ValueError) as exc:
+        raise FirestoreServiceError("Failed to delete Ingredient/Product record.") from exc

@@ -1,7 +1,8 @@
 {
   "eventNames": [
     "autocomplete_search_outcome",
-    "autocomplete_result_selected"
+    "autocomplete_result_selected",
+    "ingredient_product_create_outcome"
   ],
   "propsByEvent": {
     "autocomplete_search_outcome": [
@@ -20,6 +21,10 @@
       "rankBucket",
       "selectionState",
       "warningReason"
+    ],
+    "ingredient_product_create_outcome": [
+      "surface",
+      "outcome"
     ]
   },
   "disallowedEventNames": [

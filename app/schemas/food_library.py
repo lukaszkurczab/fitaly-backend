@@ -142,7 +142,12 @@ IngredientProductRankingSignal = Literal[
     "nutrition_warning",
     "pending_user_record",
 ]
-IngredientProductCacheState = Literal["fresh", "stale", "offline", "pending_local"]
+IngredientProductCacheState = Literal[
+    "fresh",
+    "stale",
+    "offline",
+    "pending_local",
+]
 IngredientProductDietaryFlag = Literal[
     "vegan",
     "vegetarian",
@@ -692,6 +697,123 @@ class IngredientProductCreateResponse(BaseModel):
 
     item: IngredientProductSearchRow
     updated: bool
+
+
+class IngredientProductUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+    displayName: str | None = Field(default=None, min_length=1, max_length=160)
+    kind: IngredientProductKind | None = None
+    defaultServing: IngredientProductServing | None = None
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    brandName: str | None = Field(default=None, max_length=120)
+    ingredientName: str | None = Field(default=None, max_length=160)
+    packageName: str | None = Field(default=None, max_length=120)
+    category: str | None = Field(default=None, max_length=80)
+    servingSizes: list[IngredientProductServingSize] | None = None
+    dietaryFlags: list[IngredientProductDietaryFlag] | None = None
+    allergenFlags: list[IngredientProductAllergenFlag] | None = None
+
+    @field_validator(
+        "clientMutationId",
+        "displayName",
+        "brandName",
+        "ingredientName",
+        "packageName",
+        "category",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @model_validator(mode="after")
+    def _require_update_field(self) -> "IngredientProductUpdateRequest":
+        for field_name in (
+            "displayName",
+            "kind",
+            "defaultServing",
+            "nutritionPer100",
+            "brandName",
+            "ingredientName",
+            "packageName",
+            "category",
+            "servingSizes",
+            "dietaryFlags",
+            "allergenFlags",
+        ):
+            if field_name in self.model_fields_set:
+                return self
+        raise ValueError("At least one editable Ingredient/Product field is required.")
+
+    @model_validator(mode="after")
+    def _prevent_required_field_clear(self) -> "IngredientProductUpdateRequest":
+        for field_name in ("displayName", "kind", "defaultServing"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be cleared.")
+        return self
+
+
+class IngredientProductUpdateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updated: bool
+
+
+class IngredientProductDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+
+    @field_validator("clientMutationId", mode="before")
+    @classmethod
+    def _strip_client_mutation_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class IngredientProductDeleteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    updatedAt: str = Field(min_length=1)
+    updated: bool
+
+
+class IngredientProductPulledRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updatedAt: str = Field(min_length=1)
+    creationClientMutationId: str | None = None
+
+
+class IngredientProductRemovedRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    updatedAt: str = Field(min_length=1)
+    removalReason: Literal["rejected"]
+
+    @field_validator("ingredientProductId")
+    @classmethod
+    def _validate_document_id(cls, value: str) -> str:
+        if "/" in value:
+            raise ValueError("ingredientProductId must be a document id, not a path.")
+        return value
+
+
+class IngredientProductPullResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[IngredientProductPulledRecord] = Field(default_factory=list)
+    removedRecords: list[IngredientProductRemovedRecord] = Field(default_factory=list)
+    nextUpdatedAfter: str | None = None
 
 
 class FoodLibraryDomainContract(BaseModel):

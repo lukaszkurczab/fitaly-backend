@@ -703,6 +703,7 @@ class TestAutocompleteTelemetryContract:
         expected = {
             "autocomplete_search_outcome",
             "autocomplete_result_selected",
+            "ingredient_product_create_outcome",
         }
         assert set(fixture["eventNames"]) == expected
         assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
@@ -725,6 +726,10 @@ class TestAutocompleteTelemetryContract:
                 "rankBucket",
                 "selectionState",
                 "warningReason",
+            },
+            "ingredient_product_create_outcome": {
+                "surface",
+                "outcome",
             },
         }
         assert set(fixture["propsByEvent"].keys()) == set(expected.keys())

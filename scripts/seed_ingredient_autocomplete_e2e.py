@@ -13,6 +13,7 @@ from google.cloud import firestore
 EMAIL = os.getenv("E2E_EMAIL", "e2e@example.com")
 PASSWORD = os.getenv("E2E_PASSWORD", "Test@1234")
 PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "demo-fitaly-local")
+DATABASE_ID = os.getenv("FIRESTORE_DATABASE_ID", "fitaly-smoke")
 
 
 def _require_env(name: str) -> str:
@@ -211,11 +212,157 @@ def _warning_ingredient_product_document() -> dict[str, Any]:
     }
 
 
+def _private_delete_ingredient_product_document(uid: str) -> dict[str, Any]:
+    now = "2026-06-15T10:30:00.000Z"
+    return {
+        "ingredientProductId": "e2e-private-delete-qa",
+        "recordScope": "user_scoped",
+        "lifecycleState": "candidate",
+        "ownerUserId": uid,
+        "displayName": "Prywatny delete QA",
+        "kind": "generic_ingredient",
+        "ingredientName": "Prywatny delete QA",
+        "brandName": None,
+        "packageName": None,
+        "category": "e2e",
+        "searchPrefixes": [
+            "pr",
+            "pry",
+            "pryw",
+            "prywa",
+            "prywat",
+            "prywatn",
+            "prywatny",
+            "prywatny delete",
+            "prywatny delete qa",
+            "de",
+            "del",
+            "dele",
+            "delet",
+            "delete",
+            "delete qa",
+        ],
+        "defaultServing": {"quantity": 40, "unit": "g"},
+        "nutritionPer100": {
+            "basis": "per_100g",
+            "unit": "g",
+            "kcal": 150,
+            "protein": 8,
+            "fat": 3,
+            "carbs": 22,
+            "fiber": None,
+            "sugar": None,
+            "salt": None,
+            "saturatedFat": None,
+        },
+        "sourceAttribution": {
+            "sourceType": "user_created",
+            "sourceId": "ingredient-product:create:e2e-private-delete-qa",
+            "sourceName": "manual_entry",
+            "provider": None,
+            "license": None,
+            "observedAt": now,
+            "reviewedAt": None,
+            "reviewedBy": None,
+        },
+        "confidence": {
+            "identity": "low",
+            "nutrition": "low",
+            "profile": "unknown",
+        },
+        "profileFlags": {
+            "compatibilityStatus": "unknown",
+            "dietaryFlags": [],
+            "allergenFlags": [],
+        },
+        "warningReasonCodes": ["pending_user_record", "profile_unknown"],
+        "servingSizes": [],
+        "dietaryFlags": [],
+        "allergenFlags": [],
+        "creationClientMutationId": "ingredient-product:create:e2e-private-delete-qa",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
+def _private_update_ingredient_product_document(uid: str) -> dict[str, Any]:
+    now = "2026-06-15T10:30:00.000Z"
+    return {
+        "ingredientProductId": "e2e-private-update-qa",
+        "recordScope": "user_scoped",
+        "lifecycleState": "candidate",
+        "ownerUserId": uid,
+        "displayName": "Prywatny update QA",
+        "kind": "generic_ingredient",
+        "ingredientName": "Prywatny update QA",
+        "brandName": None,
+        "packageName": None,
+        "category": "e2e",
+        "searchPrefixes": [
+            "pr",
+            "pry",
+            "pryw",
+            "prywa",
+            "prywat",
+            "prywatn",
+            "prywatny",
+            "prywatny update",
+            "prywatny update qa",
+            "up",
+            "upd",
+            "upda",
+            "updat",
+            "update",
+            "update qa",
+        ],
+        "defaultServing": {"quantity": 80, "unit": "g"},
+        "nutritionPer100": {
+            "basis": "per_100g",
+            "unit": "g",
+            "kcal": 180,
+            "protein": 9,
+            "fat": 4,
+            "carbs": 27,
+            "fiber": None,
+            "sugar": None,
+            "salt": None,
+            "saturatedFat": None,
+        },
+        "sourceAttribution": {
+            "sourceType": "user_created",
+            "sourceId": "ingredient-product:create:e2e-private-update-qa",
+            "sourceName": "manual_entry",
+            "provider": None,
+            "license": None,
+            "observedAt": now,
+            "reviewedAt": None,
+            "reviewedBy": None,
+        },
+        "confidence": {
+            "identity": "low",
+            "nutrition": "low",
+            "profile": "unknown",
+        },
+        "profileFlags": {
+            "compatibilityStatus": "unknown",
+            "dietaryFlags": [],
+            "allergenFlags": [],
+        },
+        "warningReasonCodes": ["pending_user_record", "profile_unknown"],
+        "servingSizes": [],
+        "dietaryFlags": [],
+        "allergenFlags": [],
+        "creationClientMutationId": "ingredient-product:create:e2e-private-update-qa",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
 def main() -> None:
     _require_env("FIRESTORE_EMULATOR_HOST")
     uid, _ = _seed_auth_user()
     firestore_client_factory = cast(Any, firestore.Client)
-    client = firestore_client_factory(project=PROJECT_ID)
+    client = firestore_client_factory(project=PROJECT_ID, database=DATABASE_ID)
     client.collection("users").document(uid).set(_profile_document(uid), merge=True)
     client.collection("ingredientProducts").document("e2e-local-oats").set(
         _ingredient_product_document(),
@@ -224,6 +371,24 @@ def main() -> None:
     client.collection("ingredientProducts").document("e2e-warning-oats").set(
         _warning_ingredient_product_document(),
         merge=True,
+    )
+    (
+        client.collection("users")
+        .document(uid)
+        .collection("ingredientProducts")
+        .document("e2e-private-delete-qa")
+        .set(
+            _private_delete_ingredient_product_document(uid),
+        )
+    )
+    (
+        client.collection("users")
+        .document(uid)
+        .collection("ingredientProducts")
+        .document("e2e-private-update-qa")
+        .set(
+            _private_update_ingredient_product_document(uid),
+        )
     )
     print(json.dumps({"uid": uid, "email": EMAIL}, sort_keys=True))
 

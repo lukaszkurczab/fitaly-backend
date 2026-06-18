@@ -63,6 +63,7 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "smart_reminder_schedule_failed",
         "autocomplete_search_outcome",
         "autocomplete_result_selected",
+        "ingredient_product_create_outcome",
     }
 )
 
@@ -186,6 +187,7 @@ AUTOCOMPLETE_SOURCE_CLASSES = frozenset(
 )
 AUTOCOMPLETE_RANK_BUCKETS = frozenset({"1", "2_3", "4_6", "7_12", "13_plus"})
 AUTOCOMPLETE_SELECTION_STATES = frozenset({"selected"})
+INGREDIENT_PRODUCT_CREATE_OUTCOMES = frozenset({"synced", "queued", "failed"})
 AUTOCOMPLETE_WARNING_REASONS = frozenset(
     {
         "profile_unknown",
@@ -282,6 +284,7 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
             "warningReason",
         }
     ),
+    "ingredient_product_create_outcome": frozenset({"surface", "outcome"}),
 }
 
 ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
@@ -400,6 +403,10 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "rankBucket": AUTOCOMPLETE_RANK_BUCKETS,
         "selectionState": AUTOCOMPLETE_SELECTION_STATES,
         "warningReason": AUTOCOMPLETE_WARNING_REASONS,
+    },
+    "ingredient_product_create_outcome": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "outcome": INGREDIENT_PRODUCT_CREATE_OUTCOMES,
     },
 }
 

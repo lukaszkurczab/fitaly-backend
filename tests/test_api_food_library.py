@@ -5,10 +5,15 @@ from app.core.exceptions import FirestoreServiceError
 from app.main import app
 from app.schemas.food_library import (
     IngredientProductCreateResponse,
+    IngredientProductPullResponse,
     IngredientProductSearchQueryEcho,
     IngredientProductSearchResponse,
+    IngredientProductUpdateResponse,
 )
-from app.services.food_library_service import IngredientProductMutationConflictError
+from app.services.food_library_service import (
+    IngredientProductMutationConflictError,
+    IngredientProductNotFoundError,
+)
 from tests.types import AuthHeaders
 
 client = TestClient(app)
@@ -44,6 +49,18 @@ def _create_payload() -> dict[str, object]:
             "fat": 7,
             "carbs": 60,
         },
+    }
+
+
+def _delete_payload() -> dict[str, object]:
+    return {"clientMutationId": "delete-mutation-1"}
+
+
+def _update_payload() -> dict[str, object]:
+    return {
+        "clientMutationId": "update-mutation-1",
+        "displayName": "Owsianka po edycji",
+        "defaultServing": {"quantity": 60, "unit": "g"},
     }
 
 
@@ -99,11 +116,99 @@ def _create_response() -> IngredientProductCreateResponse:
     )
 
 
+def _update_response() -> IngredientProductUpdateResponse:
+    response = _create_response().model_dump(mode="json")
+    response["updated"] = True
+    response["item"]["displayName"] = "Owsianka po edycji"  # type: ignore[index]
+    response["item"]["defaultServing"] = {"quantity": 60, "unit": "g"}  # type: ignore[index]
+    return IngredientProductUpdateResponse.model_validate(response)
+
+
+def _pull_response() -> IngredientProductPullResponse:
+    return IngredientProductPullResponse.model_validate(
+        {
+            "records": [
+                {
+                    "item": _create_response().item.model_dump(mode="json"),
+                    "updatedAt": "2026-06-16T10:00:00.000Z",
+                    "creationClientMutationId": "mutation-1",
+                }
+            ],
+            "removedRecords": [
+                {
+                    "ingredientProductId": "user-oats-rejected",
+                    "updatedAt": "2026-06-16T11:00:00.000Z",
+                    "removalReason": "rejected",
+                }
+            ],
+            "nextUpdatedAfter": "2026-06-16T10:00:00.000Z|user-oats-1",
+        }
+    )
+
+
 def test_search_ingredient_products_requires_authentication() -> None:
     response = client.get("/api/v2/users/me/ingredient-products/search?query=owies")
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Authentication required"}
+
+
+def test_pull_ingredient_products_requires_authentication() -> None:
+    response = client.get("/api/v2/users/me/ingredient-products/pull")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_pull_ingredient_products_uses_authenticated_user(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    pull = mocker.patch(
+        "app.api.routes.food_library.food_library_service.pull_user_ingredient_products",
+        return_value=_pull_response(),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/ingredient-products/pull"
+        "?updatedAfter=2026-06-15T10%3A00%3A00.000Z&limit=999",
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["nextUpdatedAfter"] == "2026-06-16T10:00:00.000Z|user-oats-1"
+    assert response.json()["removedRecords"] == [
+        {
+            "ingredientProductId": "user-oats-rejected",
+            "updatedAt": "2026-06-16T11:00:00.000Z",
+            "removalReason": "rejected",
+        }
+    ]
+    pull.assert_awaited_once_with(
+        "route-user-1",
+        updated_after="2026-06-15T10:00:00.000Z",
+        limit_count=999,
+    )
+
+
+def test_pull_ingredient_products_firestore_failure_returns_503(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.pull_user_ingredient_products",
+        side_effect=FirestoreServiceError("down"),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/ingredient-products/pull",
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Ingredient/Product pull is temporarily unavailable"
+    }
 
 
 def test_search_ingredient_products_rejects_short_query(
@@ -234,3 +339,175 @@ def test_create_ingredient_product_conflict_returns_409(
 
     assert response.status_code == 409
     assert response.json() == {"detail": "conflict"}
+
+
+def test_update_ingredient_product_requires_authentication() -> None:
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/update",
+        json=_update_payload(),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_update_ingredient_product_uses_authenticated_user(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    update = mocker.patch(
+        "app.api.routes.food_library.food_library_service.update_user_ingredient_product",
+        return_value=(_update_response().item, True),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/update",
+        json=_update_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["updated"] is True
+    assert response.json()["item"]["displayName"] == "Owsianka po edycji"
+    update.assert_awaited_once()
+    assert update.await_args is not None
+    assert update.await_args.args[0] == "route-user-1"
+    assert update.await_args.kwargs["ingredient_product_id"] == "user-oats-1"
+    assert update.await_args.kwargs["request"].clientMutationId == "update-mutation-1"
+
+
+def test_update_ingredient_product_not_found_returns_404(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.update_user_ingredient_product",
+        side_effect=IngredientProductNotFoundError("Ingredient/Product record was not found."),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/update",
+        json=_update_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Ingredient/Product record was not found."}
+
+
+def test_update_ingredient_product_conflict_returns_409(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.update_user_ingredient_product",
+        side_effect=IngredientProductMutationConflictError("conflict"),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/update",
+        json=_update_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "conflict"}
+
+
+def test_update_ingredient_product_firestore_failure_returns_503(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.update_user_ingredient_product",
+        side_effect=FirestoreServiceError("down"),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/update",
+        json=_update_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Ingredient/Product update is temporarily unavailable"
+    }
+
+
+def test_delete_ingredient_product_requires_authentication() -> None:
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/delete",
+        json=_delete_payload(),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_delete_ingredient_product_uses_authenticated_user(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    delete = mocker.patch(
+        "app.api.routes.food_library.food_library_service.delete_user_ingredient_product",
+        return_value=("user-oats-1", "2026-06-16T12:00:00.000Z", True),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/delete",
+        json=_delete_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ingredientProductId": "user-oats-1",
+        "updatedAt": "2026-06-16T12:00:00.000Z",
+        "updated": True,
+    }
+    delete.assert_awaited_once_with(
+        "route-user-1",
+        ingredient_product_id="user-oats-1",
+        client_mutation_id="delete-mutation-1",
+    )
+
+
+def test_delete_ingredient_product_not_found_returns_404(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.delete_user_ingredient_product",
+        side_effect=IngredientProductNotFoundError("Ingredient/Product record was not found."),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/delete",
+        json=_delete_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Ingredient/Product record was not found."}
+
+
+def test_delete_ingredient_product_firestore_failure_returns_503(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.delete_user_ingredient_product",
+        side_effect=FirestoreServiceError("down"),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products/user-oats-1/delete",
+        json=_delete_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Ingredient/Product delete is temporarily unavailable"
+    }

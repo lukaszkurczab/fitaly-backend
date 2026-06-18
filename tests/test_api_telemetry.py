@@ -1193,6 +1193,96 @@ def test_telemetry_batch_accepts_autocomplete_search_outcome(
     assert len(firestore_client.storage) == 1
 
 
+def test_telemetry_batch_accepts_ingredient_product_create_outcomes(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id=f"evt-create-{outcome}",
+                actor={"userId": "user-123"},
+            ),
+            "name": "ingredient_product_create_outcome",
+            "props": {
+                "surface": "manual_ingredient_sheet",
+                "outcome": outcome,
+            },
+        }
+        for outcome in ("synced", "queued", "failed")
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 3
+    assert firestore_client.storage["evt-create-synced"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "synced",
+    }
+    assert firestore_client.storage["evt-create-queued"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "queued",
+    }
+    assert firestore_client.storage["evt-create-failed"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "failed",
+    }
+
+
+def test_telemetry_batch_rejects_disallowed_manual_product_created_event(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=build_payload(
+            {
+                "eventId": "evt-disallowed-manual-product-created",
+                "name": "manual_product_created",
+                "props": {
+                    "surface": "manual_ingredient_sheet",
+                    "outcome": "synced",
+                },
+                "actor": {"userId": "user-123"},
+            }
+        ),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 0,
+        "duplicateCount": 0,
+        "rejectedCount": 1,
+        "rejectedEvents": [
+            {
+                "eventId": "evt-disallowed-manual-product-created",
+                "name": "manual_product_created",
+                "reason": "event_not_allowed",
+            }
+        ],
+    }
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_rejects_autocomplete_raw_food_props(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
@@ -1228,6 +1318,57 @@ def test_telemetry_batch_rejects_autocomplete_raw_food_props(
                         "resultCountBucket": "4_6",
                         "sourceClass": "remote",
                         "latencyBucket": "250_750_ms",
+                        prop_key: prop_value,
+                    },
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_ingredient_product_create_raw_food_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("query", "owies"),
+        ("rawQuery", "owies"),
+        ("normalizedQuery", "owies"),
+        ("displayName", "Owies lokalny"),
+        ("ingredientName", "Owies"),
+        ("productName", "Owies lokalny"),
+        ("ingredientProductId", "ingredient-product-1"),
+        ("productId", "product-1"),
+        ("barcode", "5901234123457"),
+        ("nutritionPer100", {"kcal": 389}),
+        ("kcal", 389),
+        ("protein", 16.9),
+        ("carbs", 66.3),
+        ("fat", 6.9),
+        ("sourceRef", "source-ref-1"),
+        ("memoryId", "memory-1"),
+    )
+
+    for prop_key, prop_value in forbidden_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-create-forbidden-{prop_key}",
+                    "name": "ingredient_product_create_outcome",
+                    "props": {
+                        "surface": "manual_ingredient_sheet",
+                        "outcome": "failed",
                         prop_key: prop_value,
                     },
                     "actor": {"userId": "user-123"},

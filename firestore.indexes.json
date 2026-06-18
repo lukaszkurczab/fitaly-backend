@@ -172,6 +172,21 @@
       "density": "SPARSE_ALL"
     },
     {
+      "collectionGroup": "ingredientProducts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "updatedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ingredientProductId",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
       "collectionGroup": "telemetry_events",
       "queryScope": "COLLECTION",
       "fields": [
