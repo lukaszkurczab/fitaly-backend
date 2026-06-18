@@ -59,6 +59,10 @@ class UserExportResponse(BaseModel):
     knownPatternMutationDedupe: list[dict[str, Any]] = Field(
         default_factory=_dict_items_default
     )
+    plannedMealItems: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    plannedMealMutationDedupe: list[dict[str, Any]] = Field(
+        default_factory=_dict_items_default
+    )
     billing: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     aiCredits: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     aiCreditTransactions: list[dict[str, Any]] = Field(default_factory=_dict_items_default)

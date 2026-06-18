@@ -190,6 +190,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
     known_pattern_controls_collection_ref = mocker.Mock()
     known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
+    planned_meals_collection_ref = mocker.Mock()
+    planned_meal_mutation_dedupe_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
     reminder_daily_stats_collection_ref = mocker.Mock()
@@ -215,6 +217,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     smart_memory_mutation_dedupe_doc = mocker.Mock()
     known_pattern_control_doc = mocker.Mock()
     known_pattern_mutation_dedupe_doc = mocker.Mock()
+    planned_meal_doc = mocker.Mock()
+    planned_meal_mutation_dedupe_doc = mocker.Mock()
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
     reminder_daily_stats_doc = mocker.Mock()
@@ -283,6 +287,10 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return known_pattern_controls_collection_ref
         if name == "knownPatternMutationDedupe":
             return known_pattern_mutation_dedupe_collection_ref
+        if name == "plannedMeals":
+            return planned_meals_collection_ref
+        if name == "plannedMealMutationDedupe":
+            return planned_meal_mutation_dedupe_collection_ref
         if name == "badges":
             return badges_collection_ref
         if name == "streak":
@@ -315,6 +323,10 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     known_pattern_controls_collection_ref.stream.return_value = [known_pattern_control_doc]
     known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
         known_pattern_mutation_dedupe_doc
+    ]
+    planned_meals_collection_ref.stream.return_value = [planned_meal_doc]
+    planned_meal_mutation_dedupe_collection_ref.stream.return_value = [
+        planned_meal_mutation_dedupe_doc
     ]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
@@ -395,6 +407,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert smart_memory_mutation_dedupe_doc.reference in deleted_refs
     assert known_pattern_control_doc.reference in deleted_refs
     assert known_pattern_mutation_dedupe_doc.reference in deleted_refs
+    assert planned_meal_doc.reference in deleted_refs
+    assert planned_meal_mutation_dedupe_doc.reference in deleted_refs
     assert badge_doc.reference in deleted_refs
     assert streak_doc.reference in deleted_refs
     assert reminder_daily_stats_doc.reference in deleted_refs
@@ -2033,6 +2047,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
     known_pattern_controls_collection_ref = mocker.Mock()
     known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
+    planned_meals_collection_ref = mocker.Mock()
+    planned_meal_mutation_dedupe_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
     main_billing_ref = mocker.Mock()
     annual_billing_ref = mocker.Mock()
@@ -2114,6 +2130,18 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     known_pattern_mutation_dedupe_document.to_dict.return_value = {
         "clientMutationId": "known-pattern-mutation-1",
         "kind": "known_pattern_control",
+    }
+    planned_meal_document = mocker.Mock()
+    planned_meal_document.id = "planned-meal-1"
+    planned_meal_document.to_dict.return_value = {
+        "plannedMealId": "planned-meal-1",
+        "status": "planned",
+    }
+    planned_meal_mutation_dedupe_document = mocker.Mock()
+    planned_meal_mutation_dedupe_document.id = "planned-meal-mutation-1"
+    planned_meal_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "planned-meal-mutation-1",
+        "kind": "planned_meal_create",
     }
     main_billing_document = mocker.Mock()
     main_billing_document.id = "main"
@@ -2219,6 +2247,10 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return known_pattern_controls_collection_ref
         if name == "knownPatternMutationDedupe":
             return known_pattern_mutation_dedupe_collection_ref
+        if name == "plannedMeals":
+            return planned_meals_collection_ref
+        if name == "plannedMealMutationDedupe":
+            return planned_meal_mutation_dedupe_collection_ref
         if name == "billing":
             return billing_collection_ref
         if name == "badges":
@@ -2260,6 +2292,12 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
         known_pattern_mutation_dedupe_document
     ]
+    planned_meals_collection_ref.stream.return_value = [
+        planned_meal_document
+    ]
+    planned_meal_mutation_dedupe_collection_ref.stream.return_value = [
+        planned_meal_mutation_dedupe_document
+    ]
     for collection_ref in (
         smart_memory_collection_ref,
         smart_memory_candidates_collection_ref,
@@ -2268,6 +2306,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         smart_memory_mutation_dedupe_collection_ref,
         known_pattern_controls_collection_ref,
         known_pattern_mutation_dedupe_collection_ref,
+        planned_meals_collection_ref,
+        planned_meal_mutation_dedupe_collection_ref,
     ):
         collection_ref.limit.return_value = collection_ref
     billing_collection_ref.stream.return_value = [
@@ -2364,6 +2404,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         smart_memory_mutation_dedupe,
         known_pattern_controls,
         known_pattern_mutation_dedupe,
+        planned_meal_items,
+        planned_meal_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
@@ -2439,6 +2481,19 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             "clientMutationId": "known-pattern-mutation-1",
             "kind": "known_pattern_control",
             "id": "known-pattern-mutation-1",
+        }
+    ]
+    assert planned_meal_items == [
+        {
+            "plannedMealId": "planned-meal-1",
+            "status": "planned",
+        }
+    ]
+    assert planned_meal_mutation_dedupe == [
+        {
+            "clientMutationId": "planned-meal-mutation-1",
+            "kind": "planned_meal_create",
+            "id": "planned-meal-mutation-1",
         }
     ]
     assert billing == [

@@ -42,6 +42,8 @@ from app.core.firestore_constants import (
     MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
+    PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
     SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
     SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
     SMART_MEMORY_SETTINGS_SUBCOLLECTION,
@@ -52,7 +54,7 @@ from app.core.firestore_constants import (
     USERS_COLLECTION,
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
-from app.services import known_pattern_service, telemetry_service
+from app.services import known_pattern_service, planned_meal_service, telemetry_service
 from app.services.reminder_decision_store import DAILY_STATS_SUBCOLLECTION
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ DELETE_SUBCOLLECTIONS = (
     SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
     KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
     KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
+    PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     DAILY_STATS_SUBCOLLECTION,
@@ -1373,6 +1377,8 @@ async def get_user_export_data(
     list[dict[str, Any]],  # smart memory mutation dedupe
     list[dict[str, Any]],  # known pattern controls
     list[dict[str, Any]],  # known pattern mutation dedupe
+    list[dict[str, Any]],  # planned meal items
+    list[dict[str, Any]],  # planned meal mutation dedupe
     list[dict[str, Any]],  # billing
     list[dict[str, Any]],  # ai credits
     list[dict[str, Any]],  # ai credit transactions
@@ -1413,6 +1419,9 @@ async def get_user_export_data(
         known_pattern_export = known_pattern_service.read_export(user_ref)
         known_pattern_controls = known_pattern_export["controls"]
         known_pattern_mutation_dedupe = known_pattern_export["mutationDedupe"]
+        planned_meal_export = planned_meal_service.read_export(user_ref)
+        planned_meal_items = planned_meal_export["items"]
+        planned_meal_mutation_dedupe = planned_meal_export["mutationDedupe"]
         (
             billing,
             ai_credits,
@@ -1458,6 +1467,8 @@ async def get_user_export_data(
         smart_memory_mutation_dedupe,
         known_pattern_controls,
         known_pattern_mutation_dedupe,
+        planned_meal_items,
+        planned_meal_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
