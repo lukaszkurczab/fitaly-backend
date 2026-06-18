@@ -53,6 +53,12 @@ class UserExportResponse(BaseModel):
     smartMemoryMutationDedupe: list[dict[str, Any]] = Field(
         default_factory=_dict_items_default
     )
+    knownPatternControls: list[dict[str, Any]] = Field(
+        default_factory=_dict_items_default
+    )
+    knownPatternMutationDedupe: list[dict[str, Any]] = Field(
+        default_factory=_dict_items_default
+    )
     billing: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     aiCredits: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     aiCreditTransactions: list[dict[str, Any]] = Field(default_factory=_dict_items_default)

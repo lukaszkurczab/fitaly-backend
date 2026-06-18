@@ -37,6 +37,8 @@ from app.core.firestore_constants import (
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     INGREDIENT_PRODUCTS_SUBCOLLECTION,
+    KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
+    KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
@@ -50,7 +52,7 @@ from app.core.firestore_constants import (
     USERS_COLLECTION,
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
-from app.services import telemetry_service
+from app.services import known_pattern_service, telemetry_service
 from app.services.reminder_decision_store import DAILY_STATS_SUBCOLLECTION
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,8 @@ DELETE_SUBCOLLECTIONS = (
     SMART_MEMORY_SETTINGS_SUBCOLLECTION,
     SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
     SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
+    KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
+    KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     DAILY_STATS_SUBCOLLECTION,
@@ -1367,6 +1371,8 @@ async def get_user_export_data(
     list[dict[str, Any]],  # smart memory settings
     list[dict[str, Any]],  # smart memory tombstones
     list[dict[str, Any]],  # smart memory mutation dedupe
+    list[dict[str, Any]],  # known pattern controls
+    list[dict[str, Any]],  # known pattern mutation dedupe
     list[dict[str, Any]],  # billing
     list[dict[str, Any]],  # ai credits
     list[dict[str, Any]],  # ai credit transactions
@@ -1404,6 +1410,9 @@ async def get_user_export_data(
         smart_memory_settings = smart_memory_export["settings"]
         smart_memory_tombstones = smart_memory_export["tombstones"]
         smart_memory_mutation_dedupe = smart_memory_export["mutationDedupe"]
+        known_pattern_export = known_pattern_service.read_export(user_ref)
+        known_pattern_controls = known_pattern_export["controls"]
+        known_pattern_mutation_dedupe = known_pattern_export["mutationDedupe"]
         (
             billing,
             ai_credits,
@@ -1447,6 +1456,8 @@ async def get_user_export_data(
         smart_memory_settings,
         smart_memory_tombstones,
         smart_memory_mutation_dedupe,
+        known_pattern_controls,
+        known_pattern_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,

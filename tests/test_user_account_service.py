@@ -188,6 +188,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     smart_memory_settings_collection_ref = mocker.Mock()
     smart_memory_tombstones_collection_ref = mocker.Mock()
     smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
+    known_pattern_controls_collection_ref = mocker.Mock()
+    known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
     reminder_daily_stats_collection_ref = mocker.Mock()
@@ -211,6 +213,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     smart_memory_settings_doc = mocker.Mock()
     smart_memory_tombstone_doc = mocker.Mock()
     smart_memory_mutation_dedupe_doc = mocker.Mock()
+    known_pattern_control_doc = mocker.Mock()
+    known_pattern_mutation_dedupe_doc = mocker.Mock()
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
     reminder_daily_stats_doc = mocker.Mock()
@@ -275,6 +279,10 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return smart_memory_tombstones_collection_ref
         if name == "smartMemoryMutationDedupe":
             return smart_memory_mutation_dedupe_collection_ref
+        if name == "knownPatternControls":
+            return known_pattern_controls_collection_ref
+        if name == "knownPatternMutationDedupe":
+            return known_pattern_mutation_dedupe_collection_ref
         if name == "badges":
             return badges_collection_ref
         if name == "streak":
@@ -303,6 +311,10 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     smart_memory_tombstones_collection_ref.stream.return_value = [smart_memory_tombstone_doc]
     smart_memory_mutation_dedupe_collection_ref.stream.return_value = [
         smart_memory_mutation_dedupe_doc
+    ]
+    known_pattern_controls_collection_ref.stream.return_value = [known_pattern_control_doc]
+    known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
+        known_pattern_mutation_dedupe_doc
     ]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
@@ -381,6 +393,8 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert smart_memory_settings_doc.reference in deleted_refs
     assert smart_memory_tombstone_doc.reference in deleted_refs
     assert smart_memory_mutation_dedupe_doc.reference in deleted_refs
+    assert known_pattern_control_doc.reference in deleted_refs
+    assert known_pattern_mutation_dedupe_doc.reference in deleted_refs
     assert badge_doc.reference in deleted_refs
     assert streak_doc.reference in deleted_refs
     assert reminder_daily_stats_doc.reference in deleted_refs
@@ -2017,6 +2031,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     smart_memory_settings_collection_ref = mocker.Mock()
     smart_memory_tombstones_collection_ref = mocker.Mock()
     smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
+    known_pattern_controls_collection_ref = mocker.Mock()
+    known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
     main_billing_ref = mocker.Mock()
     annual_billing_ref = mocker.Mock()
@@ -2086,6 +2102,18 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     smart_memory_mutation_dedupe_document.to_dict.return_value = {
         "clientMutationId": "memory-mutation-1",
         "kind": "item_delete",
+    }
+    known_pattern_control_document = mocker.Mock()
+    known_pattern_control_document.id = "known-pattern-control-1"
+    known_pattern_control_document.to_dict.return_value = {
+        "controlId": "known-pattern-control-1",
+        "state": "declined",
+    }
+    known_pattern_mutation_dedupe_document = mocker.Mock()
+    known_pattern_mutation_dedupe_document.id = "known-pattern-mutation-1"
+    known_pattern_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "known-pattern-mutation-1",
+        "kind": "known_pattern_control",
     }
     main_billing_document = mocker.Mock()
     main_billing_document.id = "main"
@@ -2187,6 +2215,10 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return smart_memory_tombstones_collection_ref
         if name == "smartMemoryMutationDedupe":
             return smart_memory_mutation_dedupe_collection_ref
+        if name == "knownPatternControls":
+            return known_pattern_controls_collection_ref
+        if name == "knownPatternMutationDedupe":
+            return known_pattern_mutation_dedupe_collection_ref
         if name == "billing":
             return billing_collection_ref
         if name == "badges":
@@ -2222,12 +2254,20 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     smart_memory_mutation_dedupe_collection_ref.stream.return_value = [
         smart_memory_mutation_dedupe_document
     ]
+    known_pattern_controls_collection_ref.stream.return_value = [
+        known_pattern_control_document
+    ]
+    known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
+        known_pattern_mutation_dedupe_document
+    ]
     for collection_ref in (
         smart_memory_collection_ref,
         smart_memory_candidates_collection_ref,
         smart_memory_settings_collection_ref,
         smart_memory_tombstones_collection_ref,
         smart_memory_mutation_dedupe_collection_ref,
+        known_pattern_controls_collection_ref,
+        known_pattern_mutation_dedupe_collection_ref,
     ):
         collection_ref.limit.return_value = collection_ref
     billing_collection_ref.stream.return_value = [
@@ -2322,6 +2362,8 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         smart_memory_settings,
         smart_memory_tombstones,
         smart_memory_mutation_dedupe,
+        known_pattern_controls,
+        known_pattern_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
@@ -2384,6 +2426,19 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             "clientMutationId": "memory-mutation-1",
             "kind": "item_delete",
             "id": "memory-mutation-1",
+        }
+    ]
+    assert known_pattern_controls == [
+        {
+            "controlId": "known-pattern-control-1",
+            "state": "declined",
+        }
+    ]
+    assert known_pattern_mutation_dedupe == [
+        {
+            "clientMutationId": "known-pattern-mutation-1",
+            "kind": "known_pattern_control",
+            "id": "known-pattern-mutation-1",
         }
     ]
     assert billing == [
