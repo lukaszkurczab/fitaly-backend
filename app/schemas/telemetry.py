@@ -206,11 +206,13 @@ AUTOCOMPLETE_WARNING_REASONS = frozenset(
         "backend_degraded",
     }
 )
-HOME_NEXT_ACTION_TYPES = frozenset({"continue_review"})
+HOME_NEXT_ACTION_TYPES = frozenset({"continue_review", "continue_planned_item"})
 HOME_NEXT_ACTION_STATES = frozenset({"eligible"})
-HOME_NEXT_ACTION_REASON_CODES = frozenset({"review_draft_available"})
-HOME_NEXT_ACTION_SOURCE_DOMAINS = frozenset({"review_draft"})
-HOME_NEXT_ACTION_OWNER_FLOWS = frozenset({"ReviewMeal"})
+HOME_NEXT_ACTION_REASON_CODES = frozenset(
+    {"review_draft_available", "planned_item_due"}
+)
+HOME_NEXT_ACTION_SOURCE_DOMAINS = frozenset({"review_draft", "planned_meal"})
+HOME_NEXT_ACTION_OWNER_FLOWS = frozenset({"ReviewMeal", "Planning"})
 HOME_NEXT_ACTION_COOLDOWN_BUCKETS = frozenset({"24h"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(

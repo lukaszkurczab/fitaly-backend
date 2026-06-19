@@ -1290,6 +1290,43 @@ def test_telemetry_batch_accepts_home_next_action_events(
                 "cooldownBucket": "24h",
             },
         },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-shown",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "continue_planned_item",
+                "state": "eligible",
+                "reasonCode": "planned_item_due",
+                "sourceDomain": "planned_meal",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-started",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_planned_item",
+                "ownerFlow": "Planning",
+                "state": "eligible",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-dismissed",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_planned_item",
+                "reasonCode": "planned_item_due",
+                "cooldownBucket": "24h",
+            },
+        },
     ]
 
     response = client.post(
@@ -1299,7 +1336,7 @@ def test_telemetry_batch_accepts_home_next_action_events(
     )
 
     assert response.status_code == 202
-    assert response.json()["acceptedCount"] == 3
+    assert response.json()["acceptedCount"] == 6
     assert firestore_client.requested_collections == ["telemetry_events"]
     assert firestore_client.storage["evt-home-next-action-shown"]["props"] == {
         "actionType": "continue_review",
@@ -1315,6 +1352,22 @@ def test_telemetry_batch_accepts_home_next_action_events(
     assert firestore_client.storage["evt-home-next-action-dismissed"]["props"] == {
         "actionType": "continue_review",
         "reasonCode": "review_draft_available",
+        "cooldownBucket": "24h",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-shown"]["props"] == {
+        "actionType": "continue_planned_item",
+        "state": "eligible",
+        "reasonCode": "planned_item_due",
+        "sourceDomain": "planned_meal",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-started"]["props"] == {
+        "actionType": "continue_planned_item",
+        "ownerFlow": "Planning",
+        "state": "eligible",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-dismissed"]["props"] == {
+        "actionType": "continue_planned_item",
+        "reasonCode": "planned_item_due",
         "cooldownBucket": "24h",
     }
 
@@ -1347,6 +1400,34 @@ def test_telemetry_batch_rejects_home_next_action_unbounded_enums(
                 "actionType": "continue_review",
                 "ownerFlow": "ReviewMeal",
                 "state": "pending",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-source-domain",
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "continue_planned_item",
+                "state": "eligible",
+                "reasonCode": "planned_item_due",
+                "sourceDomain": "planning_note",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-owner-flow",
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_planned_item",
+                "ownerFlow": "PlanningDetail",
+                "state": "eligible",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-reason-code",
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_planned_item",
+                "reasonCode": "raw-user-reason",
+                "cooldownBucket": "24h",
             },
         },
         {

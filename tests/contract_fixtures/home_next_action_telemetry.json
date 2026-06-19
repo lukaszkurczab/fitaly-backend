@@ -22,6 +22,51 @@
       "cooldownBucket"
     ]
   },
+  "enumValuesByEvent": {
+    "home_next_action_shown": {
+      "actionType": [
+        "continue_planned_item",
+        "continue_review"
+      ],
+      "state": [
+        "eligible"
+      ],
+      "reasonCode": [
+        "planned_item_due",
+        "review_draft_available"
+      ],
+      "sourceDomain": [
+        "planned_meal",
+        "review_draft"
+      ]
+    },
+    "home_next_action_started": {
+      "actionType": [
+        "continue_planned_item",
+        "continue_review"
+      ],
+      "ownerFlow": [
+        "Planning",
+        "ReviewMeal"
+      ],
+      "state": [
+        "eligible"
+      ]
+    },
+    "home_next_action_dismissed": {
+      "actionType": [
+        "continue_planned_item",
+        "continue_review"
+      ],
+      "reasonCode": [
+        "planned_item_due",
+        "review_draft_available"
+      ],
+      "cooldownBucket": [
+        "24h"
+      ]
+    }
+  },
   "disallowedEventNames": [
     "home_next_action_available",
     "home_next_action_completed",

@@ -112,6 +112,7 @@ from app.schemas.reminders import (
 )
 from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
+    ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES,
     ALLOWED_TELEMETRY_EVENT_PROPS,
 )
 from app.schemas.weekly_reports import (
@@ -791,6 +792,37 @@ class TestHomeNextActionTelemetryContract:
         for event_name, prop_names in expected.items():
             assert set(fixture["propsByEvent"][event_name]) == prop_names
             assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_enum_values_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown": {
+                "actionType": {"continue_review", "continue_planned_item"},
+                "state": {"eligible"},
+                "reasonCode": {"review_draft_available", "planned_item_due"},
+                "sourceDomain": {"review_draft", "planned_meal"},
+            },
+            "home_next_action_started": {
+                "actionType": {"continue_review", "continue_planned_item"},
+                "ownerFlow": {"ReviewMeal", "Planning"},
+                "state": {"eligible"},
+            },
+            "home_next_action_dismissed": {
+                "actionType": {"continue_review", "continue_planned_item"},
+                "reasonCode": {"review_draft_available", "planned_item_due"},
+                "cooldownBucket": {"24h"},
+            },
+        }
+
+        raw_enum_values = cast(JSONDict, fixture["enumValuesByEvent"])
+        assert set(raw_enum_values.keys()) == set(expected.keys())
+        for event_name, prop_values in expected.items():
+            event_values = cast(dict[str, list[str]], raw_enum_values[event_name])
+            assert set(event_values.keys()) == set(prop_values.keys())
+            for prop_name, values in prop_values.items():
+                assert set(event_values[prop_name]) == values
+                assert ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES[event_name][
+                    prop_name
+                ] == frozenset(values)
 
     def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
         for event_name in fixture["disallowedEventNames"]:
