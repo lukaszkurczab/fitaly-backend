@@ -75,6 +75,7 @@ _request_buckets: TTLCache[str, deque[float]] = TTLCache[str, deque[float]](
     ttl=RATE_LIMIT_WINDOW_SECONDS * 2,
 )
 TELEMETRY_RETENTION_DAYS = 30
+TELEMETRY_SUMMARY_CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -368,12 +369,15 @@ def get_daily_summary(
         raise TelemetryDisabledError("Telemetry ingestion is disabled")
 
     normalized_now = ensure_utc_datetime(now or utc_now())
-    start_at = normalized_now - timedelta(days=max(days - 1, 0))
+    current_day_start = normalized_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_at = current_day_start - timedelta(days=max(days - 1, 0))
+    end_at = normalized_now + TELEMETRY_SUMMARY_CLOCK_SKEW_TOLERANCE
+    current_day = normalized_now.date().isoformat()
     collection_ref = get_firestore().collection(COLLECTION_NAME)
     query = (
         collection_ref.where("userHash", "==", build_user_hash(user_id))
         .where("ts", ">=", _serialize_timestamp(start_at))
-        .where("ts", "<=", _serialize_timestamp(normalized_now))
+        .where("ts", "<=", _serialize_timestamp(end_at))
     )
 
     buckets: dict[str, dict[str, int]] = {}
@@ -392,6 +396,8 @@ def get_daily_summary(
         event_name = str(payload.get("name") or "").strip()
         if len(day) != 10 or not event_name:
             continue
+        if day > current_day:
+            day = current_day
         day_counts = buckets.setdefault(day, {})
         day_counts[event_name] = day_counts.get(event_name, 0) + 1
 

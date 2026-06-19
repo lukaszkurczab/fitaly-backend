@@ -1853,6 +1853,96 @@ def test_telemetry_daily_summary_returns_grouped_counts(
     ]
 
 
+def test_telemetry_daily_summary_allows_small_client_clock_skew(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    mocker.patch(
+        "app.services.telemetry_service.utc_now",
+        return_value=telemetry_service.datetime(2026, 3, 18, 12, 0, 0),
+    )
+    firestore_client = FakeFirestoreClient()
+    firestore_client.storage.update(
+        {
+            "evt-earlier-today": {
+                "eventId": "evt-earlier-today",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T11:00:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+            "evt-in-skew": {
+                "eventId": "evt-in-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T12:04:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+            "evt-outside-skew": {
+                "eventId": "evt-outside-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T12:06:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+        }
+    )
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.get(
+        "/api/v2/telemetry/events/summary/daily?days=1",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["buckets"] == [
+        {
+            "day": "2026-03-18",
+            "totalEvents": 2,
+            "eventCounts": [{"name": "home_next_action_started", "count": 2}],
+        },
+    ]
+
+
+def test_telemetry_daily_summary_clamps_future_skew_to_current_day(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    mocker.patch(
+        "app.services.telemetry_service.utc_now",
+        return_value=telemetry_service.datetime(2026, 3, 18, 23, 59, 0),
+    )
+    firestore_client = FakeFirestoreClient()
+    firestore_client.storage.update(
+        {
+            "evt-future-skew": {
+                "eventId": "evt-future-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-19T00:02:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+        }
+    )
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.get(
+        "/api/v2/telemetry/events/summary/daily?days=1",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["buckets"] == [
+        {
+            "day": "2026-03-18",
+            "totalEvents": 1,
+            "eventCounts": [{"name": "home_next_action_started", "count": 1}],
+        },
+    ]
+
+
 def test_telemetry_batch_returns_429_when_rate_limit_is_exceeded(
     mocker: MockerFixture,
 ) -> None:
