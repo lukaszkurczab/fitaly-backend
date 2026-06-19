@@ -1327,6 +1327,43 @@ def test_telemetry_batch_accepts_home_next_action_events(
                 "cooldownBucket": "24h",
             },
         },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-shown",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "state": "eligible",
+                "reasonCode": "known_pattern_available",
+                "sourceDomain": "known_pattern_candidate",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-started",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "ownerFlow": "MealAddMethod",
+                "state": "eligible",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-dismissed",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "reasonCode": "known_pattern_available",
+                "cooldownBucket": "24h",
+            },
+        },
     ]
 
     response = client.post(
@@ -1336,7 +1373,7 @@ def test_telemetry_batch_accepts_home_next_action_events(
     )
 
     assert response.status_code == 202
-    assert response.json()["acceptedCount"] == 6
+    assert response.json()["acceptedCount"] == 9
     assert firestore_client.requested_collections == ["telemetry_events"]
     assert firestore_client.storage["evt-home-next-action-shown"]["props"] == {
         "actionType": "continue_review",
@@ -1368,6 +1405,22 @@ def test_telemetry_batch_accepts_home_next_action_events(
     assert firestore_client.storage["evt-home-next-action-planned-dismissed"]["props"] == {
         "actionType": "continue_planned_item",
         "reasonCode": "planned_item_due",
+        "cooldownBucket": "24h",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-shown"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "state": "eligible",
+        "reasonCode": "known_pattern_available",
+        "sourceDomain": "known_pattern_candidate",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-started"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "ownerFlow": "MealAddMethod",
+        "state": "eligible",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-dismissed"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "reasonCode": "known_pattern_available",
         "cooldownBucket": "24h",
     }
 
@@ -1428,6 +1481,16 @@ def test_telemetry_batch_rejects_home_next_action_unbounded_enums(
                 "actionType": "continue_planned_item",
                 "reasonCode": "raw-user-reason",
                 "cooldownBucket": "24h",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-known-source",
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "state": "eligible",
+                "reasonCode": "known_pattern_available",
+                "sourceDomain": "known_pattern_raw",
             },
         },
         {

@@ -796,19 +796,43 @@ class TestHomeNextActionTelemetryContract:
     def test_enum_values_match_backend_allowlist(self, fixture: JSONDict) -> None:
         expected = {
             "home_next_action_shown": {
-                "actionType": {"continue_review", "continue_planned_item"},
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
                 "state": {"eligible"},
-                "reasonCode": {"review_draft_available", "planned_item_due"},
-                "sourceDomain": {"review_draft", "planned_meal"},
+                "reasonCode": {
+                    "review_draft_available",
+                    "planned_item_due",
+                    "known_pattern_available",
+                },
+                "sourceDomain": {
+                    "review_draft",
+                    "planned_meal",
+                    "known_pattern_candidate",
+                },
             },
             "home_next_action_started": {
-                "actionType": {"continue_review", "continue_planned_item"},
-                "ownerFlow": {"ReviewMeal", "Planning"},
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
+                "ownerFlow": {"ReviewMeal", "Planning", "MealAddMethod"},
                 "state": {"eligible"},
             },
             "home_next_action_dismissed": {
-                "actionType": {"continue_review", "continue_planned_item"},
-                "reasonCode": {"review_draft_available", "planned_item_due"},
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
+                "reasonCode": {
+                    "review_draft_available",
+                    "planned_item_due",
+                    "known_pattern_available",
+                },
                 "cooldownBucket": {"24h"},
             },
         }
