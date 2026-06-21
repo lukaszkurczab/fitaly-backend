@@ -1,4 +1,5 @@
 from typing import Any
+from typing import cast
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -32,6 +33,54 @@ def _dict_items_default() -> list[dict[str, Any]]:
     return []
 
 
+USER_EXPORT_RECORD_COUNT_FIELDS = (
+    "profile",
+    "meals",
+    "myMeals",
+    "chatMessages",
+    "chatMemory",
+    "aiRuns",
+    "notifications",
+    "notificationPrefs",
+    "feedback",
+    "mealMutationDedupe",
+    "mealEffectOutbox",
+    "ingredientProducts",
+    "smartMemoryItems",
+    "smartMemoryCandidates",
+    "smartMemorySettings",
+    "smartMemoryTombstones",
+    "smartMemoryMutationDedupe",
+    "knownPatternControls",
+    "knownPatternMutationDedupe",
+    "plannedMealItems",
+    "plannedMealMutationDedupe",
+    "billing",
+    "aiCredits",
+    "aiCreditTransactions",
+    "aiCreditIdempotency",
+    "badges",
+    "streak",
+    "reminderDailyStats",
+    "telemetryEvents",
+)
+
+
+def _export_record_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(cast(list[Any], value))
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return 1 if value else 0
+    return 1
+
+
+class UserExportManifest(BaseModel):
+    schemaVersion: Literal["user-export-manifest-v1"] = "user-export-manifest-v1"
+    recordCounts: dict[str, int] = Field(default_factory=dict)
+
+
 class UserExportResponse(BaseModel):
     profile: dict[str, Any] | None
     meals: list[dict[str, Any]]
@@ -43,6 +92,7 @@ class UserExportResponse(BaseModel):
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
     feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     mealMutationDedupe: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    mealEffectOutbox: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     ingredientProducts: list[dict[str, Any]] = Field(
         default_factory=_dict_items_default
     )
@@ -71,6 +121,17 @@ class UserExportResponse(BaseModel):
     streak: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     reminderDailyStats: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     telemetryEvents: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
+    exportManifest: UserExportManifest = Field(default_factory=UserExportManifest)
+
+    @model_validator(mode="after")
+    def populate_export_manifest(self) -> "UserExportResponse":
+        self.exportManifest = UserExportManifest(
+            recordCounts={
+                field_name: _export_record_count(getattr(self, field_name))
+                for field_name in USER_EXPORT_RECORD_COUNT_FIELDS
+            }
+        )
+        return self
 
 
 class UserProfileResponse(BaseModel):

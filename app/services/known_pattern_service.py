@@ -876,14 +876,11 @@ def read_export(user_ref: firestore.DocumentReference) -> dict[str, list[dict[st
     return {
         "controls": [
             _snapshot_document(snapshot, document_id_field="controlId")
-            for snapshot in user_ref.collection(KNOWN_PATTERN_CONTROLS_SUBCOLLECTION)
-            .limit(KNOWN_PATTERN_MAX_CONTROL_DOCS)
-            .stream()
+            for snapshot in user_ref.collection(KNOWN_PATTERN_CONTROLS_SUBCOLLECTION).stream()
         ],
         "mutationDedupe": [
             _snapshot_document(snapshot, document_id_field="id")
             for snapshot in user_ref.collection(KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION)
-            .limit(KNOWN_PATTERN_MAX_CONTROL_DOCS)
             .stream()
         ],
     }

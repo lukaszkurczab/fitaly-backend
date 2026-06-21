@@ -90,6 +90,24 @@ class FakeCollectionRef:
         return query_ref
 
 
+def _collection_with_documents(
+    prefix: str,
+    count: int,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> FakeCollectionRef:
+    documents: dict[str, FakeDocumentRef] = {}
+    for index in range(count):
+        document_id = f"{prefix}-{index}"
+        payload = {"id": document_id}
+        payload.update(extra or {})
+        documents[document_id] = FakeDocumentRef(
+            document_id,
+            FakeSnapshot(document_id, exists=True, data=payload),
+        )
+    return FakeCollectionRef(documents)
+
+
 class FakeUserRef:
     def __init__(self, collections: dict[str, FakeCollectionRef]) -> None:
         self.collections = collections
@@ -920,9 +938,99 @@ def test_list_suppressed_subject_keys_includes_source_deleted_documents(
         source_deleted_candidate["subject"],
         source_deleted_candidate["candidateId"],
     ) in result
-    assert tombstones_collection.limit_calls == [smart_memory_service.MAX_CAPTURE_CONTROL_DOCS]
-    assert items_collection.limit_calls == [smart_memory_service.MAX_CAPTURE_CONTROL_DOCS]
-    assert candidates_collection.limit_calls == [smart_memory_service.MAX_CAPTURE_CONTROL_DOCS]
+    assert tombstones_collection.limit_calls == []
+    assert items_collection.limit_calls == []
+    assert candidates_collection.limit_calls == []
+
+
+def test_list_suppressed_subject_keys_default_covers_legacy_source_deleted_beyond_old_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents: dict[str, FakeDocumentRef] = {}
+    tail_subject = {"kind": "ingredient_alias", "aliasHash": "legacy-tail"}
+    tail_id = f"legacy-source-deleted-{smart_memory_service.MAX_CAPTURE_CONTROL_DOCS}"
+    for index in range(smart_memory_service.MAX_CAPTURE_CONTROL_DOCS + 1):
+        item = _active_item()
+        item["memoryItemId"] = f"legacy-source-deleted-{index}"
+        item["state"] = "source_deleted"
+        item["subject"] = (
+            tail_subject
+            if index == smart_memory_service.MAX_CAPTURE_CONTROL_DOCS
+            else {"kind": "ingredient_alias", "aliasHash": f"legacy-{index}"}
+        )
+        documents[item["memoryItemId"]] = FakeDocumentRef(
+            item["memoryItemId"],
+            FakeSnapshot(item["memoryItemId"], exists=True, data=item),
+        )
+    tombstones_collection = FakeCollectionRef({})
+    items_collection = FakeCollectionRef(documents)
+    candidates_collection = FakeCollectionRef({})
+    user_ref = FakeUserRef(
+        {
+            "smartMemoryTombstones": tombstones_collection,
+            "smartMemory": items_collection,
+            "smartMemoryCandidates": candidates_collection,
+        }
+    )
+    monkeypatch.setattr(smart_memory_service, "get_firestore", lambda: FakeClient(user_ref))
+
+    result = asyncio.run(
+        smart_memory_service.list_suppressed_subject_keys(
+            "user-1",
+            memory_type="typical_portion",
+        )
+    )
+
+    assert (
+        smart_memory_service._subject_key(
+            "typical_portion",
+            tail_subject,
+            tail_id,
+        )
+        in result
+    )
+    assert tombstones_collection.limit_calls == []
+    assert items_collection.limit_calls == []
+    assert candidates_collection.limit_calls == []
+
+
+def test_list_suppressed_subject_keys_honors_explicit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents: dict[str, FakeDocumentRef] = {}
+    for index in range(3):
+        item = _active_item()
+        item["memoryItemId"] = f"source-deleted-{index}"
+        item["state"] = "source_deleted"
+        item["subject"] = {"kind": "ingredient_alias", "aliasHash": f"subject-{index}"}
+        documents[item["memoryItemId"]] = FakeDocumentRef(
+            item["memoryItemId"],
+            FakeSnapshot(item["memoryItemId"], exists=True, data=item),
+        )
+    tombstones_collection = FakeCollectionRef({})
+    items_collection = FakeCollectionRef(documents)
+    candidates_collection = FakeCollectionRef({})
+    user_ref = FakeUserRef(
+        {
+            "smartMemoryTombstones": tombstones_collection,
+            "smartMemory": items_collection,
+            "smartMemoryCandidates": candidates_collection,
+        }
+    )
+    monkeypatch.setattr(smart_memory_service, "get_firestore", lambda: FakeClient(user_ref))
+
+    result = asyncio.run(
+        smart_memory_service.list_suppressed_subject_keys(
+            "user-1",
+            memory_type="typical_portion",
+            limit_count=2,
+        )
+    )
+
+    assert len(result) == 2
+    assert tombstones_collection.limit_calls == [2]
+    assert items_collection.limit_calls == [2]
+    assert candidates_collection.limit_calls == [2]
 
 
 def test_upsert_candidate_rejects_source_deleted_subject(
@@ -1404,17 +1512,52 @@ def test_read_export_filters_deleted_items_and_suppressed_candidates() -> None:
 
     assert [item["id"] for item in export["items"]] == ["active-1"]
     assert [candidate["id"] for candidate in export["candidates"]] == ["candidate-1"]
-    assert items_collection.limit_calls == [smart_memory_service.MAX_EXPORT_COLLECTION_DOCS]
-    assert candidates_collection.limit_calls == [
-        smart_memory_service.MAX_EXPORT_COLLECTION_DOCS
-    ]
-    assert settings_collection.limit_calls == [smart_memory_service.MAX_EXPORT_COLLECTION_DOCS]
-    assert tombstones_collection.limit_calls == [
-        smart_memory_service.MAX_EXPORT_COLLECTION_DOCS
-    ]
-    assert mutation_dedupe_collection.limit_calls == [
-        smart_memory_service.MAX_EXPORT_COLLECTION_DOCS
-    ]
+    assert items_collection.limit_calls == []
+    assert candidates_collection.limit_calls == []
+    assert settings_collection.limit_calls == []
+    assert tombstones_collection.limit_calls == []
+    assert mutation_dedupe_collection.limit_calls == []
+
+
+@pytest.mark.parametrize("document_count", [0, 1, 249, 250, 251, 501])
+def test_read_export_streams_all_export_collections_without_limit(
+    document_count: int,
+) -> None:
+    items_collection = _collection_with_documents(
+        "item",
+        document_count,
+        extra={"state": "active"},
+    )
+    candidates_collection = _collection_with_documents(
+        "candidate",
+        document_count,
+        extra={"state": "candidate"},
+    )
+    settings_collection = _collection_with_documents("setting", document_count)
+    tombstones_collection = _collection_with_documents("tombstone", document_count)
+    mutation_dedupe_collection = _collection_with_documents("mutation", document_count)
+    user_ref = FakeUserRef(
+        {
+            "smartMemory": items_collection,
+            "smartMemoryCandidates": candidates_collection,
+            "smartMemorySettings": settings_collection,
+            "smartMemoryTombstones": tombstones_collection,
+            "smartMemoryMutationDedupe": mutation_dedupe_collection,
+        }
+    )
+
+    export = smart_memory_service.read_export(cast(firestore.DocumentReference, user_ref))
+
+    assert len(export["items"]) == document_count
+    assert len(export["candidates"]) == document_count
+    assert len(export["settings"]) == document_count
+    assert len(export["tombstones"]) == document_count
+    assert len(export["mutationDedupe"]) == document_count
+    assert items_collection.limit_calls == []
+    assert candidates_collection.limit_calls == []
+    assert settings_collection.limit_calls == []
+    assert tombstones_collection.limit_calls == []
+    assert mutation_dedupe_collection.limit_calls == []
 
 
 def test_candidate_upsert_request_rejects_raw_provider_payload() -> None:

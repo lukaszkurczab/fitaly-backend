@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -66,6 +66,26 @@ class FakeCollectionRef:
     def limit(self, count: int) -> "FakeCollectionRef":
         self.limit_calls.append(count)
         return FakeCollectionRef(dict(list(self.documents.items())[:count]))
+
+
+def _collection_with_documents(
+    prefix: str,
+    count: int,
+    *,
+    document_id_field: str,
+) -> FakeCollectionRef:
+    documents: dict[str, FakeDocumentRef] = {}
+    for index in range(count):
+        document_id = f"{prefix}-{index}"
+        documents[document_id] = FakeDocumentRef(
+            document_id,
+            FakeSnapshot(
+                document_id,
+                exists=True,
+                data={document_id_field: document_id},
+            ),
+        )
+    return FakeCollectionRef(documents)
 
 
 class FakeUserRef:
@@ -517,3 +537,29 @@ def test_known_pattern_service_stays_deterministic_and_read_only() -> None:
     assert "SMART_MEMORY_CANDIDATES_SUBCOLLECTION" not in service_source
     assert ".update(" not in service_source
     assert ".delete(" not in service_source
+
+
+@pytest.mark.parametrize("document_count", [0, 1, 249, 250, 251, 501])
+def test_read_export_streams_all_controls_and_dedupe_without_limit(
+    document_count: int,
+) -> None:
+    controls_collection = _collection_with_documents(
+        "control",
+        document_count,
+        document_id_field="controlId",
+    )
+    mutation_dedupe_collection = _collection_with_documents(
+        "mutation",
+        document_count,
+        document_id_field="id",
+    )
+    user_ref = FakeUserRef()
+    user_ref.collections["knownPatternControls"] = controls_collection
+    user_ref.collections["knownPatternMutationDedupe"] = mutation_dedupe_collection
+
+    export = known_pattern_service.read_export(cast(Any, user_ref))
+
+    assert len(export["controls"]) == document_count
+    assert len(export["mutationDedupe"]) == document_count
+    assert controls_collection.limit_calls == []
+    assert mutation_dedupe_collection.limit_calls == []

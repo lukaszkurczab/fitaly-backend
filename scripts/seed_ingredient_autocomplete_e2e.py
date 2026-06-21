@@ -4,16 +4,57 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import re
+import sys
 from typing import Any, cast
+import unicodedata
 from urllib import error, request
 
 from google.cloud import firestore
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.services.food_library_seed_validator import (  # noqa: E402
+    FoodLibrarySeedValidationReport,
+    raise_for_seed_validation_errors,
+    validate_ingredient_product_seed_records,
+)
 
 
 EMAIL = os.getenv("E2E_EMAIL", "e2e@example.com")
 PASSWORD = os.getenv("E2E_PASSWORD", "Test@1234")
 PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "demo-fitaly-local")
 DATABASE_ID = os.getenv("FIRESTORE_DATABASE_ID", "fitaly-smoke")
+
+
+def _normalize_search_value(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    without_marks = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    return re.sub(r"\s+", " ", without_marks).strip()
+
+
+def _search_prefixes(*values: str | None) -> list[str]:
+    prefixes: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        normalized = _normalize_search_value(value)
+        if len(normalized) >= 2:
+            for end_index in range(2, len(normalized) + 1):
+                prefix = normalized[:end_index]
+                if not prefix.endswith(" "):
+                    prefixes.add(prefix)
+        for token in normalized.split():
+            if len(token) < 2:
+                continue
+            for end_index in range(2, len(token) + 1):
+                prefixes.add(token[:end_index])
+    return sorted(prefixes)
 
 
 def _require_env(name: str) -> str:
@@ -116,7 +157,7 @@ def _ingredient_product_document() -> dict[str, Any]:
         "brandName": None,
         "packageName": None,
         "category": "grain",
-        "searchPrefixes": ["ow", "owi", "owie", "owies", "owies lokalny"],
+        "searchPrefixes": _search_prefixes("Owies lokalny", "Owies", "grain"),
         "defaultServing": {"quantity": 50, "unit": "g"},
         "nutritionPer100": {
             "basis": "per_100g",
@@ -168,7 +209,7 @@ def _warning_ingredient_product_document() -> dict[str, Any]:
         "brandName": None,
         "packageName": None,
         "category": "grain",
-        "searchPrefixes": ["ost", "ostr", "ostrzezenie", "owies ostrzezenie"],
+        "searchPrefixes": _search_prefixes("Owies ostrzezenie", "Owies", "grain"),
         "defaultServing": {"quantity": 50, "unit": "g"},
         "nutritionPer100": {
             "basis": "per_100g",
@@ -210,6 +251,25 @@ def _warning_ingredient_product_document() -> dict[str, Any]:
         "createdAt": now,
         "updatedAt": now,
     }
+
+
+def _global_ingredient_product_documents() -> list[dict[str, Any]]:
+    return [_ingredient_product_document(), _warning_ingredient_product_document()]
+
+
+def _validate_global_seed_records(
+    records: list[dict[str, Any]],
+) -> FoodLibrarySeedValidationReport:
+    report = validate_ingredient_product_seed_records(
+        records,
+        dataset_name="ingredient-autocomplete-local-e2e",
+        dataset_kind="local_e2e_seed",
+        document_ids=[
+            cast(str | None, record.get("ingredientProductId")) for record in records
+        ],
+    )
+    raise_for_seed_validation_errors(report)
+    return report
 
 
 def _private_delete_ingredient_product_document(uid: str) -> dict[str, Any]:
@@ -359,19 +419,19 @@ def _private_update_ingredient_product_document(uid: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    global_seed_records = _global_ingredient_product_documents()
+    global_seed_validation = _validate_global_seed_records(global_seed_records)
     _require_env("FIRESTORE_EMULATOR_HOST")
     uid, _ = _seed_auth_user()
     firestore_client_factory = cast(Any, firestore.Client)
     client = firestore_client_factory(project=PROJECT_ID, database=DATABASE_ID)
     client.collection("users").document(uid).set(_profile_document(uid), merge=True)
-    client.collection("ingredientProducts").document("e2e-local-oats").set(
-        _ingredient_product_document(),
-        merge=True,
-    )
-    client.collection("ingredientProducts").document("e2e-warning-oats").set(
-        _warning_ingredient_product_document(),
-        merge=True,
-    )
+    for record in global_seed_records:
+        product_id = cast(str, record["ingredientProductId"])
+        client.collection("ingredientProducts").document(product_id).set(
+            record,
+            merge=True,
+        )
     (
         client.collection("users")
         .document(uid)
@@ -390,7 +450,18 @@ def main() -> None:
             _private_update_ingredient_product_document(uid),
         )
     )
-    print(json.dumps({"uid": uid, "email": EMAIL}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "uid": uid,
+                "email": EMAIL,
+                "globalSeedValidation": global_seed_validation.summary.model_dump(
+                    mode="json"
+                ),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

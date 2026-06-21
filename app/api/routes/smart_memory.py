@@ -3,7 +3,9 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request
+from app.core.config import settings
 from app.schemas.smart_memory import (
     SmartMemoryCandidate,
     SmartMemoryCandidateResponse,
@@ -29,6 +31,14 @@ from app.services.smart_memory_service import (
 router = APIRouter()
 
 
+def _ensure_smart_memory_enabled() -> None:
+    if not settings.SMART_MEMORY_ENABLED:
+        raise_feature_disabled(
+            code="smart_memory_disabled",
+            message="Smart Memory is temporarily disabled.",
+        )
+
+
 def _raise_not_found(exc: Exception) -> NoReturn:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -45,6 +55,7 @@ async def list_smart_memory_items_me(
     limit: int = Query(default=100, ge=1, le=250),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemsPageResponse:
+    _ensure_smart_memory_enabled()
     items = await smart_memory_service.list_items(current_user.uid, limit_count=limit)
     return SmartMemoryItemsPageResponse(
         items=[SmartMemoryItem.model_validate(item) for item in items]
@@ -59,6 +70,7 @@ async def get_smart_memory_item_me(
     memoryItemId: str,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemResponse:
+    _ensure_smart_memory_enabled()
     try:
         item = await smart_memory_service.get_item(current_user.uid, memoryItemId)
     except SmartMemoryNotFoundError as exc:
@@ -77,6 +89,7 @@ async def patch_smart_memory_item_me(
     request: SmartMemoryItemPatchRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemMutationResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.patch_item(
             current_user.uid,
@@ -104,6 +117,7 @@ async def mute_smart_memory_item_me(
     request: SmartMemoryMutationRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemMutationResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.mute_item(
             current_user.uid,
@@ -131,6 +145,7 @@ async def restore_smart_memory_item_me(
     request: SmartMemoryMutationRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemMutationResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.restore_item(
             current_user.uid,
@@ -158,6 +173,7 @@ async def delete_smart_memory_item_me(
     request: SmartMemoryMutationRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemMutationResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.delete_item(
             current_user.uid,
@@ -185,6 +201,7 @@ async def mark_smart_memory_item_source_deleted_me(
     request: SmartMemorySourceDeletedRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryItemMutationResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.mark_source_deleted(
             current_user.uid,
@@ -212,6 +229,7 @@ async def list_smart_memory_candidates_me(
     limit: int = Query(default=100, ge=1, le=250),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryCandidatesPageResponse:
+    _ensure_smart_memory_enabled()
     candidates = await smart_memory_service.list_candidates(
         current_user.uid,
         limit_count=limit,
@@ -229,6 +247,7 @@ async def get_smart_memory_candidate_me(
     candidateId: str,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryCandidateResponse:
+    _ensure_smart_memory_enabled()
     try:
         candidate = await smart_memory_service.get_candidate(current_user.uid, candidateId)
     except SmartMemoryNotFoundError as exc:
@@ -249,6 +268,7 @@ async def upsert_smart_memory_candidate_me(
     request: SmartMemoryCandidateUpsertRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemoryCandidateResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.upsert_candidate(current_user.uid, request)
     except SmartMemoryMutationDedupeConflictError as exc:
@@ -268,6 +288,7 @@ async def upsert_smart_memory_candidate_me(
 async def get_smart_memory_settings_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemorySettingsResponse:
+    _ensure_smart_memory_enabled()
     settings = await smart_memory_service.get_settings(current_user.uid)
     return SmartMemorySettingsResponse(
         settings=SmartMemorySettings.model_validate(settings),
@@ -283,6 +304,7 @@ async def update_smart_memory_settings_me(
     request: SmartMemorySettingsUpdateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> SmartMemorySettingsResponse:
+    _ensure_smart_memory_enabled()
     try:
         result = await smart_memory_service.update_settings(current_user.uid, request)
     except SmartMemoryMutationDedupeConflictError as exc:

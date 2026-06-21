@@ -83,6 +83,12 @@ class PlannedMealItem(BaseModel):
     draftSnapshot: PlannedMealDraftSnapshot
     nutritionEstimate: PlannedMealNutritionEstimate
     status: PlannedMealStatus
+    linkedMealId: str | None = Field(default=None, min_length=1)
+    convertedAt: str | None = Field(default=None, min_length=1, max_length=64)
+    conversionClientMutationId: str | None = Field(
+        default=None,
+        min_length=1,
+    )
     createdAt: str = Field(min_length=1, max_length=64)
     updatedAt: str = Field(min_length=1, max_length=64)
 

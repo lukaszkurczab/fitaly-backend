@@ -157,6 +157,15 @@ def _known_estimate() -> PlannedMealNutritionEstimate:
     )
 
 
+def _unknown_estimate() -> PlannedMealNutritionEstimate:
+    return PlannedMealNutritionEstimate(
+        state="unknown",
+        totals=None,
+        missingFields=["kcal", "protein", "fat", "carbs"],
+        confidence=None,
+    )
+
+
 def _create_request(
     *,
     client_mutation_id: str = "create-1",
@@ -263,6 +272,103 @@ def test_create_list_update_delete_planned_meal_without_meal_history_write(
         )
     )
     assert with_deleted.items[0].status == "deleted"
+
+
+def test_manual_name_only_unknown_create_persists_without_synthetic_nutrition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_ref = _patch_storage(monkeypatch)
+    request = PlannedMealCreateRequest(
+        clientMutationId="create-name-only-1",
+        plannedMealId="planned-name-only-1",
+        dateBucket="2026-06-19",
+        timeBucket="lunch",
+        sourceType="manual",
+        sourceRef=None,
+        draftSnapshot=PlannedMealDraftSnapshot(
+            name="Protein bowl",
+            type="lunch",
+            ingredients=[],
+            totals=None,
+            notes=None,
+            tags=[],
+        ),
+        nutritionEstimate=_unknown_estimate(),
+    )
+
+    created = asyncio.run(
+        planned_meal_service.create_planned_meal_for_user("user-1", request)
+    )
+    listed = asyncio.run(
+        planned_meal_service.list_planned_meals_for_user(
+            "user-1",
+            start_date="2026-06-19",
+            days=1,
+        )
+    )
+
+    assert created["applied"] is True
+    assert created["item"].draftSnapshot.ingredients == []
+    assert created["item"].draftSnapshot.totals is None
+    assert created["item"].nutritionEstimate.state == "unknown"
+    assert created["item"].nutritionEstimate.totals is None
+    assert created["item"].nutritionEstimate.missingFields == [
+        "kcal",
+        "protein",
+        "fat",
+        "carbs",
+    ]
+    assert created["item"].nutritionEstimate.confidence is None
+    assert listed.items == [created["item"]]
+
+    document = user_ref.collections["plannedMeals"].documents[
+        "planned-name-only-1"
+    ].snapshot.to_dict()
+    assert document["draftSnapshot"]["ingredients"] == []
+    assert document["draftSnapshot"]["totals"] is None
+    assert document["nutritionEstimate"] == {
+        "state": "unknown",
+        "totals": None,
+        "missingFields": ["kcal", "protein", "fat", "carbs"],
+        "confidence": None,
+    }
+
+
+def test_list_accepts_converted_link_fields_from_meal_sync_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_ref = _patch_storage(monkeypatch)
+    created = asyncio.run(
+        planned_meal_service.create_planned_meal_for_user("user-1", _create_request())
+    )
+    long_meal_id = f"meal-{'x' * 160}"
+    long_mutation_id = f"meal-sync:upsert:{'u' * 80}:{long_meal_id}:{'m' * 80}"
+    document_ref = user_ref.collections["plannedMeals"].documents["planned-1"]
+    document = document_ref.snapshot.to_dict()
+    document_ref.set(
+        {
+            **document,
+            "status": "converted_to_review",
+            "version": created["item"].version + 1,
+            "linkedMealId": long_meal_id,
+            "convertedAt": "2026-06-19T09:30:00.000Z",
+            "conversionClientMutationId": long_mutation_id,
+            "updatedAt": "2026-06-19T09:30:00.000Z",
+        }
+    )
+
+    listed = asyncio.run(
+        planned_meal_service.list_planned_meals_for_user(
+            "user-1",
+            start_date="2026-06-19",
+            days=1,
+        )
+    )
+
+    assert listed.queryEcho.returnedItems == 1
+    assert listed.items[0].status == "converted_to_review"
+    assert listed.items[0].linkedMealId == long_meal_id
+    assert listed.items[0].conversionClientMutationId == long_mutation_id
 
 
 def test_planned_meal_mutations_replay_by_client_mutation_id(

@@ -1,5 +1,8 @@
+import asyncio
 import os
+import threading
 from typing import Any, cast
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import call
 from uuid import uuid4
 
@@ -7,7 +10,7 @@ import pytest
 from google.cloud import firestore
 from pytest_mock import MockerFixture
 
-from app.services import meal_service
+from app.services import meal_effect_outbox_service, meal_service
 
 
 pytestmark = pytest.mark.skipif(
@@ -30,6 +33,7 @@ def _meal_payload(
     day_key: str,
     updated_at: str,
     image_id: str,
+    overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "id": meal_id,
@@ -71,12 +75,59 @@ def _meal_payload(
             "downloadUrl": "https://cdn.example.invalid/canonical-photo.jpg",
         },
         "deleted": False,
+        **(overrides or {}),
+    }
+
+
+def _planned_meal_payload(
+    *,
+    planned_meal_id: str,
+    user_id: str,
+) -> dict[str, object]:
+    return {
+        "plannedMealId": planned_meal_id,
+        "version": 2,
+        "dateBucket": "2026-05-06",
+        "timeBucket": "lunch",
+        "sourceType": "manual",
+        "sourceRef": None,
+        "draftSnapshot": {
+            "name": "Planned emulator lunch",
+            "type": "lunch",
+            "ingredients": [
+                {
+                    "id": "ingredient-1",
+                    "name": "Rice bowl",
+                    "amount": 250,
+                    "unit": "g",
+                    "kcal": 420,
+                    "protein": 18,
+                    "carbs": 58,
+                    "fat": 12,
+                }
+            ],
+            "totals": {"kcal": 420, "protein": 18, "carbs": 58, "fat": 12},
+            "notes": None,
+            "tags": [],
+        },
+        "nutritionEstimate": {
+            "state": "known",
+            "totals": {"kcal": 420, "protein": 18, "carbs": 58, "fat": 12},
+            "missingFields": [],
+            "confidence": "medium",
+        },
+        "status": "planned",
+        "createdAt": "2026-05-06T10:00:00.000Z",
+        "updatedAt": "2026-05-06T10:00:00.000Z",
+        "ownerUserId": user_id,
     }
 
 
 async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
     mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", True)
     client = _emulator_client()
     run_id = uuid4().hex
     user_a = f"l3-pr3-user-a-{run_id}"
@@ -282,7 +333,10 @@ async def test_pr3_core_meal_loop_uses_canonical_user_meal_documents(
 
 async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
     mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", True)
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", True)
     client = _emulator_client()
     run_id = uuid4().hex
     user_id = f"l3-smart-memory-source-delete-{run_id}"
@@ -314,7 +368,7 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         assert len(candidate_snapshots) == 1
         candidate_snapshot = candidate_snapshots[0]
         candidate = candidate_snapshot.to_dict() or {}
-        assert candidate["state"] == "activated"
+        assert candidate["state"] == "candidate"
         assert candidate["ownerUserId"] == user_id
         assert candidate["memoryType"] == "typical_portion"
         assert candidate["subject"]["kind"] == "ingredient_alias"
@@ -336,19 +390,11 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
         assert "Rice bowl" not in candidate_text
         assert "gpt-4o-mini" not in candidate_text
         assert "estimated_portion" not in candidate_text
-        active_items = [
+        active_items_before_delete = [
             snapshot.to_dict() or {}
             for snapshot in user_ref.collection("smartMemory").stream()
         ]
-        assert len(active_items) == 1
-        active_item = active_items[0]
-        assert active_item["state"] == "active"
-        assert active_item["stateReason"] == "threshold_met"
-        assert active_item["memoryType"] == "typical_portion"
-        assert active_item["subject"] == candidate["subject"]
-        assert active_item["sourceRefs"] == candidate["sourceRefs"]
-        assert active_item["userValue"] == {"amount": 250.0, "unit": "g"}
-        assert active_item["control"]["sourceCandidateId"] == candidate["candidateId"]
+        assert active_items_before_delete == []
 
         deleted = await meal_service.mark_deleted(
             user_id,
@@ -365,10 +411,7 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
             snapshot.to_dict() or {}
             for snapshot in user_ref.collection("smartMemory").stream()
         ]
-        assert len(source_deleted_items) == 1
-        assert source_deleted_items[0]["state"] == "source_deleted"
-        assert source_deleted_items[0]["sourceDeletedAt"] is not None
-        assert source_deleted_items[0]["control"]["suggestionsSuppressed"] is True
+        assert source_deleted_items == []
         tombstones = [
             snapshot.to_dict() or {}
             for snapshot in user_ref.collection("smartMemoryTombstones").stream()
@@ -386,3 +429,227 @@ async def test_meal_delete_marks_real_smart_memory_candidate_source_deleted(
             for snapshot in user_ref.collection(subcollection_name).stream():
                 snapshot.reference.delete()
         user_ref.delete()
+
+
+def test_planned_meal_link_allows_only_one_concurrent_emulator_save(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "PLANNED_MEALS_ENABLED", True)
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", False)
+    mocker.patch("app.services.meal_service.get_firestore", side_effect=_emulator_client)
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals"
+    )
+
+    client = _emulator_client()
+    run_id = uuid4().hex
+    user_id = f"p1c-planned-race-{run_id}"
+    planned_meal_id = f"planned-{run_id}"
+    user_ref = client.collection("users").document(user_id)
+    planned_ref = user_ref.collection("plannedMeals").document(planned_meal_id)
+    start_barrier = threading.Barrier(2)
+
+    def save_from_device(meal_id: str) -> tuple[str, object]:
+        payload = _meal_payload(
+            meal_id=meal_id,
+            logged_at="2026-05-06T12:00:00.000Z",
+            day_key="2026-05-06",
+            updated_at="2026-05-06T12:10:00.000Z",
+            image_id=f"image-{meal_id}",
+            overrides={
+                "clientMutationId": f"mutation-{meal_id}",
+                "planningSource": {
+                    "plannedMealId": planned_meal_id,
+                    "plannedMealVersion": 2,
+                    "sourceType": "manual",
+                    "sourceRef": None,
+                    "nutritionEstimateState": "known",
+                    "missingNutritionFields": [],
+                },
+            },
+        )
+        start_barrier.wait(timeout=5)
+        try:
+            return ("saved", asyncio.run(meal_service.upsert_meal(user_id, payload)))
+        except meal_service.MealPlanningSourceConflictError as exc:
+            return ("conflict", str(exc))
+
+    try:
+        planned_ref.set(
+            _planned_meal_payload(
+                planned_meal_id=planned_meal_id,
+                user_id=user_id,
+            )
+        )
+
+        meal_ids = (f"meal-a-{run_id}", f"meal-b-{run_id}")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(save_from_device, meal_ids))
+
+        saved_outcomes = [value for status, value in outcomes if status == "saved"]
+        conflict_outcomes = [
+            value for status, value in outcomes if status == "conflict"
+        ]
+        assert len(saved_outcomes) == 1
+        assert len(conflict_outcomes) == 1
+        assert "already linked" in str(conflict_outcomes[0])
+
+        saved_meal = cast(dict[str, object], saved_outcomes[0])
+        linked_meal_id = str(saved_meal["id"])
+        assert linked_meal_id in meal_ids
+
+        stored_plan = planned_ref.get().to_dict() or {}
+        assert stored_plan["status"] == "converted_to_review"
+        assert stored_plan["version"] == 3
+        assert stored_plan["linkedMealId"] == linked_meal_id
+        assert stored_plan["conversionClientMutationId"] == f"mutation-{linked_meal_id}"
+
+        stored_meals = list(user_ref.collection("meals").stream())
+        assert [snapshot.id for snapshot in stored_meals] == [linked_meal_id]
+        assert sync_streak.call_count == 1
+    finally:
+        for subcollection_name in (
+            "meals",
+            "mealMutationDedupe",
+            "mealEffectOutbox",
+            "plannedMeals",
+        ):
+            for snapshot in user_ref.collection(subcollection_name).stream():
+                snapshot.reference.delete()
+        user_ref.delete()
+
+
+async def test_meal_effect_outbox_claim_lease_is_transactional_in_emulator() -> None:
+    client = _emulator_client()
+    run_id = uuid4().hex
+    user_id = f"c3-outbox-claim-{run_id}"
+    source_mutation_id = f"mutation-{run_id}"
+    event_id = meal_effect_outbox_service.event_id(
+        source_mutation_id=source_mutation_id,
+        kind=meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+    )
+    event_ref = meal_effect_outbox_service.meal_effect_outbox_ref(
+        client,
+        user_id,
+        event_id,
+    )
+    event = meal_effect_outbox_service.build_pending_event(
+        owner_user_id=user_id,
+        source_mutation_id=source_mutation_id,
+        source_entity_id=f"meal-{run_id}",
+        kind=meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        reference_day_key="2026-05-05",
+        result_meal={"id": f"meal-{run_id}", "deleted": False},
+    )
+
+    try:
+        event_ref.set(event)
+
+        first_claim = meal_effect_outbox_service.claim_pending_event(
+            client,
+            event_ref,
+            lease_owner="worker-a",
+        )
+        second_claim = meal_effect_outbox_service.claim_pending_event(
+            client,
+            event_ref,
+            lease_owner="worker-b",
+        )
+
+        assert first_claim is not None
+        assert first_claim["leaseOwner"] == "worker-a"
+        assert isinstance(first_claim.get("leaseToken"), str)
+        assert second_claim is None
+
+        assert (
+            meal_effect_outbox_service.mark_succeeded(
+                client,
+                event_ref,
+                first_claim,
+            )
+            is True
+        )
+        assert (
+            meal_effect_outbox_service.mark_failed(
+                client,
+                event_ref,
+                {**first_claim, "leaseToken": "stale-lease"},
+                RuntimeError("late worker failure"),
+            )
+            is False
+        )
+
+        stored = event_ref.get().to_dict() or {}
+        assert stored["status"] == meal_effect_outbox_service.STATUS_SUCCEEDED
+        assert stored["attemptCount"] == 1
+        assert stored["lastErrorCode"] is None
+        assert stored["leaseToken"] is None
+    finally:
+        event_ref.delete()
+
+
+def test_meal_effect_outbox_claim_allows_only_one_concurrent_emulator_worker() -> None:
+    client = _emulator_client()
+    run_id = uuid4().hex
+    user_id = f"c3-outbox-race-{run_id}"
+    source_mutation_id = f"mutation-{run_id}"
+    event_id = meal_effect_outbox_service.event_id(
+        source_mutation_id=source_mutation_id,
+        kind=meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+    )
+    event_ref = meal_effect_outbox_service.meal_effect_outbox_ref(
+        client,
+        user_id,
+        event_id,
+    )
+    event = meal_effect_outbox_service.build_pending_event(
+        owner_user_id=user_id,
+        source_mutation_id=source_mutation_id,
+        source_entity_id=f"meal-{run_id}",
+        kind=meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        reference_day_key="2026-05-05",
+        result_meal={"id": f"meal-{run_id}", "deleted": False},
+    )
+    start_barrier = threading.Barrier(2)
+
+    def claim_from_worker(lease_owner: str) -> dict[str, object] | None:
+        worker_client = _emulator_client()
+        worker_event_ref = meal_effect_outbox_service.meal_effect_outbox_ref(
+            worker_client,
+            user_id,
+            event_id,
+        )
+        start_barrier.wait(timeout=5)
+        return meal_effect_outbox_service.claim_pending_event(
+            worker_client,
+            worker_event_ref,
+            lease_owner=lease_owner,
+        )
+
+    try:
+        event_ref.set(event)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claims = list(
+                executor.map(
+                    claim_from_worker,
+                    ("worker-a", "worker-b"),
+                )
+            )
+
+        successful_claims = [claim for claim in claims if claim is not None]
+        assert len(successful_claims) == 1
+        assert successful_claims[0]["leaseOwner"] in {"worker-a", "worker-b"}
+        assert event_ref.get().to_dict() == {
+            **event,
+            "leaseToken": successful_claims[0]["leaseToken"],
+            "leaseOwner": successful_claims[0]["leaseOwner"],
+            "leaseExpiresAt": successful_claims[0]["leaseExpiresAt"],
+            "leasedAt": successful_claims[0]["leasedAt"],
+            "nextAttemptAt": successful_claims[0]["nextAttemptAt"],
+            "updatedAt": successful_claims[0]["updatedAt"],
+        }
+    finally:
+        event_ref.delete()

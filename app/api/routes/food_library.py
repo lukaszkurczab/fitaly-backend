@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request, raise_service_unavailable
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.food_library import (
     IngredientProductCreateRequest,
@@ -22,6 +24,14 @@ from app.services.food_library_service import (
 router = APIRouter()
 
 
+def _ensure_food_library_enabled() -> None:
+    if not settings.FOOD_LIBRARY_ENABLED:
+        raise_feature_disabled(
+            code="food_library_disabled",
+            message="Food Library is temporarily disabled.",
+        )
+
+
 @router.get(
     "/users/me/ingredient-products/pull",
     response_model=IngredientProductPullResponse,
@@ -31,6 +41,7 @@ async def pull_ingredient_products_me(
     limit: int = Query(default=100, ge=1),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> IngredientProductPullResponse:
+    _ensure_food_library_enabled()
     try:
         return await food_library_service.pull_user_ingredient_products(
             current_user.uid,
@@ -58,6 +69,7 @@ async def search_ingredient_products_me(
     includeGlobal: bool = Query(default=True),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> IngredientProductSearchResponse:
+    _ensure_food_library_enabled()
     try:
         return await food_library_service.search_ingredient_products(
             current_user.uid,
@@ -87,6 +99,7 @@ async def create_ingredient_product_me(
     request: IngredientProductCreateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> IngredientProductCreateResponse:
+    _ensure_food_library_enabled()
     try:
         item, updated = await food_library_service.create_user_ingredient_product(
             current_user.uid,
@@ -109,6 +122,7 @@ async def update_ingredient_product_me(
     request: IngredientProductUpdateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> IngredientProductUpdateResponse:
+    _ensure_food_library_enabled()
     try:
         item, updated = await food_library_service.update_user_ingredient_product(
             current_user.uid,
@@ -139,6 +153,7 @@ async def delete_ingredient_product_me(
     request: IngredientProductDeleteRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> IngredientProductDeleteResponse:
+    _ensure_food_library_enabled()
     try:
         product_id, updated_at, updated = await food_library_service.delete_user_ingredient_product(
             current_user.uid,

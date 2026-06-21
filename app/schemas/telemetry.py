@@ -67,6 +67,16 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "home_next_action_shown",
         "home_next_action_started",
         "home_next_action_dismissed",
+        "memory_candidate_created",
+        "memory_candidate_confirmed",
+        "memory_candidate_dismissed",
+        "memory_used",
+        "memory_muted",
+        "memory_deleted",
+        "planned_meal_created",
+        "planned_meal_confirmed",
+        "planned_meal_changed",
+        "planned_meal_skipped",
     }
 )
 
@@ -220,6 +230,19 @@ HOME_NEXT_ACTION_OWNER_FLOWS = frozenset(
     {"ReviewMeal", "Planning", "MealAddMethod"}
 )
 HOME_NEXT_ACTION_COOLDOWN_BUCKETS = frozenset({"24h"})
+C5_MEMORY_TYPES = frozenset(
+    {"typical_portion", "review_correction", "ingredient_product_selection"}
+)
+C5_TELEMETRY_SURFACES = frozenset(
+    {"review", "memory_center", "settings", "planning", "home_next_action"}
+)
+C5_CONFIDENCE_BUCKETS = frozenset({"low", "medium", "high"})
+C5_ACTION_RESULTS = frozenset({"succeeded", "queued", "blocked", "failed"})
+C5_FEATURE_STATES = frozenset({"enabled", "disabled", "shadow"})
+C5_PLANNED_MEAL_SOURCE_TYPES = frozenset(
+    {"manual", "saved_meal", "recipe", "ingredient_product_draft"}
+)
+C5_PLANNED_MEAL_ESTIMATE_STATES = frozenset({"known", "partial", "unknown"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -308,6 +331,42 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "home_next_action_started": frozenset({"actionType", "ownerFlow", "state"}),
     "home_next_action_dismissed": frozenset(
         {"actionType", "reasonCode", "cooldownBucket"}
+    ),
+    "memory_candidate_created": frozenset(
+        {"memoryType", "surface", "confidenceBucket", "featureState"}
+    ),
+    "memory_candidate_confirmed": frozenset(
+        {
+            "memoryType",
+            "surface",
+            "confidenceBucket",
+            "actionResult",
+            "featureState",
+        }
+    ),
+    "memory_candidate_dismissed": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_used": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_muted": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_deleted": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_created": frozenset(
+        {"sourceType", "estimateState", "surface", "featureState"}
+    ),
+    "planned_meal_confirmed": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_changed": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_skipped": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
     ),
 }
 
@@ -447,6 +506,70 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "actionType": HOME_NEXT_ACTION_TYPES,
         "reasonCode": HOME_NEXT_ACTION_REASON_CODES,
         "cooldownBucket": HOME_NEXT_ACTION_COOLDOWN_BUCKETS,
+    },
+    "memory_candidate_created": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "confidenceBucket": C5_CONFIDENCE_BUCKETS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_candidate_confirmed": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "confidenceBucket": C5_CONFIDENCE_BUCKETS,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_candidate_dismissed": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_used": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_muted": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_deleted": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_created": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_confirmed": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_changed": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_skipped": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
     },
 }
 

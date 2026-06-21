@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -22,6 +23,42 @@ from app.services.known_pattern_service import (
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_known_patterns_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.known_patterns.settings.KNOWN_PATTERNS_ENABLED",
+        True,
+    )
+
+
+def test_known_patterns_disabled_returns_stable_503_without_service_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.known_patterns.settings.KNOWN_PATTERNS_ENABLED",
+        False,
+    )
+    list_candidates = mocker.patch(
+        "app.api.v2.endpoints.known_patterns.list_known_pattern_candidates_for_user"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/known-patterns/candidates",
+        headers=auth_headers("known-pattern-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "known_patterns_disabled",
+            "message": "Known Patterns are temporarily disabled.",
+        }
+    }
+    list_candidates.assert_not_awaited()
 
 
 def _response() -> KnownPatternCandidatesResponse:

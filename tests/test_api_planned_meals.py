@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -20,6 +21,42 @@ from app.services.planned_meal_service import (
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_planned_meals_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.planned_meals.settings.PLANNED_MEALS_ENABLED",
+        True,
+    )
+
+
+def test_planned_meals_disabled_returns_stable_503_without_service_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.planned_meals.settings.PLANNED_MEALS_ENABLED",
+        False,
+    )
+    list_planned = mocker.patch(
+        "app.api.v2.endpoints.planned_meals.list_planned_meals_for_user"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/planned-meals",
+        headers=auth_headers("planner-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "planned_meals_disabled",
+            "message": "Planned Meals are temporarily disabled.",
+        }
+    }
+    list_planned.assert_not_awaited()
 
 
 def _draft_snapshot() -> PlannedMealDraftSnapshot:

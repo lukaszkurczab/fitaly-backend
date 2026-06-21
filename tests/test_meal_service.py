@@ -2,12 +2,21 @@ import asyncio
 import logging
 from typing import Any
 
-from google.api_core.exceptions import FailedPrecondition
+from google.api_core.exceptions import FailedPrecondition, GoogleAPICallError
 import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
-from app.services import meal_service
+from app.services import meal_effect_outbox_service, meal_service
+
+
+@pytest.fixture(autouse=True)
+def enable_smart_memory_meal_side_effect_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", True)
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", True)
+    monkeypatch.setattr(meal_service.settings, "PLANNED_MEALS_ENABLED", True)
 
 
 class FakeTransaction:
@@ -36,6 +45,11 @@ class FakeTransaction:
         merge: bool | None = None,
     ) -> None:
         self.set_calls.append((document_ref, data, merge))
+        apply_transaction_set = getattr(document_ref, "__dict__", {}).get(
+            "apply_transaction_set"
+        )
+        if callable(apply_transaction_set):
+            apply_transaction_set(data, merge)
 
 
 def _build_snapshot(
@@ -43,10 +57,15 @@ def _build_snapshot(
     *,
     exists: bool,
     data: dict[str, object] | None = None,
-):
+) -> Any:
     snapshot = mocker.Mock()
     snapshot.exists = exists
-    snapshot.id = str((data or {}).get("cloudId") or (data or {}).get("mealId") or "meal-1")
+    snapshot.id = str(
+        (data or {}).get("eventId")
+        or (data or {}).get("cloudId")
+        or (data or {}).get("mealId")
+        or "meal-1"
+    )
     snapshot.to_dict.return_value = data or {}
     return snapshot
 
@@ -54,34 +73,152 @@ def _build_snapshot(
 def _wire_meal_firestore_refs(
     mocker: MockerFixture,
     *,
-    meal_snapshot: object,
-    mutation_snapshot: object | None = None,
-):
+    meal_snapshot: Any,
+    mutation_snapshot: Any | None = None,
+    planned_snapshot: Any | None = None,
+    outbox_snapshots: dict[str, Any] | None = None,
+) -> tuple[Any, Any, Any, FakeTransaction]:
     client = mocker.Mock()
     users_collection = mocker.Mock()
     user_ref = mocker.Mock()
     meals_collection = mocker.Mock()
     mutations_collection = mocker.Mock()
+    planned_collection = mocker.Mock()
+    outbox_collection = mocker.Mock()
     meal_ref = mocker.Mock()
     mutation_ref = mocker.Mock()
+    planned_ref = mocker.Mock()
     transaction = FakeTransaction()
+    outbox_refs: dict[str, object] = {}
 
     client.collection.return_value = users_collection
     client.transaction.return_value = transaction
     users_collection.document.return_value = user_ref
+
+    def outbox_document_for_id(event_id: str) -> Any:
+        if event_id not in outbox_refs:
+            event_ref = mocker.Mock()
+            event_ref.id = event_id
+            initial_snapshot = (outbox_snapshots or {}).get(event_id)
+            stored_data: dict[str, object] | None = None
+            if initial_snapshot is not None and initial_snapshot.exists:
+                stored_data = dict(initial_snapshot.to_dict() or {})
+
+            def get_event_snapshot(*args: object, **kwargs: object) -> Any:
+                if stored_data is None:
+                    return _build_snapshot(mocker, exists=False)
+                return _build_snapshot(
+                    mocker,
+                    exists=True,
+                    data={**stored_data, "eventId": event_id},
+                )
+
+            def apply_transaction_set(
+                data: dict[str, object],
+                merge: bool | None = None,
+            ) -> None:
+                nonlocal stored_data
+                if merge and stored_data is not None:
+                    stored_data = {**stored_data, **data}
+                else:
+                    stored_data = dict(data)
+
+            event_ref.get.side_effect = get_event_snapshot
+            event_ref.apply_transaction_set = apply_transaction_set
+            outbox_refs[event_id] = event_ref
+        return outbox_refs[event_id]
+
     def collection_for_name(name: str) -> object:
         if name == "meals":
             return meals_collection
         if name == "mealMutationDedupe":
             return mutations_collection
+        if name == "plannedMeals":
+            return planned_collection
+        if name == "mealEffectOutbox":
+            return outbox_collection
         return mocker.Mock()
 
     user_ref.collection.side_effect = collection_for_name
     meals_collection.document.return_value = meal_ref
     mutations_collection.document.return_value = mutation_ref
+    planned_collection.document.return_value = planned_ref
+    outbox_collection.document.side_effect = outbox_document_for_id
     meal_ref.get.return_value = meal_snapshot
     mutation_ref.get.return_value = mutation_snapshot or _build_snapshot(mocker, exists=False)
+    planned_ref.get.return_value = planned_snapshot or _build_snapshot(
+        mocker,
+        exists=False,
+    )
+    client.meal_effect_outbox_refs = outbox_refs
+    client.planned_meal_ref = planned_ref
     return client, meal_ref, mutation_ref, transaction
+
+
+def _primary_set_refs(transaction: FakeTransaction) -> list[object]:
+    return [
+        document_ref
+        for document_ref, data, _merge in transaction.set_calls
+        if not (
+            isinstance(data, dict)
+            and (
+                "eventId" in data
+                or "leaseToken" in data
+                or "lastErrorCode" in data
+            )
+        )
+    ]
+
+
+def _outbox_set_events(transaction: FakeTransaction) -> list[dict[str, object]]:
+    return [
+        data
+        for _document_ref, data, _merge in transaction.set_calls
+        if isinstance(data, dict) and "eventId" in data
+    ]
+
+
+def _outbox_status_updates(
+    transaction: FakeTransaction,
+    event_ref: object,
+) -> list[dict[str, object]]:
+    return [
+        data
+        for document_ref, data, _merge in transaction.set_calls
+        if document_ref is event_ref
+        and isinstance(data, dict)
+        and "eventId" not in data
+    ]
+
+
+def _last_outbox_status_update(
+    transaction: FakeTransaction,
+    event_ref: object,
+) -> dict[str, object]:
+    return _outbox_status_updates(transaction, event_ref)[-1]
+
+
+def _wire_existing_outbox_event(
+    mocker: MockerFixture,
+    event: dict[str, object],
+) -> tuple[Any, Any, FakeTransaction]:
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        outbox_snapshots={
+            str(event["eventId"]): _build_snapshot(
+                mocker,
+                exists=True,
+                data=event,
+            )
+        },
+    )
+    event_ref = meal_effect_outbox_service.meal_effect_outbox_ref(
+        client,
+        str(event["ownerUserId"]),
+        str(event["eventId"]),
+    )
+    return client, event_ref, transaction
 
 
 def _base_meal_payload(overrides: dict[str, object] | None = None) -> dict[str, object]:
@@ -96,6 +233,63 @@ def _base_meal_payload(overrides: dict[str, object] | None = None) -> dict[str, 
         "updatedAt": "2026-03-03T12:30:00.000Z",
         "deleted": False,
         "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        **(overrides or {}),
+    }
+
+
+def _base_planned_meal_document(
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "plannedMealId": "planned-1",
+        "version": 2,
+        "dateBucket": "2026-03-03",
+        "timeBucket": "lunch",
+        "sourceType": "manual",
+        "sourceRef": None,
+        "draftSnapshot": {
+            "name": "Planned chicken",
+            "type": "lunch",
+            "ingredients": [
+                {
+                    "id": "ingredient-1",
+                    "name": "Chicken",
+                    "amount": 150,
+                    "unit": "g",
+                    "kcal": 200,
+                    "protein": 30,
+                    "fat": 5,
+                    "carbs": 0,
+                }
+            ],
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            "notes": None,
+            "tags": [],
+        },
+        "nutritionEstimate": {
+            "state": "known",
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            "missingFields": [],
+            "confidence": "medium",
+        },
+        "status": "planned",
+        "createdAt": "2026-03-02T12:00:00.000Z",
+        "updatedAt": "2026-03-02T12:00:00.000Z",
+        "ownerUserId": "user-1",
+        **(overrides or {}),
+    }
+
+
+def _planning_source_payload(
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "plannedMealId": "planned-1",
+        "plannedMealVersion": 2,
+        "sourceType": "manual",
+        "sourceRef": None,
+        "nutritionEstimateState": "known",
+        "missingNutritionFields": [],
         **(overrides or {}),
     }
 
@@ -119,6 +313,32 @@ def test_normalize_meal_document_preserves_logged_upload_shaped_storage_path() -
         "storagePath": "meals/user-1/image-1.webp",
         "downloadUrl": "https://cdn/meal.jpg",
     }
+
+
+def test_upsert_meal_rejects_planning_source_when_planning_disabled_before_firestore(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "PLANNED_MEALS_ENABLED", False)
+    get_firestore = mocker.patch("app.services.meal_service.get_firestore")
+
+    with pytest.raises(
+        meal_service.MealPlanningSourceDisabledError,
+        match="Planned Meals are temporarily disabled",
+    ):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "planningSource": _planning_source_payload(),
+                        "clientMutationId": "mutation-upsert-planned-disabled",
+                    }
+                ),
+            )
+        )
+
+    get_firestore.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -167,6 +387,381 @@ def test_normalize_meal_document_derives_missing_storage_path() -> None:
         "imageId": "image-1",
         "storagePath": "meals/user-1/image-1.jpg",
     }
+
+
+def test_normalize_meal_document_preserves_planning_source() -> None:
+    _meal_id, document = meal_service.normalize_meal_document_payload(
+        "user-1",
+        _base_meal_payload(
+            {
+                "planningSource": {
+                    "plannedMealId": "planned-1",
+                    "plannedMealVersion": 2,
+                    "sourceType": "manual",
+                    "sourceRef": None,
+                    "nutritionEstimateState": "unknown",
+                    "missingNutritionFields": ["fat"],
+                },
+            }
+        ),
+    )
+
+    assert document["planningSource"] == {
+        "plannedMealId": "planned-1",
+        "plannedMealVersion": 2,
+        "sourceType": "manual",
+        "sourceRef": None,
+        "nutritionEstimateState": "unknown",
+        "missingNutritionFields": ["fat"],
+    }
+
+
+def test_upsert_meal_rejects_unknown_planned_source_without_positive_nutrition(
+    mocker: MockerFixture,
+) -> None:
+    get_firestore = mocker.patch("app.services.meal_service.get_firestore")
+
+    with pytest.raises(
+        ValueError,
+        match="Planned meal source requires positive nutrition evidence",
+    ):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "cloudId": "meal-planned-empty-1",
+                        "mealId": "meal-planned-empty-1",
+                        "ingredients": [],
+                        "totals": None,
+                        "planningSource": {
+                            "plannedMealId": "planned-1",
+                            "plannedMealVersion": 2,
+                            "sourceType": "manual",
+                            "sourceRef": None,
+                            "nutritionEstimateState": "unknown",
+                            "missingNutritionFields": [
+                                "kcal",
+                                "protein",
+                                "fat",
+                                "carbs",
+                            ],
+                        },
+                        "clientMutationId": "mutation-planned-empty",
+                    }
+                ),
+            )
+        )
+
+    get_firestore.assert_not_called()
+
+
+def test_upsert_meal_rejects_partial_planned_source_without_positive_nutrition(
+    mocker: MockerFixture,
+) -> None:
+    get_firestore = mocker.patch("app.services.meal_service.get_firestore")
+
+    with pytest.raises(
+        ValueError,
+        match="Planned meal source requires positive nutrition evidence",
+    ):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "cloudId": "meal-planned-partial-empty-1",
+                        "mealId": "meal-planned-partial-empty-1",
+                        "ingredients": [],
+                        "totals": None,
+                        "planningSource": {
+                            "plannedMealId": "planned-1",
+                            "plannedMealVersion": 2,
+                            "sourceType": "manual",
+                            "sourceRef": None,
+                            "nutritionEstimateState": "partial",
+                            "missingNutritionFields": [
+                                "kcal",
+                                "protein",
+                                "fat",
+                                "carbs",
+                            ],
+                        },
+                        "clientMutationId": "mutation-planned-partial-empty",
+                    }
+                ),
+            )
+        )
+
+    get_firestore.assert_not_called()
+
+
+def test_upsert_meal_consumes_and_links_planned_meal_in_same_transaction(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        planned_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data=_base_planned_meal_document(),
+        ),
+    )
+    planned_ref = client.planned_meal_ref
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    result = asyncio.run(
+        meal_service.upsert_meal(
+            "user-1",
+            _base_meal_payload(
+                {
+                    "planningSource": _planning_source_payload(),
+                    "clientMutationId": "mutation-upsert-planned-link",
+                }
+            ),
+        )
+    )
+
+    assert result["id"] == "meal-1"
+    assert result["planningSource"] == _planning_source_payload()
+    assert _primary_set_refs(transaction) == [meal_ref, planned_ref, mutation_ref]
+    planned_write = transaction.set_calls[1][1]
+    assert planned_write["status"] == "converted_to_review"
+    assert planned_write["version"] == 3
+    assert planned_write["linkedMealId"] == "meal-1"
+    assert planned_write["conversionClientMutationId"] == "mutation-upsert-planned-link"
+    assert isinstance(planned_write["convertedAt"], str)
+    assert planned_write["updatedAt"] == planned_write["convertedAt"]
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
+
+
+def test_upsert_meal_rejects_stale_planned_meal_version_without_writes(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        planned_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data=_base_planned_meal_document({"version": 3}),
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    with pytest.raises(
+        meal_service.MealPlanningSourceConflictError,
+        match="Planned meal version conflict",
+    ):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "planningSource": _planning_source_payload(),
+                        "clientMutationId": "mutation-upsert-planned-stale",
+                    }
+                ),
+            )
+        )
+
+    assert transaction.set_calls == []
+    sync_streak.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "planned_snapshot_data",
+    [
+        None,
+        _base_planned_meal_document({"status": "deleted"}),
+        _base_planned_meal_document({"status": "source_unavailable"}),
+    ],
+)
+def test_upsert_meal_rejects_missing_or_unavailable_planned_meal_without_writes(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    planned_snapshot_data: dict[str, object] | None,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        planned_snapshot=_build_snapshot(
+            mocker,
+            exists=planned_snapshot_data is not None,
+            data=planned_snapshot_data,
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    with pytest.raises(meal_service.MealPlanningSourceConflictError):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "planningSource": _planning_source_payload(),
+                        "clientMutationId": "mutation-upsert-planned-unavailable",
+                    }
+                ),
+            )
+        )
+
+    assert transaction.set_calls == []
+    sync_streak.assert_not_called()
+
+
+def test_upsert_meal_blocks_duplicate_logged_meal_for_linked_plan(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        planned_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data=_base_planned_meal_document(
+                {
+                    "status": "converted_to_review",
+                    "version": 3,
+                    "linkedMealId": "meal-1",
+                    "convertedAt": "2026-03-03T12:31:00.000Z",
+                    "conversionClientMutationId": "mutation-upsert-planned-first",
+                }
+            ),
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+
+    with pytest.raises(
+        meal_service.MealPlanningSourceConflictError,
+        match="already linked",
+    ):
+        asyncio.run(
+            meal_service.upsert_meal(
+                "user-1",
+                _base_meal_payload(
+                    {
+                        "cloudId": "meal-2",
+                        "mealId": "meal-2",
+                        "planningSource": _planning_source_payload(
+                            {"plannedMealVersion": 3}
+                        ),
+                        "clientMutationId": "mutation-upsert-planned-second",
+                    }
+                ),
+            )
+        )
+
+    assert transaction.set_calls == []
+
+
+def test_upsert_meal_planned_retry_uses_meal_dedupe_without_second_plan_write(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    first_client, meal_ref, mutation_ref, first_transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+        planned_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data=_base_planned_meal_document(),
+        ),
+    )
+    first_planned_ref = first_client.planned_meal_ref
+    get_firestore = mocker.patch(
+        "app.services.meal_service.get_firestore",
+        return_value=first_client,
+    )
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+    payload = _base_meal_payload(
+        {
+            "planningSource": _planning_source_payload(),
+            "clientMutationId": "mutation-upsert-planned-replay",
+        }
+    )
+
+    first_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+    mutation_record = next(
+        data
+        for document_ref, data, _merge in first_transaction.set_calls
+        if document_ref is mutation_ref
+    )
+
+    second_client, _second_meal_ref, _second_mutation_ref, second_transaction = (
+        _wire_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+
+    assert first_result == second_result
+    assert _primary_set_refs(first_transaction) == [
+        meal_ref,
+        first_planned_ref,
+        mutation_ref,
+    ]
+    assert second_transaction.set_calls == []
+    second_client.planned_meal_ref.get.assert_not_called()
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
+
+
+def test_mark_deleted_preserves_linked_planned_meal_without_reopening_it(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", False)
+    client, meal_ref, mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data=_base_meal_payload(
+                {
+                    "planningSource": _planning_source_payload(),
+                }
+            ),
+        ),
+    )
+    planned_ref = client.planned_meal_ref
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+
+    result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T12:45:00.000Z",
+            client_mutation_id="mutation-delete-linked-planned-meal",
+        )
+    )
+
+    assert result["deleted"] is True
+    assert result["planningSource"] == _planning_source_payload()
+    assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
+    planned_ref.get.assert_not_called()
+    assert all(document_ref is not planned_ref for document_ref, _data, _merge in transaction.set_calls)
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
 def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
@@ -218,7 +813,7 @@ def test_upsert_meal_keeps_newer_remote_document(mocker: MockerFixture) -> None:
 
     assert result["updatedAt"] == "2026-03-03T13:00:00.000Z"
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [mutation_ref]
+    assert _primary_set_refs(transaction) == [mutation_ref]
     sync_streak.assert_not_called()
     capture.assert_not_awaited()
 
@@ -267,7 +862,7 @@ def test_upsert_meal_compares_non_canonical_updated_at_as_utc(
 
     assert result["updatedAt"] == "2026-03-03T12:30:00.000Z"
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
     written_document = transaction.set_calls[0][1]
     assert written_document["updatedAt"] == "2026-03-03T12:30:00.000Z"
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
@@ -300,7 +895,7 @@ def test_mark_deleted_creates_tombstone_when_meal_is_missing(
     assert result["dayKey"] == "2026-03-03"
     assert result["deleted"] is True
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
     assert transaction.set_calls[0] == (
         meal_ref,
         {
@@ -364,7 +959,7 @@ def test_mark_deleted_compares_non_canonical_updated_at_as_utc(
     assert result["updatedAt"] == "2026-03-03T12:30:00.000Z"
     assert result["deleted"] is True
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
     written_document = transaction.set_calls[0][1]
     assert written_document["updatedAt"] == "2026-03-03T12:30:00.000Z"
     assert written_document["deleted"] is True
@@ -412,7 +1007,7 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
         "warnings": ["partial_totals"],
     }
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
     assert transaction.set_calls[0] == (
         meal_ref,
         {
@@ -444,23 +1039,99 @@ def test_upsert_meal_persists_input_method_and_ai_meta(mocker: MockerFixture) ->
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 
 
-def test_smart_memory_capture_recent_meal_read_is_bounded(
+def test_smart_memory_capture_read_uses_anchored_21_day_window_and_paginates(
     mocker: MockerFixture,
 ) -> None:
-    snapshots: list[dict[str, Any]] = [{"id": "meal-1", "deleted": False}]
+    page_one: list[dict[str, Any]] = [{"id": "meal-1", "dayKey": "2026-03-21"}]
+    page_two: list[dict[str, Any]] = [{"id": "meal-2", "dayKey": "2026-03-01"}]
     list_history = mocker.patch(
         "app.services.meal_service.list_history",
-        new=mocker.AsyncMock(return_value=(snapshots, "ignored-cursor")),
+        new=mocker.AsyncMock(
+            side_effect=[
+                (page_one, "cursor-page-2"),
+                (page_two, None),
+            ]
+        ),
     )
 
     result = asyncio.run(
-        meal_service._list_recent_meal_snapshots_for_smart_memory_capture("user-1")
+        meal_service._list_meal_snapshots_for_smart_memory_capture_window(
+            "user-1",
+            reference_day_key="2026-03-21",
+        )
     )
 
-    assert result == snapshots
+    assert result == [*page_one, *page_two]
+    assert list_history.await_args_list == [
+        mocker.call(
+            "user-1",
+            limit_count=meal_service.SMART_MEMORY_TYPICAL_PORTION_CAPTURE_PAGE_SIZE,
+            before_cursor=None,
+            day_key_start="2026-03-01",
+            day_key_end="2026-03-21",
+        ),
+        mocker.call(
+            "user-1",
+            limit_count=meal_service.SMART_MEMORY_TYPICAL_PORTION_CAPTURE_PAGE_SIZE,
+            before_cursor="cursor-page-2",
+            day_key_start="2026-03-01",
+            day_key_end="2026-03-21",
+        ),
+    ]
+
+
+def test_smart_memory_capture_window_excludes_22nd_and_31_day_old_meals(
+    mocker: MockerFixture,
+) -> None:
+    records = [
+        {"id": "day-0", "dayKey": "2026-03-21"},
+        {"id": "day-20", "dayKey": "2026-03-01"},
+        {"id": "day-21", "dayKey": "2026-02-28"},
+        {"id": "day-30", "dayKey": "2026-02-19"},
+    ]
+
+    async def fake_list_history(
+        user_id: str,
+        *,
+        limit_count: int,
+        before_cursor: str | None = None,
+        day_key_start: str | None = None,
+        day_key_end: str | None = None,
+        **kwargs: object,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        del limit_count, before_cursor, kwargs
+        assert user_id == "user-1"
+        assert day_key_start == "2026-03-01"
+        assert day_key_end == "2026-03-21"
+        return (
+            [
+                record
+                for record in records
+                if day_key_start <= str(record["dayKey"]) <= day_key_end
+            ],
+            None,
+        )
+
+    list_history = mocker.patch(
+        "app.services.meal_service.list_history",
+        new=mocker.AsyncMock(side_effect=fake_list_history),
+    )
+
+    result = asyncio.run(
+        meal_service._list_meal_snapshots_for_smart_memory_capture_window(
+            "user-1",
+            reference_day_key="2026-03-21",
+        )
+    )
+
+    assert [item["id"] for item in result] == ["day-0", "day-20"]
+    assert list_history.await_count == 1
     list_history.assert_awaited_once_with(
         "user-1",
-        limit_count=meal_service.SMART_MEMORY_CAPTURE_RECENT_MEAL_LIMIT,
+        limit_count=meal_service.SMART_MEMORY_TYPICAL_PORTION_CAPTURE_PAGE_SIZE,
+        before_cursor=None,
+        day_key_start="2026-03-01",
+        day_key_end="2026-03-21",
     )
 
 
@@ -497,8 +1168,13 @@ def test_upsert_meal_triggers_typical_portion_capture_after_applied_non_deleted_
         }
     ]
 
-    async def fake_recent_snapshots(user_id: str) -> list[dict[str, Any]]:
+    async def fake_capture_window_snapshots(
+        user_id: str,
+        *,
+        reference_day_key: str,
+    ) -> list[dict[str, Any]]:
         assert user_id == "user-1"
+        assert reference_day_key == "2026-03-03"
         return recent_snapshots
 
     get_settings = mocker.patch(
@@ -506,8 +1182,17 @@ def test_upsert_meal_triggers_typical_portion_capture_after_applied_non_deleted_
         new=mocker.AsyncMock(return_value={"enabled": True}),
     )
     filter_tombstones = mocker.patch(
-        "app.services.meal_service.smart_memory_service.filter_existing_tombstone_subject_keys",
-        new=mocker.AsyncMock(return_value=["typical_portion:suppressed-hash"]),
+        "app.services.meal_service.smart_memory_service."
+        "filter_existing_tombstone_subject_keys",
+        new=mocker.AsyncMock(return_value=["typical_portion:tombstoned-hash"]),
+    )
+    list_suppressed_subjects = mocker.patch(
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
+        new=mocker.AsyncMock(
+            return_value=[
+                "typical_portion:source-deleted-hash",
+            ]
+        ),
     )
 
     async def fake_capture(
@@ -520,8 +1205,11 @@ def test_upsert_meal_triggers_typical_portion_capture_after_applied_non_deleted_
         assert owner_user_id == "user-1"
         assert meal_snapshots == recent_snapshots
         assert memory_enabled is True
-        assert suppressed_subject_keys == ["typical_portion:suppressed-hash"]
-        assert [call[0] for call in transaction.set_calls] == [meal_ref, mutation_ref]
+        assert suppressed_subject_keys == [
+            "typical_portion:tombstoned-hash",
+            "typical_portion:source-deleted-hash",
+        ]
+        assert _primary_set_refs(transaction) == [meal_ref, mutation_ref]
         call_order.append("capture")
         return object()
 
@@ -530,8 +1218,8 @@ def test_upsert_meal_triggers_typical_portion_capture_after_applied_non_deleted_
         new=fake_sync_streak,
     )
     mocker.patch(
-        "app.services.meal_service._list_recent_meal_snapshots_for_smart_memory_capture",
-        new=fake_recent_snapshots,
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
+        new=fake_capture_window_snapshots,
     )
     mocker.patch(
         "app.services.meal_service.smart_memory_capture_service."
@@ -587,9 +1275,16 @@ def test_upsert_meal_triggers_typical_portion_capture_after_applied_non_deleted_
     assert call_order == ["streak", "capture"]
     get_settings.assert_awaited_once_with("user-1")
     filter_tombstones.assert_awaited_once()
-    assert filter_tombstones.await_args is not None
-    assert filter_tombstones.await_args.args[0] == "user-1"
-    assert filter_tombstones.await_args.args[1]
+    filter_tombstones_args = filter_tombstones.await_args
+    assert filter_tombstones_args is not None
+    assert filter_tombstones_args.args[0] == "user-1"
+    assert filter_tombstones_args.kwargs["limit_count"] == len(
+        filter_tombstones_args.args[1]
+    )
+    list_suppressed_subjects.assert_awaited_once_with(
+        "user-1",
+        memory_type="typical_portion",
+    )
 
 
 def test_upsert_meal_skips_typical_portion_capture_for_deleted_upsert(
@@ -602,7 +1297,7 @@ def test_upsert_meal_skips_typical_portion_capture_for_deleted_upsert(
     mocker.patch("app.services.meal_service.get_firestore", return_value=client)
     sync_streak = mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
     recent_snapshot_read = mocker.patch(
-        "app.services.meal_service._list_recent_meal_snapshots_for_smart_memory_capture",
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
         new=mocker.AsyncMock(return_value=[]),
     )
     capture = mocker.patch(
@@ -648,12 +1343,12 @@ def test_upsert_meal_skips_typical_portion_capture_when_memory_is_disabled(
         "app.services.meal_service.smart_memory_service.get_settings",
         new=mocker.AsyncMock(return_value={"enabled": False}),
     )
-    filter_tombstones = mocker.patch(
-        "app.services.meal_service.smart_memory_service.filter_existing_tombstone_subject_keys",
+    list_suppressed_subjects = mocker.patch(
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
         new=mocker.AsyncMock(return_value=[]),
     )
     recent_snapshot_read = mocker.patch(
-        "app.services.meal_service._list_recent_meal_snapshots_for_smart_memory_capture",
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
         new=mocker.AsyncMock(return_value=[]),
     )
     capture = mocker.patch(
@@ -682,16 +1377,195 @@ def test_upsert_meal_skips_typical_portion_capture_when_memory_is_disabled(
 
     assert result["id"] == "meal-1"
     get_settings.assert_awaited_once_with("user-1")
-    filter_tombstones.assert_not_awaited()
+    list_suppressed_subjects.assert_not_awaited()
     recent_snapshot_read.assert_not_awaited()
     capture.assert_not_awaited()
 
 
-def test_upsert_meal_logs_typical_portion_capture_failure_and_returns_meal(
+def test_upsert_meal_skips_smart_memory_reads_and_writes_when_capture_flag_disabled(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, _meal_ref, _mutation_ref, _transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+    get_settings = mocker.patch(
+        "app.services.meal_service.smart_memory_service.get_settings",
+        new=mocker.AsyncMock(return_value={"enabled": True}),
+    )
+    list_suppressed_subjects = mocker.patch(
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
+        new=mocker.AsyncMock(return_value=[]),
+    )
+    recent_snapshot_read = mocker.patch(
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
+        new=mocker.AsyncMock(return_value=[]),
+    )
+    capture = mocker.patch(
+        "app.services.meal_service.smart_memory_capture_service."
+        "capture_typical_portion_candidate_from_meal_snapshots",
+        new=mocker.AsyncMock(),
+    )
+
+    result = asyncio.run(
+        meal_service.upsert_meal(
+            "user-1",
+            {
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T12:30:00.000Z",
+                "deleted": False,
+                "clientMutationId": "mutation-upsert-capture-flag-disabled",
+            },
+        )
+    )
+
+    assert result["id"] == "meal-1"
+    get_settings.assert_not_awaited()
+    list_suppressed_subjects.assert_not_awaited()
+    recent_snapshot_read.assert_not_awaited()
+    capture.assert_not_awaited()
+
+
+def test_upsert_meal_leaves_streak_event_pending_after_failure(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals",
+        new=mocker.AsyncMock(side_effect=RuntimeError("streak failed")),
+    )
+
+    result = asyncio.run(
+        meal_service.upsert_meal(
+            "user-1",
+            {
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T12:30:00.000Z",
+                "deleted": False,
+                "clientMutationId": "mutation-upsert-streak-failure",
+            },
+        )
+    )
+
+    assert result["id"] == "meal-1"
+    sync_streak.assert_awaited_once_with("user-1", reference_day_key="2026-03-03")
+    outbox_events = _outbox_set_events(transaction)
+    assert [event["kind"] for event in outbox_events] == [
+        meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC
+    ]
+    pending_event = outbox_events[0]
+    event_ref = client.meal_effect_outbox_refs[pending_event["eventId"]]
+    failure_update = _last_outbox_status_update(transaction, event_ref)
+    assert failure_update["status"] == meal_effect_outbox_service.STATUS_PENDING
+    assert failure_update["attemptCount"] == 1
+    assert failure_update["lastErrorCode"] == "RuntimeError"
+    assert failure_update["lastErrorMessage"] == "streak failed"
+    assert failure_update["leaseToken"] is None
+
+
+def test_upsert_meal_duplicate_retry_processes_pending_streak_event(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    first_client, _meal_ref, _mutation_ref, first_transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    get_firestore = mocker.patch(
+        "app.services.meal_service.get_firestore",
+        return_value=first_client,
+    )
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals",
+        new=mocker.AsyncMock(side_effect=[RuntimeError("streak failed"), None]),
+    )
+    payload: dict[str, object] = {
+        "cloudId": "meal-1",
+        "mealId": "meal-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "dayKey": "2026-03-03",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "deleted": False,
+        "clientMutationId": "mutation-upsert-streak-retry",
+    }
+
+    first_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+    mutation_record = first_transaction.set_calls[1][1]
+    streak_event = _outbox_set_events(first_transaction)[0]
+    first_event_ref = first_client.meal_effect_outbox_refs[streak_event["eventId"]]
+    failed_update = _last_outbox_status_update(first_transaction, first_event_ref)
+    pending_streak_event: dict[str, object] = {
+        **streak_event,
+        **dict(failed_update),
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+    }
+
+    second_client, second_meal_ref, second_mutation_ref, second_transaction = (
+        _wire_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+            outbox_snapshots={
+                str(streak_event["eventId"]): _build_snapshot(
+                    mocker,
+                    exists=True,
+                    data=pending_streak_event,
+                )
+            },
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+
+    assert first_result == second_result
+    assert all(
+        document_ref not in {second_meal_ref, second_mutation_ref}
+        for document_ref, _data, _merge in second_transaction.set_calls
+    )
+    assert sync_streak.await_count == 2
+    retry_event_ref = second_client.meal_effect_outbox_refs[streak_event["eventId"]]
+    success_update = _last_outbox_status_update(second_transaction, retry_event_ref)
+    assert success_update["status"] == meal_effect_outbox_service.STATUS_SUCCEEDED
+    assert success_update["attemptCount"] == 2
+    assert success_update["lastErrorCode"] is None
+
+
+def test_upsert_meal_leaves_smart_memory_capture_event_pending_after_failure(
     mocker: MockerFixture,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    client, _meal_ref, _mutation_ref, _transaction = _wire_meal_firestore_refs(
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
         meal_snapshot=_build_snapshot(mocker, exists=False),
     )
@@ -702,11 +1576,11 @@ def test_upsert_meal_logs_typical_portion_capture_failure_and_returns_meal(
         new=mocker.AsyncMock(return_value={"enabled": True}),
     )
     mocker.patch(
-        "app.services.meal_service.smart_memory_service.filter_existing_tombstone_subject_keys",
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
         new=mocker.AsyncMock(return_value=[]),
     )
     mocker.patch(
-        "app.services.meal_service._list_recent_meal_snapshots_for_smart_memory_capture",
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
         new=mocker.AsyncMock(return_value=[{"id": "meal-1", "deleted": False}]),
     )
     mocker.patch(
@@ -735,19 +1609,390 @@ def test_upsert_meal_logs_typical_portion_capture_failure_and_returns_meal(
         )
 
     assert result["id"] == "meal-1"
+    outbox_events = _outbox_set_events(transaction)
+    smart_memory_events = [
+        event
+        for event in outbox_events
+        if event["kind"]
+        == meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE
+    ]
+    assert len(smart_memory_events) == 1
+    pending_event = smart_memory_events[0]
+    assert pending_event["status"] == meal_effect_outbox_service.STATUS_PENDING
+    event_ref = client.meal_effect_outbox_refs[pending_event["eventId"]]
+    failure_update = _last_outbox_status_update(transaction, event_ref)
+    assert failure_update["status"] == meal_effect_outbox_service.STATUS_PENDING
+    assert failure_update["attemptCount"] == 1
+    assert failure_update["lastErrorCode"] == "RuntimeError"
+    assert failure_update["lastErrorMessage"] == "capture failed"
     log_records = [
         record
         for record in caplog.records
-        if record.message == "smart_memory.capture.typical_portion.failed"
+        if record.message == "meal_effect_outbox.processing.failed"
     ]
     assert len(log_records) == 1
     assert getattr(log_records[0], "user_id") == "user-1"
-    assert getattr(log_records[0], "meal_id") == "meal-1"
-    assert getattr(log_records[0], "operation") == "capture_typical_portion"
-    assert getattr(log_records[0], "store_mode") == "degraded"
-    assert getattr(log_records[0], "memory_type") == "typical_portion"
-    assert getattr(log_records[0], "capture_stage") == "after_meal_upsert"
+    assert getattr(log_records[0], "event_id") == pending_event["eventId"]
+    assert (
+        getattr(log_records[0], "kind")
+        == meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE
+    )
     assert log_records[0].exc_info is not None
+
+
+def test_upsert_meal_duplicate_retry_processes_pending_smart_memory_capture(
+    mocker: MockerFixture,
+) -> None:
+    first_client, _meal_ref, _mutation_ref, first_transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(mocker, exists=False),
+    )
+    get_firestore = mocker.patch(
+        "app.services.meal_service.get_firestore",
+        return_value=first_client,
+    )
+    mocker.patch("app.services.meal_service.streak_service.sync_streak_from_meals")
+    mocker.patch(
+        "app.services.meal_service.smart_memory_service.get_settings",
+        new=mocker.AsyncMock(return_value={"enabled": True}),
+    )
+    mocker.patch(
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
+        new=mocker.AsyncMock(return_value=[]),
+    )
+    capture_window_read = mocker.patch(
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
+        new=mocker.AsyncMock(return_value=[{"id": "meal-1", "deleted": False}]),
+    )
+    capture = mocker.patch(
+        "app.services.meal_service.smart_memory_capture_service."
+        "capture_typical_portion_candidate_from_meal_snapshots",
+        new=mocker.AsyncMock(side_effect=[RuntimeError("capture failed"), None]),
+    )
+    payload: dict[str, object] = {
+        "cloudId": "meal-1",
+        "mealId": "meal-1",
+        "timestamp": "2026-03-03T12:00:00.000Z",
+        "dayKey": "2026-03-03",
+        "type": "lunch",
+        "ingredients": [],
+        "createdAt": "2026-03-03T12:00:00.000Z",
+        "updatedAt": "2026-03-03T12:30:00.000Z",
+        "deleted": False,
+        "clientMutationId": "mutation-upsert-memory-retry",
+    }
+
+    first_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+    mutation_record = first_transaction.set_calls[1][1]
+    memory_event = next(
+        event
+        for event in _outbox_set_events(first_transaction)
+        if event["kind"]
+        == meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE
+    )
+    failed_update = first_client.meal_effect_outbox_refs[
+        memory_event["eventId"]
+    ]
+    pending_memory_event: dict[str, object] = {
+        **memory_event,
+        **dict(_last_outbox_status_update(first_transaction, failed_update)),
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+    }
+
+    second_client, second_meal_ref, second_mutation_ref, second_transaction = (
+        _wire_meal_firestore_refs(
+            mocker,
+            meal_snapshot=_build_snapshot(mocker, exists=False),
+            mutation_snapshot=_build_snapshot(
+                mocker,
+                exists=True,
+                data=mutation_record,
+            ),
+            outbox_snapshots={
+                str(memory_event["eventId"]): _build_snapshot(
+                    mocker,
+                    exists=True,
+                    data=pending_memory_event,
+                )
+            },
+        )
+    )
+    get_firestore.return_value = second_client
+
+    second_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
+
+    assert first_result == second_result
+    assert all(
+        document_ref not in {second_meal_ref, second_mutation_ref}
+        for document_ref, _data, _merge in second_transaction.set_calls
+    )
+    assert capture_window_read.await_args_list == [
+        mocker.call("user-1", reference_day_key="2026-03-03"),
+        mocker.call("user-1", reference_day_key="2026-03-03"),
+    ]
+    assert capture.await_count == 2
+    retry_event_ref = second_client.meal_effect_outbox_refs[memory_event["eventId"]]
+    success_update = _last_outbox_status_update(second_transaction, retry_event_ref)
+    assert success_update["status"] == meal_effect_outbox_service.STATUS_SUCCEEDED
+    assert success_update["attemptCount"] == 2
+    assert success_update["lastErrorCode"] is None
+
+
+def test_smart_memory_capture_replay_blocks_source_deleted_subject_reactivation(
+    mocker: MockerFixture,
+) -> None:
+    event: dict[str, object] = {
+        "eventId": "meal-effect-capture-source-deleted-subject",
+        "ownerUserId": "user-1",
+        "sourceEntityId": "meal-3",
+        "sourceMutationId": "mutation-1",
+        "kind": meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE,
+        "status": meal_effect_outbox_service.STATUS_PENDING,
+        "attemptCount": 0,
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+        "referenceDayKey": "2026-03-03",
+        "resultMeal": {"id": "meal-3", "dayKey": "2026-03-03", "deleted": False},
+    }
+    client, event_ref, transaction = _wire_existing_outbox_event(mocker, event)
+    subject_key = (
+        meal_service.smart_memory_capture_service.subject_suppression_key("oats")
+    )
+    meal_snapshots: list[dict[str, object]] = [
+        {
+            "id": f"meal-{index}",
+            "dayKey": f"2026-03-0{index}",
+            "updatedAt": f"2026-03-0{index}T12:30:00.000Z",
+            "deleted": False,
+            "ingredients": [
+                {
+                    "id": f"ingredient-{index}",
+                    "name": "Oats",
+                    "amount": 60,
+                    "unit": "g",
+                }
+            ],
+        }
+        for index in range(1, 4)
+    ]
+    mocker.patch(
+        "app.services.meal_service.smart_memory_service.get_settings",
+        new=mocker.AsyncMock(return_value={"enabled": True}),
+    )
+    list_suppressed_subjects = mocker.patch(
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
+        new=mocker.AsyncMock(return_value=[subject_key]),
+    )
+    filter_tombstones = mocker.patch(
+        "app.services.meal_service.smart_memory_service."
+        "filter_existing_tombstone_subject_keys",
+        new=mocker.AsyncMock(return_value=[]),
+    )
+    capture_window_read = mocker.patch(
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
+        new=mocker.AsyncMock(return_value=meal_snapshots),
+    )
+    upsert_candidate = mocker.patch(
+        "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
+        new=mocker.AsyncMock(),
+    )
+
+    result = asyncio.run(
+        meal_service._process_meal_effect_outbox_event(
+            {
+                "event_ref": event_ref,
+                "event": event,
+                "client": client,
+            }
+        )
+    )
+
+    assert result == "succeeded"
+    capture_window_read.assert_awaited_once_with(
+        "user-1",
+        reference_day_key="2026-03-03",
+    )
+    list_suppressed_subjects.assert_awaited_once_with(
+        "user-1",
+        memory_type="typical_portion",
+    )
+    filter_tombstones.assert_awaited_once()
+    filter_tombstones_args = filter_tombstones.await_args
+    assert filter_tombstones_args is not None
+    assert filter_tombstones_args.args[0] == "user-1"
+    assert filter_tombstones_args.kwargs["limit_count"] == len(
+        filter_tombstones_args.args[1]
+    )
+    upsert_candidate.assert_not_awaited()
+    success_update = _last_outbox_status_update(transaction, event_ref)
+    assert success_update["status"] == meal_effect_outbox_service.STATUS_SUCCEEDED
+    assert success_update["attemptCount"] == 1
+
+
+def test_smart_memory_capture_event_disabled_flag_records_retryable_failure(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_CAPTURE_ENABLED", False)
+    event: dict[str, object] = {
+        "eventId": "meal-effect-capture-disabled",
+        "ownerUserId": "user-1",
+        "sourceEntityId": "meal-1",
+        "sourceMutationId": "mutation-1",
+        "kind": meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE,
+        "status": meal_effect_outbox_service.STATUS_PENDING,
+        "attemptCount": 0,
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+        "referenceDayKey": "2026-03-03",
+        "resultMeal": {"id": "meal-1", "deleted": False},
+    }
+    client, event_ref, transaction = _wire_existing_outbox_event(mocker, event)
+    get_settings = mocker.patch(
+        "app.services.meal_service.smart_memory_service.get_settings",
+        new=mocker.AsyncMock(return_value={"enabled": True}),
+    )
+    capture = mocker.patch(
+        "app.services.meal_service.smart_memory_capture_service."
+        "capture_typical_portion_candidate_from_meal_snapshots",
+        new=mocker.AsyncMock(),
+    )
+
+    result = asyncio.run(
+        meal_service._process_meal_effect_outbox_event(
+            {
+                "event_ref": event_ref,
+                "event": event,
+                "client": client,
+            }
+        )
+    )
+
+    assert result == "failed"
+    get_settings.assert_not_awaited()
+    capture.assert_not_awaited()
+    update = _last_outbox_status_update(transaction, event_ref)
+    assert update["status"] == meal_effect_outbox_service.STATUS_PENDING
+    assert update["attemptCount"] == 1
+    assert update["lastErrorCode"] == "MealEffectFeatureDisabledError"
+    assert update["lastErrorMessage"] == "SMART_MEMORY_CAPTURE_ENABLED is disabled"
+
+
+def test_smart_memory_source_delete_event_disabled_flag_records_retryable_failure(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", False)
+    event: dict[str, object] = {
+        "eventId": "meal-effect-source-delete-disabled",
+        "ownerUserId": "user-1",
+        "sourceEntityId": "meal-1",
+        "sourceMutationId": "mutation-1",
+        "kind": meal_effect_outbox_service.KIND_MEAL_DELETED_SMART_MEMORY_SOURCE_DELETE,
+        "status": meal_effect_outbox_service.STATUS_PENDING,
+        "attemptCount": 0,
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+        "referenceDayKey": "2026-03-03",
+        "resultMeal": {"id": "meal-1", "deleted": True},
+    }
+    client, event_ref, transaction = _wire_existing_outbox_event(mocker, event)
+    mark_sources_deleted = mocker.patch(
+        "app.services.meal_service.smart_memory_service.mark_sources_deleted_by_source_hashes",
+        new=mocker.AsyncMock(),
+    )
+
+    result = asyncio.run(
+        meal_service._process_meal_effect_outbox_event(
+            {
+                "event_ref": event_ref,
+                "event": event,
+                "client": client,
+            }
+        )
+    )
+
+    assert result == "failed"
+    mark_sources_deleted.assert_not_awaited()
+    update = _last_outbox_status_update(transaction, event_ref)
+    assert update["status"] == meal_effect_outbox_service.STATUS_PENDING
+    assert update["attemptCount"] == 1
+    assert update["lastErrorCode"] == "MealEffectFeatureDisabledError"
+    assert update["lastErrorMessage"] == "SMART_MEMORY_APPLY_ENABLED is disabled"
+
+
+def test_meal_effect_outbox_claim_prevents_second_worker_from_rerunning_effect(
+    mocker: MockerFixture,
+) -> None:
+    event: dict[str, object] = {
+        "eventId": "meal-effect-streak-concurrent",
+        "ownerUserId": "user-1",
+        "sourceEntityId": "meal-1",
+        "sourceMutationId": "mutation-1",
+        "kind": meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        "status": meal_effect_outbox_service.STATUS_PENDING,
+        "attemptCount": 0,
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+        "referenceDayKey": "2026-03-03",
+        "resultMeal": {"id": "meal-1", "deleted": False},
+    }
+    client, event_ref, transaction = _wire_existing_outbox_event(mocker, event)
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals",
+        new=mocker.AsyncMock(),
+    )
+    entry: meal_service.MealEffectOutboxEvent = {
+        "event_ref": event_ref,
+        "event": event,
+        "client": client,
+    }
+
+    first_result = asyncio.run(meal_service._process_meal_effect_outbox_event(entry))
+    second_result = asyncio.run(meal_service._process_meal_effect_outbox_event(entry))
+
+    assert first_result == "succeeded"
+    assert second_result == "skipped"
+    sync_streak.assert_awaited_once_with("user-1", reference_day_key="2026-03-03")
+    success_update = _last_outbox_status_update(transaction, event_ref)
+    assert success_update["status"] == meal_effect_outbox_service.STATUS_SUCCEEDED
+    assert success_update["attemptCount"] == 1
+
+
+def test_meal_effect_outbox_returns_status_update_failed_when_success_mark_fails(
+    mocker: MockerFixture,
+) -> None:
+    event: dict[str, object] = {
+        "eventId": "meal-effect-streak-status-update-fails",
+        "ownerUserId": "user-1",
+        "sourceEntityId": "meal-1",
+        "sourceMutationId": "mutation-1",
+        "kind": meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        "status": meal_effect_outbox_service.STATUS_PENDING,
+        "attemptCount": 0,
+        "nextAttemptAt": "2000-01-01T00:00:00.000Z",
+        "referenceDayKey": "2026-03-03",
+        "resultMeal": {"id": "meal-1", "deleted": False},
+    }
+    client, event_ref, _transaction = _wire_existing_outbox_event(mocker, event)
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals",
+        new=mocker.AsyncMock(),
+    )
+    mark_succeeded = mocker.patch(
+        "app.services.meal_service.meal_effect_outbox_service.mark_succeeded",
+        side_effect=GoogleAPICallError("status write failed"),
+    )
+
+    result = asyncio.run(
+        meal_service._process_meal_effect_outbox_event(
+            {
+                "event_ref": event_ref,
+                "event": event,
+                "client": client,
+            }
+        )
+    )
+
+    assert result == "status_update_failed"
+    sync_streak.assert_awaited_once_with("user-1", reference_day_key="2026-03-03")
+    mark_succeeded.assert_called_once()
 
 
 def test_upsert_meal_duplicate_replay_uses_dedupe_record_without_second_write(
@@ -767,11 +2012,11 @@ def test_upsert_meal_duplicate_replay_uses_dedupe_record_without_second_write(
         new=mocker.AsyncMock(return_value={"enabled": True}),
     )
     mocker.patch(
-        "app.services.meal_service.smart_memory_service.filter_existing_tombstone_subject_keys",
+        "app.services.meal_service.smart_memory_service.list_suppressed_subject_keys",
         new=mocker.AsyncMock(return_value=[]),
     )
     recent_snapshot_read = mocker.patch(
-        "app.services.meal_service._list_recent_meal_snapshots_for_smart_memory_capture",
+        "app.services.meal_service._list_meal_snapshots_for_smart_memory_capture_window",
         new=mocker.AsyncMock(return_value=[{"id": "meal-1", "deleted": False}]),
     )
     capture = mocker.patch(
@@ -811,10 +2056,13 @@ def test_upsert_meal_duplicate_replay_uses_dedupe_record_without_second_write(
     second_result = asyncio.run(meal_service.upsert_meal("user-1", payload))
 
     assert first_result == second_result
-    assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(first_transaction) == [meal_ref, mutation_ref]
     assert second_transaction.set_calls == []
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
-    assert recent_snapshot_read.await_count == 1
+    recent_snapshot_read.assert_awaited_once_with(
+        "user-1",
+        reference_day_key="2026-03-03",
+    )
     assert capture.await_count == 1
 
 
@@ -876,10 +2124,63 @@ def test_mark_deleted_marks_smart_memory_sources_deleted(
     assert isinstance(subject_keys[0], str)
 
 
-def test_mark_deleted_propagates_smart_memory_source_delete_failure(
+def test_mark_deleted_skips_smart_memory_writes_when_apply_flag_disabled(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(meal_service.settings, "SMART_MEMORY_APPLY_ENABLED", False)
+    client, _meal_ref, _mutation_ref, _transaction = _wire_meal_firestore_refs(
+        mocker,
+        meal_snapshot=_build_snapshot(
+            mocker,
+            exists=True,
+            data={
+                "cloudId": "meal-1",
+                "mealId": "meal-1",
+                "timestamp": "2026-03-03T12:00:00.000Z",
+                "dayKey": "2026-03-03",
+                "type": "lunch",
+                "ingredients": [
+                    {
+                        "id": "ingredient-1",
+                        "name": "Oats",
+                        "amount": 60,
+                        "unit": "g",
+                    }
+                ],
+                "createdAt": "2026-03-03T12:00:00.000Z",
+                "updatedAt": "2026-03-03T12:30:00.000Z",
+                "deleted": False,
+            },
+        ),
+    )
+    mocker.patch("app.services.meal_service.get_firestore", return_value=client)
+    sync_streak = mocker.patch(
+        "app.services.meal_service.streak_service.sync_streak_from_meals"
+    )
+    mark_sources_deleted = mocker.patch(
+        "app.services.meal_service.smart_memory_service.mark_sources_deleted_by_source_hashes",
+        new=mocker.AsyncMock(return_value=1),
+    )
+
+    result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T13:00:00.000Z",
+            client_mutation_id="mutation-delete-memory-apply-disabled",
+        )
+    )
+
+    assert result["deleted"] is True
+    sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
+    mark_sources_deleted.assert_not_awaited()
+
+
+def test_mark_deleted_leaves_smart_memory_source_delete_event_pending_after_failure(
     mocker: MockerFixture,
 ) -> None:
-    client, _meal_ref, _mutation_ref, _transaction = _wire_meal_firestore_refs(
+    client, _meal_ref, _mutation_ref, transaction = _wire_meal_firestore_refs(
         mocker,
         meal_snapshot=_build_snapshot(
             mocker,
@@ -911,15 +2212,31 @@ def test_mark_deleted_propagates_smart_memory_source_delete_failure(
         new=mocker.AsyncMock(side_effect=RuntimeError("source cascade failed")),
     )
 
-    with pytest.raises(RuntimeError, match="source cascade failed"):
-        asyncio.run(
-            meal_service.mark_deleted(
-                "user-1",
-                "meal-1",
-                updated_at="2026-03-03T13:00:00.000Z",
-                client_mutation_id="mutation-delete-memory-source-failure",
-            )
+    result = asyncio.run(
+        meal_service.mark_deleted(
+            "user-1",
+            "meal-1",
+            updated_at="2026-03-03T13:00:00.000Z",
+            client_mutation_id="mutation-delete-memory-source-failure",
         )
+    )
+
+    assert result["deleted"] is True
+    outbox_events = _outbox_set_events(transaction)
+    memory_events = [
+        event
+        for event in outbox_events
+        if event["kind"]
+        == meal_effect_outbox_service.KIND_MEAL_DELETED_SMART_MEMORY_SOURCE_DELETE
+    ]
+    assert len(memory_events) == 1
+    pending_event = memory_events[0]
+    event_ref = client.meal_effect_outbox_refs[pending_event["eventId"]]
+    failure_update = _last_outbox_status_update(transaction, event_ref)
+    assert failure_update["status"] == meal_effect_outbox_service.STATUS_PENDING
+    assert failure_update["attemptCount"] == 1
+    assert failure_update["lastErrorCode"] == "RuntimeError"
+    assert failure_update["lastErrorMessage"] == "source cascade failed"
 
 
 def test_upsert_meal_rejects_reused_client_mutation_id_for_different_payload(
@@ -1001,7 +2318,7 @@ def test_mark_deleted_keeps_newer_remote_document(mocker: MockerFixture) -> None
     assert result["updatedAt"] == "2026-03-03T13:00:00.000Z"
     assert result["deleted"] is False
     meal_ref.set.assert_not_called()
-    assert [call[0] for call in transaction.set_calls] == [mutation_ref]
+    assert _primary_set_refs(transaction) == [mutation_ref]
     sync_streak.assert_not_called()
 
 
@@ -1051,7 +2368,7 @@ def test_mark_deleted_duplicate_replay_uses_dedupe_record_without_second_write(
     )
 
     assert first_result == second_result
-    assert [call[0] for call in first_transaction.set_calls] == [meal_ref, mutation_ref]
+    assert _primary_set_refs(first_transaction) == [meal_ref, mutation_ref]
     assert second_transaction.set_calls == []
     sync_streak.assert_called_once_with("user-1", reference_day_key="2026-03-03")
 

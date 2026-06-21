@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -9,6 +10,46 @@ from app.services.recipe_catalog_service import evaluate_recipe_catalog
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_recipe_catalog_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.recipe_catalog.settings.RECIPE_CATALOG_ENABLED",
+        True,
+    )
+
+
+def test_recipe_catalog_disabled_returns_stable_503_without_profile_or_catalog_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.v2.endpoints.recipe_catalog.settings.RECIPE_CATALOG_ENABLED",
+        False,
+    )
+    get_profile = mocker.patch(
+        "app.api.v2.endpoints.recipe_catalog.UserProfileService.get_profile"
+    )
+    evaluate = mocker.patch(
+        "app.api.v2.endpoints.recipe_catalog.evaluate_recipe_catalog"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/recipes/catalog",
+        headers=auth_headers("recipe-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "recipe_catalog_disabled",
+            "message": "Recipe Catalog is temporarily disabled.",
+        }
+    }
+    get_profile.assert_not_awaited()
+    evaluate.assert_not_called()
 
 
 def test_recipe_catalog_requires_authentication() -> None:

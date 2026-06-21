@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -17,6 +18,42 @@ from app.services.food_library_service import (
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_food_library_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.food_library.settings.FOOD_LIBRARY_ENABLED",
+        True,
+    )
+
+
+def test_food_library_disabled_returns_stable_503_without_service_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.food_library.settings.FOOD_LIBRARY_ENABLED",
+        False,
+    )
+    search = mocker.patch(
+        "app.api.routes.food_library.food_library_service.search_ingredient_products"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/ingredient-products/search?query=owies",
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "food_library_disabled",
+            "message": "Food Library is temporarily disabled.",
+        }
+    }
+    search.assert_not_awaited()
 
 
 def _empty_response() -> IngredientProductSearchResponse:

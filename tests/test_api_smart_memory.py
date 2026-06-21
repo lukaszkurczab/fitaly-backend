@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.main import app
@@ -9,6 +10,42 @@ from app.services.smart_memory_service import (
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_smart_memory_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.smart_memory.settings.SMART_MEMORY_ENABLED",
+        True,
+    )
+
+
+def test_smart_memory_disabled_returns_stable_503_without_service_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.smart_memory.settings.SMART_MEMORY_ENABLED",
+        False,
+    )
+    list_items = mocker.patch(
+        "app.api.routes.smart_memory.smart_memory_service.list_items"
+    )
+
+    response = client.get(
+        "/api/v2/users/me/smart-memory/items",
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "smart_memory_disabled",
+            "message": "Smart Memory is temporarily disabled.",
+        }
+    }
+    list_items.assert_not_awaited()
 
 
 def _item_payload(overrides: dict[str, object] | None = None) -> dict[str, object]:

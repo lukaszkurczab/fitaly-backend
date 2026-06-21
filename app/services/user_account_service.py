@@ -39,11 +39,13 @@ from app.core.firestore_constants import (
     INGREDIENT_PRODUCTS_SUBCOLLECTION,
     KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
     KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
+    MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
     PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
     PLANNED_MEALS_SUBCOLLECTION,
+    RATE_LIMITS_COLLECTION,
     SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
     SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
     SMART_MEMORY_SETTINGS_SUBCOLLECTION,
@@ -69,6 +71,7 @@ DELETE_SUBCOLLECTIONS = (
     "notif_meta",
     "feedback",
     MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
     INGREDIENT_PRODUCTS_SUBCOLLECTION,
     SMART_MEMORY_SUBCOLLECTION,
     SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
@@ -1296,6 +1299,35 @@ def _delete_ai_runs(
         _delete_documents_in_batches(client, documents)
 
 
+def _delete_rate_limit_state(
+    client: firestore.Client,
+    user_id: str,
+) -> None:
+    client.collection(RATE_LIMITS_COLLECTION).document(user_id).delete()
+
+
+def _delete_username_reservations(
+    client: firestore.Client,
+    *,
+    user_id: str,
+    username: str = "",
+) -> None:
+    usernames_collection = client.collection(USERNAMES_COLLECTION)
+    documents_by_id: dict[str, firestore.DocumentSnapshot] = {}
+    for document in usernames_collection.where(
+        filter=FieldFilter("uid", "==", user_id)
+    ).stream():
+        documents_by_id[document.id] = document
+
+    if documents_by_id:
+        _delete_documents_in_batches(client, list(documents_by_id.values()))
+
+    if username:
+        username_ref = usernames_collection.document(username)
+        if username not in documents_by_id:
+            username_ref.delete()
+
+
 def _delete_storage_prefix(bucket: Any, prefix: str) -> None:
     for blob in bucket.list_blobs(prefix=prefix):
         blob.delete()
@@ -1332,6 +1364,7 @@ async def delete_account_data(user_id: str) -> None:
         _delete_user_storage_assets(user_id)
         _delete_billing_data(client, user_ref)
         _delete_ai_runs(client, user_id)
+        _delete_rate_limit_state(client, user_id)
 
         for subcollection_name in DELETE_SUBCOLLECTIONS:
             documents = (
@@ -1344,8 +1377,7 @@ async def delete_account_data(user_id: str) -> None:
 
         _delete_chat_threads(client, user_ref)
 
-        if username:
-            client.collection(USERNAMES_COLLECTION).document(username).delete()
+        _delete_username_reservations(client, user_id=user_id, username=username)
 
         user_ref.delete()
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
@@ -1369,6 +1401,7 @@ async def get_user_export_data(
     dict[str, Any],  # notification prefs
     list[dict[str, Any]],  # feedback
     list[dict[str, Any]],  # meal mutation dedupe
+    list[dict[str, Any]],  # meal effect outbox
     list[dict[str, Any]],  # ingredient products
     list[dict[str, Any]],  # smart memory items
     list[dict[str, Any]],  # smart memory candidates
@@ -1405,6 +1438,10 @@ async def get_user_export_data(
         meal_mutation_dedupe = _read_subcollection_documents(
             user_ref,
             MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+        )
+        meal_effect_outbox = _read_subcollection_documents(
+            user_ref,
+            MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
         )
         ingredient_products = _read_subcollection_documents(
             user_ref,
@@ -1459,6 +1496,7 @@ async def get_user_export_data(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        meal_effect_outbox,
         ingredient_products,
         smart_memory_items,
         smart_memory_candidates,

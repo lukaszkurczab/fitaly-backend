@@ -68,6 +68,9 @@ from app.schemas.meal import (
     MealDocument,
     MealInputMethod,
     MealItem,
+    MealPlanningNutritionEstimateState,
+    MealPlanningNutritionField,
+    MealPlanningSourceType,
     MealSource,
     MealSyncState,
     MealType,
@@ -214,6 +217,11 @@ class TestMealItemContract:
         assert item.tzOffsetMin == 60
         assert item.imageRef is not None
         assert item.imageRef.imageId == "img-001"
+        assert item.planningSource is not None
+        assert item.planningSource.plannedMealId == "planned-contract-1"
+        assert item.planningSource.plannedMealVersion == 2
+        assert item.planningSource.nutritionEstimateState == "partial"
+        assert item.planningSource.missingNutritionFields == ["fat"]
         assert item.deleted is False
 
     def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
@@ -224,6 +232,9 @@ class TestMealItemContract:
         assert req.type == "lunch"
         assert req.totals is not None
         assert req.totals.protein == 62.0
+        assert req.planningSource is not None
+        assert req.planningSource.plannedMealId == "planned-contract-1"
+        assert req.planningSource.nutritionEstimateState == "partial"
 
     def test_meal_day_key_rejects_non_canonical_format(self, fixture: JSONDict) -> None:
         payload = dict(fixture)
@@ -861,6 +872,220 @@ class TestHomeNextActionTelemetryContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: c5_new_domain_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestC5NewDomainTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("c5_new_domain_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "memory_candidate_created",
+            "memory_candidate_confirmed",
+            "memory_candidate_dismissed",
+            "memory_used",
+            "memory_muted",
+            "memory_deleted",
+            "planned_meal_created",
+            "planned_meal_confirmed",
+            "planned_meal_changed",
+            "planned_meal_skipped",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "memory_candidate_created": {
+                "memoryType",
+                "surface",
+                "confidenceBucket",
+                "featureState",
+            },
+            "memory_candidate_confirmed": {
+                "memoryType",
+                "surface",
+                "confidenceBucket",
+                "actionResult",
+                "featureState",
+            },
+            "memory_candidate_dismissed": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_used": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_muted": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_deleted": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_created": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "featureState",
+            },
+            "planned_meal_confirmed": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_changed": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_skipped": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_enum_values_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        memory_types = {
+            "ingredient_product_selection",
+            "review_correction",
+            "typical_portion",
+        }
+        surfaces = {
+            "home_next_action",
+            "memory_center",
+            "planning",
+            "review",
+            "settings",
+        }
+        confidence_buckets = {"high", "low", "medium"}
+        action_results = {"blocked", "failed", "queued", "succeeded"}
+        feature_states = {"disabled", "enabled", "shadow"}
+        source_types = {"ingredient_product_draft", "manual", "recipe", "saved_meal"}
+        estimate_states = {"known", "partial", "unknown"}
+        expected = {
+            "memory_candidate_created": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "confidenceBucket": confidence_buckets,
+                "featureState": feature_states,
+            },
+            "memory_candidate_confirmed": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "confidenceBucket": confidence_buckets,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_candidate_dismissed": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_used": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_muted": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_deleted": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_created": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "featureState": feature_states,
+            },
+            "planned_meal_confirmed": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_changed": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_skipped": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+        }
+
+        raw_enum_values = cast(JSONDict, fixture["enumValuesByEvent"])
+        assert set(raw_enum_values.keys()) == set(expected.keys())
+        for event_name, prop_values in expected.items():
+            event_values = cast(dict[str, list[str]], raw_enum_values[event_name])
+            assert set(event_values.keys()) == set(prop_values.keys())
+            for prop_name, values in prop_values.items():
+                assert set(event_values[prop_name]) == values
+                assert ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES[event_name][
+                    prop_name
+                ] == frozenset(values)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+    def test_disallowed_props_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        allowed_props_by_event = {
+            event_name: set(prop_names)
+            for event_name, prop_names in ALLOWED_TELEMETRY_EVENT_PROPS.items()
+            if event_name in fixture["eventNames"]
+        }
+        for event_name, prop_names in allowed_props_by_event.items():
+            for prop_name in fixture["disallowedPropNames"]:
+                assert prop_name not in prop_names, event_name
+
+    def test_mobile_fixture_is_byte_identical(self) -> None:
+        assert (FIXTURES_DIR / "c5_new_domain_telemetry.json").read_bytes() == (
+            MOBILE_FIXTURES_DIR / "c5_new_domain_telemetry.json"
+        ).read_bytes()
+
+
+# ---------------------------------------------------------------------------
 # Fixture: gateway_reject.json
 # ---------------------------------------------------------------------------
 
@@ -1064,6 +1289,23 @@ class TestEnumParity:
             if inner:
                 source_values.extend(value for value in inner if isinstance(value, str))
         assert sorted(enums["MealSource"]) == sorted(source_values)
+
+    def test_meal_planning_source_type_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["MealPlanningSourceType"]) == sorted(
+            get_args(MealPlanningSourceType)
+        )
+
+    def test_meal_planning_nutrition_estimate_state_parity(
+        self, enums: StringListDict
+    ) -> None:
+        assert sorted(enums["MealPlanningNutritionEstimateState"]) == sorted(
+            get_args(MealPlanningNutritionEstimateState)
+        )
+
+    def test_meal_planning_nutrition_field_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["MealPlanningNutritionField"]) == sorted(
+            get_args(MealPlanningNutritionField)
+        )
 
     def test_gateway_reject_reasons_parity(self, enums: StringListDict) -> None:
         backend_reasons = {REJECT_REASON_OFF_TOPIC, REJECT_REASON_TOO_SHORT}

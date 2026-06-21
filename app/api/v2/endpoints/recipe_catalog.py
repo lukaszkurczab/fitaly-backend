@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import ValidationError
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request, raise_service_unavailable
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.domain.users.models.user_profile import UserProfile
 from app.domain.users.services.user_profile_service import UserProfileService
@@ -13,6 +15,14 @@ from app.schemas.user_account import AllergyValue, ChronicDiseaseValue, Preferen
 from app.services.recipe_catalog_service import evaluate_recipe_catalog
 
 router = APIRouter(prefix="/users/me/recipes", tags=["Recipes V2"])
+
+
+def _ensure_recipe_catalog_enabled() -> None:
+    if not settings.RECIPE_CATALOG_ENABLED:
+        raise_feature_disabled(
+            code="recipe_catalog_disabled",
+            message="Recipe Catalog is temporarily disabled.",
+        )
 
 
 def _profile_allergies(profile: UserProfile | None) -> list[str]:
@@ -49,6 +59,7 @@ async def list_recipe_catalog_me(
     revealUnknown: bool = Query(default=False),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> RecipeCatalogFilterResponse:
+    _ensure_recipe_catalog_enabled()
     try:
         profile = await UserProfileService().get_profile(user_id=current_user.uid)
     except FirestoreServiceError as exc:

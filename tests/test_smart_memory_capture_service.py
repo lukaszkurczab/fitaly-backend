@@ -411,6 +411,118 @@ def test_review_correction_candidate_ready_from_explicit_bounded_signals() -> No
     )
 
 
+def test_review_correction_window_includes_day_zero_and_day_twenty_nine() -> None:
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            _correction_signal("signal-day-0", "2026-06-30", after_amount=60),
+            _correction_signal("signal-mid", "2026-06-15", after_amount=59),
+            _correction_signal("signal-day-29", "2026-06-01", after_amount=61),
+            _correction_signal("signal-day-30", "2026-05-31", after_amount=120),
+            _correction_signal("signal-day-31", "2026-05-30", after_amount=120),
+        ]
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+        reference_day_key="2026-06-30",
+    )
+
+    assert decision.state == "candidate_ready"
+    assert decision.reason_code == "threshold_met"
+    assert decision.candidate_request is not None
+    assert decision.candidate_request.evidenceSummary["eligibleObservationCount"] == 3
+    assert decision.candidate_request.evidenceSummary["distinctDayCount"] == 3
+
+
+def test_review_correction_old_signal_cannot_satisfy_windowed_threshold() -> None:
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            _correction_signal("signal-day-0", "2026-06-30", after_amount=60),
+            _correction_signal("signal-mid", "2026-06-15", after_amount=59),
+            _correction_signal("signal-day-30", "2026-05-31", after_amount=61),
+            _correction_signal("signal-day-31", "2026-05-30", after_amount=60),
+        ]
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+        reference_day_key="2026-06-30",
+    )
+
+    assert decision.state == "insufficient"
+    assert decision.reason_code == "insufficient_eligible_observations"
+    assert decision.evidence_summary["eligibleObservationCount"] == 2
+    assert decision.evidence_summary["distinctDayCount"] == 2
+    assert decision.candidate_request is None
+
+
+def test_review_correction_default_window_anchor_uses_latest_valid_signal_day() -> None:
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            _correction_signal("signal-day-0", "2026-06-30", after_amount=60),
+            _correction_signal("signal-mid", "2026-06-15", after_amount=59),
+            _correction_signal("signal-day-29", "2026-06-01", after_amount=61),
+            _correction_signal("signal-day-30", "2026-05-31", after_amount=120),
+        ]
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+    )
+
+    assert decision.state == "candidate_ready"
+    assert decision.candidate_request is not None
+    assert decision.candidate_request.evidenceSummary["eligibleObservationCount"] == 3
+    assert decision.candidate_request.evidenceSummary["distinctDayCount"] == 3
+
+
+def test_review_correction_invalid_and_missing_day_keys_do_not_count() -> None:
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            _correction_signal("signal-valid-1", "2026-06-30"),
+            _correction_signal("signal-valid-2", "2026-06-29"),
+            _correction_signal("signal-invalid", "2026/06/28"),
+            _correction_signal("signal-missing", None),
+        ]
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+        reference_day_key="2026-06-30",
+    )
+
+    assert len(signals) == 3
+    assert decision.state == "insufficient"
+    assert decision.reason_code == "insufficient_eligible_observations"
+    assert decision.evidence_summary["eligibleObservationCount"] == 2
+    assert decision.evidence_summary["distinctDayCount"] == 2
+    assert decision.candidate_request is None
+
+
+def test_review_correction_invalid_reference_day_key_counts_no_signals() -> None:
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            _correction_signal("signal-1", "2026-06-30"),
+            _correction_signal("signal-2", "2026-06-29"),
+            _correction_signal("signal-3", "2026-06-28"),
+        ]
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+        reference_day_key="2026/06/30",
+    )
+
+    assert decision.state == "insufficient"
+    assert decision.reason_code == "no_eligible_observations"
+    assert decision.candidate_request is None
+
+
 def test_review_correction_payload_is_bounded_and_excludes_raw_signal_data() -> None:
     signals = build_review_correction_signals_from_signal_payloads(
         [
@@ -667,6 +779,32 @@ def test_review_correction_deleted_and_source_deleted_refs_are_skipped() -> None
     assert decision.candidate_request is not None
 
 
+def test_review_correction_source_deleted_ref_cannot_satisfy_threshold() -> None:
+    skipped_source = _correction_signal("signal-skipped", "2026-06-01")
+    source_deleted_hashes = source_hashes_for_review_correction_signals([skipped_source])
+    signals = build_review_correction_signals_from_signal_payloads(
+        [
+            skipped_source,
+            _correction_signal("signal-1", "2026-06-02"),
+            _correction_signal("signal-2", "2026-06-03"),
+        ],
+        source_deleted_refs=set(source_deleted_hashes),
+    )
+
+    decision = evaluate_review_correction_candidate(
+        owner_user_id="user-1",
+        signals=signals,
+        reference_day_key="2026-06-03",
+    )
+
+    assert len(signals) == 2
+    assert decision.state == "insufficient"
+    assert decision.reason_code == "insufficient_eligible_observations"
+    assert decision.evidence_summary["eligibleObservationCount"] == 2
+    assert decision.evidence_summary["distinctDayCount"] == 2
+    assert decision.candidate_request is None
+
+
 def test_source_hashes_for_meal_snapshot_are_bounded_and_private() -> None:
     source_hashes = source_hashes_for_typical_portion_meal_snapshot(
         _meal("meal-1", "2026-06-01", ingredient_id="ingredient-1")
@@ -682,13 +820,9 @@ def test_capture_ready_path_upserts_candidate_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, Any]] = []
-    promotion_calls: list[tuple[str, str, str, str]] = []
+    promotion_calls: list[tuple[str, str]] = []
     candidate_result: dict[str, Any] = {
         "document": {"candidateId": "candidate-from-capture", "state": "candidate"},
-        "applied": True,
-    }
-    promotion_result: dict[str, Any] = {
-        "document": {"memoryItemId": "memory-from-capture", "state": "active"},
         "applied": True,
     }
 
@@ -703,10 +837,9 @@ def test_capture_ready_path_upserts_candidate_once(
         memory_item_id: str,
         client_mutation_id: str,
     ) -> dict[str, Any]:
-        promotion_calls.append(
-            (user_id, candidate_id, memory_item_id, client_mutation_id)
-        )
-        return promotion_result
+        del memory_item_id, client_mutation_id
+        promotion_calls.append((user_id, candidate_id))
+        return {"document": {}, "applied": False}
 
     monkeypatch.setattr(
         "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
@@ -730,13 +863,9 @@ def test_capture_ready_path_upserts_candidate_once(
 
     assert result.decision.state == "candidate_ready"
     assert result.decision.candidate_request is not None
-    assert result.mutation_result == promotion_result
+    assert result.mutation_result == candidate_result
     assert calls == [("user-1", result.decision.candidate_request)]
-    assert len(promotion_calls) == 1
-    assert promotion_calls[0][0] == "user-1"
-    assert promotion_calls[0][1] == result.decision.candidate_request.candidateId
-    assert promotion_calls[0][2].startswith("memory-")
-    assert promotion_calls[0][3].startswith("activate-")
+    assert promotion_calls == []
 
 
 def test_capture_ready_path_skips_promotion_for_already_activated_candidate(
@@ -849,16 +978,12 @@ def test_capture_review_correction_ready_path_upserts_candidate_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, Any]] = []
-    promotion_calls: list[tuple[str, str, str, str]] = []
+    promotion_calls: list[tuple[str, str]] = []
     candidate_result: dict[str, Any] = {
         "document": {
             "candidateId": "candidate-from-correction-capture",
             "state": "candidate",
         },
-        "applied": True,
-    }
-    promotion_result: dict[str, Any] = {
-        "document": {"memoryItemId": "memory-from-correction-capture", "state": "active"},
         "applied": True,
     }
 
@@ -873,10 +998,9 @@ def test_capture_review_correction_ready_path_upserts_candidate_once(
         memory_item_id: str,
         client_mutation_id: str,
     ) -> dict[str, Any]:
-        promotion_calls.append(
-            (user_id, candidate_id, memory_item_id, client_mutation_id)
-        )
-        return promotion_result
+        del memory_item_id, client_mutation_id
+        promotion_calls.append((user_id, candidate_id))
+        return {"document": {}, "applied": False}
 
     monkeypatch.setattr(
         "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
@@ -901,13 +1025,60 @@ def test_capture_review_correction_ready_path_upserts_candidate_once(
     assert result.decision.state == "candidate_ready"
     assert result.decision.candidate_request is not None
     assert result.decision.candidate_request.memoryType == "review_correction"
-    assert result.mutation_result == promotion_result
+    assert result.mutation_result == candidate_result
     assert calls == [("user-1", result.decision.candidate_request)]
-    assert len(promotion_calls) == 1
-    assert promotion_calls[0][0] == "user-1"
-    assert promotion_calls[0][1] == result.decision.candidate_request.candidateId
-    assert promotion_calls[0][2].startswith("memory-")
-    assert promotion_calls[0][3].startswith("activate-")
+    assert promotion_calls == []
+
+
+def test_capture_review_correction_ready_path_returns_already_activated_upsert_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    promotion_calls: list[tuple[str, str]] = []
+    activated_result: dict[str, Any] = {
+        "document": {
+            "candidateId": "candidate-from-correction-capture",
+            "state": "activated",
+        },
+        "applied": False,
+    }
+
+    async def fake_upsert_candidate(user_id: str, payload: Any) -> dict[str, Any]:
+        return activated_result
+
+    async def fake_promote_candidate(
+        user_id: str,
+        candidate_id: str,
+        *,
+        memory_item_id: str,
+        client_mutation_id: str,
+    ) -> dict[str, Any]:
+        del memory_item_id, client_mutation_id
+        promotion_calls.append((user_id, candidate_id))
+        return {"document": {}, "applied": False}
+
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.upsert_candidate",
+        fake_upsert_candidate,
+    )
+    monkeypatch.setattr(
+        "app.services.smart_memory_capture_service.smart_memory_service.promote_candidate",
+        fake_promote_candidate,
+    )
+
+    result = asyncio.run(
+        capture_review_correction_candidate_from_signals(
+            owner_user_id="user-1",
+            correction_signals=[
+                _correction_signal("signal-1", "2026-06-01", after_amount=60),
+                _correction_signal("signal-2", "2026-06-02", after_amount=59),
+                _correction_signal("signal-3", "2026-06-03", after_amount=61),
+            ],
+        )
+    )
+
+    assert result.decision.state == "candidate_ready"
+    assert result.mutation_result == activated_result
+    assert promotion_calls == []
 
 
 def test_capture_review_correction_non_ready_decision_does_not_upsert(

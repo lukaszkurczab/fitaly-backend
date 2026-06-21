@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Fitaly Food Scanner API"
     DESCRIPTION: str = "Backend API for Fitaly mobile application."
     VERSION: str = "0.1.0"
+    BACKEND_COMMIT_SHA: str = ""
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
     API_V2_PREFIX: str = "/api/v2"
@@ -45,6 +46,13 @@ class Settings(BaseSettings):
     HABITS_ENABLED: bool = True
     SMART_REMINDERS_ENABLED: bool = True
     WEEKLY_REPORTS_ENABLED: bool = True
+    FOOD_LIBRARY_ENABLED: bool = False
+    SMART_MEMORY_ENABLED: bool = False
+    SMART_MEMORY_CAPTURE_ENABLED: bool = False
+    SMART_MEMORY_APPLY_ENABLED: bool = False
+    KNOWN_PATTERNS_ENABLED: bool = False
+    RECIPE_CATALOG_ENABLED: bool = False
+    PLANNED_MEALS_ENABLED: bool = False
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
 

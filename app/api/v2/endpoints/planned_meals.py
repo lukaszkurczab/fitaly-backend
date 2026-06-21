@@ -3,7 +3,9 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request, raise_service_unavailable
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.planned_meals import (
     PlannedMealCreateRequest,
@@ -26,6 +28,14 @@ from app.services.planned_meal_service import (
 router = APIRouter(prefix="/users/me/planned-meals", tags=["Planned Meals V2"])
 
 
+def _ensure_planned_meals_enabled() -> None:
+    if not settings.PLANNED_MEALS_ENABLED:
+        raise_feature_disabled(
+            code="planned_meals_disabled",
+            message="Planned Meals are temporarily disabled.",
+        )
+
+
 def _raise_not_found(exc: Exception) -> NoReturn:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -44,6 +54,7 @@ async def list_planned_meals_me(
     includeDeleted: bool = Query(default=False),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> PlannedMealsListResponse:
+    _ensure_planned_meals_enabled()
     try:
         return await list_planned_meals_for_user(
             current_user.uid,
@@ -69,6 +80,7 @@ async def create_planned_meal_me(
     request: PlannedMealCreateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> PlannedMealMutationResponse:
+    _ensure_planned_meals_enabled()
     try:
         result = await create_planned_meal_for_user(current_user.uid, request)
     except PlannedMealMutationDedupeConflictError as exc:
@@ -91,6 +103,7 @@ async def update_planned_meal_me(
     request: PlannedMealUpdateRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> PlannedMealMutationResponse:
+    _ensure_planned_meals_enabled()
     try:
         result = await update_planned_meal_for_user(
             current_user.uid,
@@ -120,6 +133,7 @@ async def delete_planned_meal_me(
     expectedVersion: int = Query(ge=1),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> PlannedMealMutationResponse:
+    _ensure_planned_meals_enabled()
     try:
         result = await delete_planned_meal_for_user(
             current_user.uid,

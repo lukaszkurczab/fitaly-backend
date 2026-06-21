@@ -1,0 +1,382 @@
+{
+  "eventNames": [
+    "memory_candidate_created",
+    "memory_candidate_confirmed",
+    "memory_candidate_dismissed",
+    "memory_used",
+    "memory_muted",
+    "memory_deleted",
+    "planned_meal_created",
+    "planned_meal_confirmed",
+    "planned_meal_changed",
+    "planned_meal_skipped"
+  ],
+  "propsByEvent": {
+    "memory_candidate_created": [
+      "memoryType",
+      "surface",
+      "confidenceBucket",
+      "featureState"
+    ],
+    "memory_candidate_confirmed": [
+      "memoryType",
+      "surface",
+      "confidenceBucket",
+      "actionResult",
+      "featureState"
+    ],
+    "memory_candidate_dismissed": [
+      "memoryType",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "memory_used": [
+      "memoryType",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "memory_muted": [
+      "memoryType",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "memory_deleted": [
+      "memoryType",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "planned_meal_created": [
+      "sourceType",
+      "estimateState",
+      "surface",
+      "featureState"
+    ],
+    "planned_meal_confirmed": [
+      "sourceType",
+      "estimateState",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "planned_meal_changed": [
+      "sourceType",
+      "estimateState",
+      "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "planned_meal_skipped": [
+      "sourceType",
+      "estimateState",
+      "surface",
+      "actionResult",
+      "featureState"
+    ]
+  },
+  "enumValuesByEvent": {
+    "memory_candidate_created": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "confidenceBucket": [
+        "high",
+        "low",
+        "medium"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "memory_candidate_confirmed": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "confidenceBucket": [
+        "high",
+        "low",
+        "medium"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "memory_candidate_dismissed": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "memory_used": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "memory_muted": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "memory_deleted": {
+      "memoryType": [
+        "ingredient_product_selection",
+        "review_correction",
+        "typical_portion"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "planned_meal_created": {
+      "sourceType": [
+        "ingredient_product_draft",
+        "manual",
+        "recipe",
+        "saved_meal"
+      ],
+      "estimateState": [
+        "known",
+        "partial",
+        "unknown"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "planned_meal_confirmed": {
+      "sourceType": [
+        "ingredient_product_draft",
+        "manual",
+        "recipe",
+        "saved_meal"
+      ],
+      "estimateState": [
+        "known",
+        "partial",
+        "unknown"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "planned_meal_changed": {
+      "sourceType": [
+        "ingredient_product_draft",
+        "manual",
+        "recipe",
+        "saved_meal"
+      ],
+      "estimateState": [
+        "known",
+        "partial",
+        "unknown"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "planned_meal_skipped": {
+      "sourceType": [
+        "ingredient_product_draft",
+        "manual",
+        "recipe",
+        "saved_meal"
+      ],
+      "estimateState": [
+        "known",
+        "partial",
+        "unknown"
+      ],
+      "surface": [
+        "home_next_action",
+        "memory_center",
+        "planning",
+        "review",
+        "settings"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    }
+  },
+  "disallowedEventNames": [
+    "memory_candidate_scored",
+    "memory_candidate_debugged",
+    "memory_prompt_sent",
+    "planned_meal_generated",
+    "planned_meal_raw_saved",
+    "planning_prompt_sent"
+  ],
+  "disallowedPropNames": [
+    "mealName",
+    "ingredientName",
+    "notes",
+    "candidateId",
+    "memoryId",
+    "plannedMealId",
+    "sourceRef",
+    "rawReason",
+    "rawPrompt",
+    "rawResponse",
+    "imageUrl",
+    "fullPayload",
+    "calories",
+    "kcal",
+    "macros",
+    "protein",
+    "carbs",
+    "fat"
+  ]
+}

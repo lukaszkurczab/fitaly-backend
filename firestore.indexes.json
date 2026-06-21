@@ -221,6 +221,21 @@
       "density": "SPARSE_ALL"
     },
     {
+      "collectionGroup": "mealEffectOutbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextAttemptAt",
+          "order": "ASCENDING"
+        }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
       "collectionGroup": "ai_runs",
       "queryScope": "COLLECTION",
       "fields": [

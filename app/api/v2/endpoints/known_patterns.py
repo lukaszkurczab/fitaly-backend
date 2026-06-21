@@ -3,7 +3,9 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request, raise_service_unavailable
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.known_patterns import (
     KnownPatternCandidateControl,
@@ -24,6 +26,14 @@ from app.services.known_pattern_service import (
 router = APIRouter(prefix="/users/me/known-patterns", tags=["Known Patterns V2"])
 
 
+def _ensure_known_patterns_enabled() -> None:
+    if not settings.KNOWN_PATTERNS_ENABLED:
+        raise_feature_disabled(
+            code="known_patterns_disabled",
+            message="Known Patterns are temporarily disabled.",
+        )
+
+
 def _raise_not_found(exc: Exception) -> NoReturn:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -37,6 +47,7 @@ async def list_known_pattern_candidates_me(
     limit: int = Query(default=5, ge=1, le=10),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> KnownPatternCandidatesResponse:
+    _ensure_known_patterns_enabled()
     try:
         return await list_known_pattern_candidates_for_user(
             current_user.uid,
@@ -58,6 +69,7 @@ async def control_known_pattern_candidate_me(
     request: KnownPatternCandidateControlRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> KnownPatternCandidateControlResponse:
+    _ensure_known_patterns_enabled()
     try:
         result = await mark_known_pattern_candidate_control_for_user(
             current_user.uid,
@@ -90,6 +102,7 @@ async def open_known_pattern_review_draft_me(
     request: KnownPatternReviewDraftRequest,
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> KnownPatternReviewDraftResponse:
+    _ensure_known_patterns_enabled()
     try:
         result = await open_known_pattern_review_draft_for_user(
             current_user.uid,

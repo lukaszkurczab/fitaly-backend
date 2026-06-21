@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, timedelta
 import hashlib
 import json
 from statistics import median
@@ -45,6 +46,7 @@ SUPPORTED_REVIEW_CORRECTION_SURFACES: tuple[ReviewCorrectionSurface, ...] = (
 )
 REQUIRED_PORTION_OBSERVATIONS = 3
 REQUIRED_PORTION_DISTINCT_DAYS = 3
+REVIEW_CORRECTION_CAPTURE_WINDOW_DAYS = 30
 MAX_CANDIDATE_SOURCE_REFS = 3
 AMOUNT_CLUSTER_RELATIVE_TOLERANCE = 0.10
 AMOUNT_CLUSTER_ABSOLUTE_TOLERANCE = 5.0
@@ -283,6 +285,7 @@ def evaluate_review_correction_candidate(
     signals: Sequence[ReviewCorrectionSignal],
     memory_enabled: bool = True,
     suppressed_subject_keys: Collection[str] = (),
+    reference_day_key: str | None = None,
 ) -> SmartMemoryCaptureDecision:
     if not memory_enabled:
         return _decision(
@@ -292,7 +295,10 @@ def evaluate_review_correction_candidate(
             evidence_summary={"eligibleObservationCount": 0, "distinctDayCount": 0},
         )
 
-    eligible = sorted(signals, key=_review_correction_sort_key)
+    eligible = _windowed_review_correction_signals(
+        signals,
+        reference_day_key=reference_day_key,
+    )
     if not eligible:
         return _decision(
             state="insufficient",
@@ -462,18 +468,6 @@ async def capture_typical_portion_candidate_from_meal_snapshots(
         owner_user_id,
         decision.candidate_request,
     )
-    document = mutation_result["document"]
-    if document.get("state") == "candidate":
-        mutation_result = await smart_memory_service.promote_candidate(
-            owner_user_id,
-            decision.candidate_request.candidateId,
-            memory_item_id=_memory_item_id_for_candidate(
-                decision.candidate_request.candidateId,
-            ),
-            client_mutation_id=_activation_mutation_id(
-                decision.candidate_request.clientMutationId,
-            ),
-        )
     return SmartMemoryCaptureUpsertResult(
         decision=decision,
         mutation_result=mutation_result,
@@ -487,6 +481,7 @@ async def capture_review_correction_candidate_from_signals(
     memory_enabled: bool = True,
     suppressed_subject_keys: Collection[str] = (),
     source_deleted_refs: Collection[str] = (),
+    reference_day_key: str | None = None,
 ) -> SmartMemoryCaptureUpsertResult:
     signals = build_review_correction_signals_from_signal_payloads(
         correction_signals,
@@ -497,6 +492,7 @@ async def capture_review_correction_candidate_from_signals(
         signals=signals,
         memory_enabled=memory_enabled,
         suppressed_subject_keys=suppressed_subject_keys,
+        reference_day_key=reference_day_key,
     )
     if decision.state != "candidate_ready" or decision.candidate_request is None:
         return SmartMemoryCaptureUpsertResult(decision=decision)
@@ -505,18 +501,6 @@ async def capture_review_correction_candidate_from_signals(
         owner_user_id,
         decision.candidate_request,
     )
-    document = mutation_result["document"]
-    if document.get("state") == "candidate":
-        mutation_result = await smart_memory_service.promote_candidate(
-            owner_user_id,
-            decision.candidate_request.candidateId,
-            memory_item_id=_memory_item_id_for_candidate(
-                decision.candidate_request.candidateId,
-            ),
-            client_mutation_id=_activation_mutation_id(
-                decision.candidate_request.clientMutationId,
-            ),
-        )
     return SmartMemoryCaptureUpsertResult(
         decision=decision,
         mutation_result=mutation_result,
@@ -534,16 +518,6 @@ def review_correction_subject_suppression_key(
     return _review_correction_subject_suppression_key(
         _review_correction_subject_payload(subject_key, correction_field)
     )
-
-
-def _memory_item_id_for_candidate(candidate_id: str) -> str:
-    digest = _stable_hash({"candidateId": candidate_id})[:24]
-    return f"memory-{digest}"
-
-
-def _activation_mutation_id(candidate_mutation_id: str) -> str:
-    digest = _stable_hash({"candidateMutationId": candidate_mutation_id})[:24]
-    return f"activate-{digest}"
 
 
 def source_hashes_for_typical_portion_meal_snapshot(
@@ -834,6 +808,41 @@ def _group_review_corrections_by_subject_and_field(
     for signal in signals:
         groups.setdefault((signal.subject_key, signal.correction_field), []).append(signal)
     return groups
+
+
+def _windowed_review_correction_signals(
+    signals: Sequence[ReviewCorrectionSignal],
+    *,
+    reference_day_key: str | None,
+) -> list[ReviewCorrectionSignal]:
+    parsed_signals: list[tuple[date, ReviewCorrectionSignal]] = []
+    for signal in signals:
+        parsed_day_key = _parse_day_key(signal.day_key)
+        if parsed_day_key is None:
+            continue
+        parsed_signals.append((parsed_day_key, signal))
+
+    if not parsed_signals:
+        return []
+
+    if reference_day_key is None:
+        reference_day = max(parsed_day for parsed_day, _signal in parsed_signals)
+    else:
+        reference_day = _parse_day_key(reference_day_key)
+        if reference_day is None:
+            return []
+
+    start_day = reference_day - timedelta(
+        days=REVIEW_CORRECTION_CAPTURE_WINDOW_DAYS - 1
+    )
+    return sorted(
+        [
+            signal
+            for parsed_day, signal in parsed_signals
+            if start_day <= parsed_day <= reference_day
+        ],
+        key=_review_correction_sort_key,
+    )
 
 
 def _evidence_summary(
@@ -1146,6 +1155,18 @@ def _coerce_str(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _parse_day_key(value: str) -> date | None:
+    if len(value) != 10:
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.isoformat() != value:
+        return None
+    return parsed
 
 
 def _coerce_positive_float(value: object) -> float | None:

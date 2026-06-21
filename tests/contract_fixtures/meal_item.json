@@ -34,6 +34,14 @@
     "storagePath": "meals/user-contract-1/img-001.jpg",
     "downloadUrl": "https://storage.example.com/photo.jpg"
   },
+  "planningSource": {
+    "plannedMealId": "planned-contract-1",
+    "plannedMealVersion": 2,
+    "sourceType": "manual",
+    "sourceRef": null,
+    "nutritionEstimateState": "partial",
+    "missingNutritionFields": ["fat"]
+  },
   "notes": "Post-workout meal",
   "tags": ["high-protein", "lunch"],
   "deleted": false,

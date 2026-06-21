@@ -41,7 +41,6 @@ MAX_SOURCE_REFS = 25
 MAX_REASON_CODES = 20
 MAX_CAPTURE_CONTROL_DOCS = 100
 MAX_SOURCE_HASH_QUERY_DOCS = 250
-MAX_EXPORT_COLLECTION_DOCS = 250
 SOURCE_DELETION_SOURCE_REF_KIND = "meal_portion_observation"
 MUTABLE_ITEM_STATES = {"active", "muted", "candidate"}
 NON_SUGGESTING_STATES = {"muted", "deleted_suppressed", "disabled", "source_deleted"}
@@ -162,24 +161,15 @@ def _read_subcollection(
     return documents
 
 
-def _read_limited_subcollection(
+def _read_export_subcollection(
     user_ref: firestore.DocumentReference,
     subcollection_name: str,
     *,
     document_id_field: str = "id",
-    limit_count: int = MAX_EXPORT_COLLECTION_DOCS,
 ) -> list[dict[str, Any]]:
-    collection_ref = user_ref.collection(subcollection_name)
-    limit = min(max(limit_count, 1), MAX_EXPORT_COLLECTION_DOCS)
-    snapshots = _stream_bounded_collection(collection_ref, limit_count=limit)
-    if len(snapshots) == limit:
-        logger.warning(
-            "Smart Memory export reached bounded collection limit.",
-            extra={"subcollection": subcollection_name, "limit": limit},
-        )
     return [
         _snapshot_document(snapshot, document_id_field=document_id_field)
-        for snapshot in snapshots
+        for snapshot in user_ref.collection(subcollection_name).stream()
     ]
 
 
@@ -191,6 +181,16 @@ def _stream_bounded_collection(
     limit = min(max(limit_count, 1), MAX_LIST_LIMIT)
     limited_ref = collection_ref.limit(limit) if hasattr(collection_ref, "limit") else collection_ref
     return list(limited_ref.stream())[:limit]
+
+
+def _stream_control_collection(
+    collection_ref: Any,
+    *,
+    limit_count: int | None = MAX_CAPTURE_CONTROL_DOCS,
+) -> list[Any]:
+    if limit_count is None:
+        return list(collection_ref.stream())
+    return _stream_bounded_collection(collection_ref, limit_count=limit_count)
 
 
 def _chunks(values: Sequence[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:
@@ -586,11 +586,11 @@ async def list_tombstone_subject_keys(
     user_id: str,
     *,
     memory_type: SmartMemoryType | None = None,
-    limit_count: int = MAX_CAPTURE_CONTROL_DOCS,
+    limit_count: int | None = MAX_CAPTURE_CONTROL_DOCS,
 ) -> list[str]:
     client = get_firestore()
     try:
-        snapshots = _stream_bounded_collection(
+        snapshots = _stream_control_collection(
             _user_ref(client, user_id).collection(SMART_MEMORY_TOMBSTONES_SUBCOLLECTION),
             limit_count=limit_count,
         )
@@ -616,7 +616,7 @@ async def list_suppressed_subject_keys(
     user_id: str,
     *,
     memory_type: SmartMemoryType,
-    limit_count: int = MAX_CAPTURE_CONTROL_DOCS,
+    limit_count: int | None = None,
 ) -> list[str]:
     client = get_firestore()
     user_ref = _user_ref(client, user_id)
@@ -628,7 +628,7 @@ async def list_suppressed_subject_keys(
         )
     )
     try:
-        for snapshot in _stream_bounded_collection(
+        for snapshot in _stream_control_collection(
             user_ref.collection(SMART_MEMORY_SUBCOLLECTION),
             limit_count=limit_count,
         ):
@@ -647,7 +647,7 @@ async def list_suppressed_subject_keys(
                     )
                 )
 
-        for snapshot in _stream_bounded_collection(
+        for snapshot in _stream_control_collection(
             user_ref.collection(SMART_MEMORY_CANDIDATES_SUBCOLLECTION),
             limit_count=limit_count,
         ):
@@ -1487,7 +1487,7 @@ def _mutate_item_transaction(
 def read_export(user_ref: firestore.DocumentReference) -> dict[str, list[dict[str, Any]]]:
     items = [
         item
-        for item in _read_limited_subcollection(
+        for item in _read_export_subcollection(
             user_ref,
             SMART_MEMORY_SUBCOLLECTION,
         )
@@ -1495,7 +1495,7 @@ def read_export(user_ref: firestore.DocumentReference) -> dict[str, list[dict[st
     ]
     candidates = [
         candidate
-        for candidate in _read_limited_subcollection(
+        for candidate in _read_export_subcollection(
             user_ref,
             SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
         )
@@ -1504,15 +1504,15 @@ def read_export(user_ref: firestore.DocumentReference) -> dict[str, list[dict[st
     return {
         "items": items,
         "candidates": candidates,
-        "settings": _read_limited_subcollection(
+        "settings": _read_export_subcollection(
             user_ref,
             SMART_MEMORY_SETTINGS_SUBCOLLECTION,
         ),
-        "tombstones": _read_limited_subcollection(
+        "tombstones": _read_export_subcollection(
             user_ref,
             SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
         ),
-        "mutationDedupe": _read_limited_subcollection(
+        "mutationDedupe": _read_export_subcollection(
             user_ref,
             SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
         ),

@@ -111,6 +111,83 @@ def test_meal_upsert_request_is_backward_compatible_without_new_fields() -> None
     assert payload.aiMeta is None
 
 
+def test_meal_upsert_request_accepts_planning_source_with_positive_evidence() -> None:
+    payload = MealUpsertRequest.model_validate(
+        {
+            "mealId": "meal-planned-1",
+            "clientMutationId": "mutation-schema-planned",
+            "timestamp": "2026-03-18T12:00:00.000Z",
+            "dayKey": "2026-03-18",
+            "type": "lunch",
+            "ingredients": [],
+            "totals": {"kcal": 420, "protein": 32, "fat": 10, "carbs": 45},
+            "planningSource": {
+                "plannedMealId": "planned-1",
+                "plannedMealVersion": 2,
+                "sourceType": "manual",
+                "sourceRef": None,
+                "nutritionEstimateState": "unknown",
+                "missingNutritionFields": ["fat"],
+            },
+        }
+    )
+
+    assert payload.planningSource is not None
+    assert payload.planningSource.plannedMealId == "planned-1"
+    assert payload.planningSource.plannedMealVersion == 2
+    assert payload.planningSource.nutritionEstimateState == "unknown"
+
+
+def test_meal_upsert_request_rejects_unknown_planned_source_without_nutrition() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="Planned meal source requires positive nutrition evidence",
+    ):
+        MealUpsertRequest.model_validate(
+            {
+                "mealId": "meal-planned-empty-1",
+                "clientMutationId": "mutation-schema-planned-empty",
+                "timestamp": "2026-03-18T12:00:00.000Z",
+                "dayKey": "2026-03-18",
+                "type": "lunch",
+                "ingredients": [],
+                "planningSource": {
+                    "plannedMealId": "planned-1",
+                    "plannedMealVersion": 2,
+                    "sourceType": "manual",
+                    "sourceRef": None,
+                    "nutritionEstimateState": "unknown",
+                    "missingNutritionFields": ["kcal", "protein", "fat", "carbs"],
+                },
+            }
+        )
+
+
+def test_meal_upsert_request_rejects_partial_planned_source_without_nutrition() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="Planned meal source requires positive nutrition evidence",
+    ):
+        MealUpsertRequest.model_validate(
+            {
+                "mealId": "meal-planned-partial-empty-1",
+                "clientMutationId": "mutation-schema-planned-partial-empty",
+                "timestamp": "2026-03-18T12:00:00.000Z",
+                "dayKey": "2026-03-18",
+                "type": "lunch",
+                "ingredients": [],
+                "planningSource": {
+                    "plannedMealId": "planned-1",
+                    "plannedMealVersion": 2,
+                    "sourceType": "manual",
+                    "sourceRef": None,
+                    "nutritionEstimateState": "partial",
+                    "missingNutritionFields": ["kcal", "protein", "fat", "carbs"],
+                },
+            }
+        )
+
+
 def test_saved_meal_upsert_request_requires_non_empty_client_mutation_id() -> None:
     base: dict[str, Any] = {
         "templateId": "saved-1",

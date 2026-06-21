@@ -21,15 +21,22 @@ from app.core.firestore_constants import (
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
     INGREDIENT_PRODUCTS_SUBCOLLECTION,
+    KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
+    KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
+    MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
+    PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
+    RATE_LIMITS_COLLECTION,
     SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
     SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
     SMART_MEMORY_SETTINGS_SUBCOLLECTION,
     SMART_MEMORY_SUBCOLLECTION,
     SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
+    USERNAMES_COLLECTION,
     USERS_COLLECTION,
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
@@ -65,12 +72,17 @@ def _export_payload(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        meal_effect_outbox,
         ingredient_products,
         smart_memory_items,
         smart_memory_candidates,
         smart_memory_settings,
         smart_memory_tombstones,
         smart_memory_mutation_dedupe,
+        known_pattern_controls,
+        known_pattern_mutation_dedupe,
+        planned_meal_items,
+        planned_meal_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
@@ -91,12 +103,17 @@ def _export_payload(
         "notificationPrefs": notification_prefs,
         "feedback": feedback,
         "mealMutationDedupe": meal_mutation_dedupe,
+        "mealEffectOutbox": meal_effect_outbox,
         "ingredientProducts": ingredient_products,
         "smartMemoryItems": smart_memory_items,
         "smartMemoryCandidates": smart_memory_candidates,
         "smartMemorySettings": smart_memory_settings,
         "smartMemoryTombstones": smart_memory_tombstones,
         "smartMemoryMutationDedupe": smart_memory_mutation_dedupe,
+        "knownPatternControls": known_pattern_controls,
+        "knownPatternMutationDedupe": known_pattern_mutation_dedupe,
+        "plannedMealItems": planned_meal_items,
+        "plannedMealMutationDedupe": planned_meal_mutation_dedupe,
         "billing": billing,
         "aiCredits": ai_credits,
         "aiCreditTransactions": ai_credit_transactions,
@@ -313,6 +330,26 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             },
         ),
         (
+            current_user_ref.collection(MEAL_EFFECT_OUTBOX_SUBCOLLECTION).document(
+                f"meal-effect-current-{run_id}"
+            ),
+            {
+                "eventId": f"meal-effect-current-{run_id}",
+                "kind": "meal_saved.streak_sync",
+                "ownerMarker": f"current-meal-effect-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(MEAL_EFFECT_OUTBOX_SUBCOLLECTION).document(
+                f"meal-effect-other-{run_id}"
+            ),
+            {
+                "eventId": f"meal-effect-other-{run_id}",
+                "kind": "meal_saved.streak_sync",
+                "ownerMarker": f"other-meal-effect-{run_id}",
+            },
+        ),
+        (
             current_user_ref.collection(INGREDIENT_PRODUCTS_SUBCOLLECTION).document(
                 f"ingredient-product-current-{run_id}"
             ),
@@ -474,6 +511,84 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         ),
     )
     for document_ref, payload in smart_memory_docs:
+        document_ref.set(payload)
+        seeded_refs.append(document_ref)
+
+    domain_docs: tuple[tuple[firestore.DocumentReference, dict[str, Any]], ...] = (
+        (
+            current_user_ref.collection(KNOWN_PATTERN_CONTROLS_SUBCOLLECTION).document(
+                f"known-pattern-current-{run_id}"
+            ),
+            {
+                "id": f"known-pattern-current-{run_id}",
+                "ownerMarker": f"current-known-pattern-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(KNOWN_PATTERN_CONTROLS_SUBCOLLECTION).document(
+                f"known-pattern-other-{run_id}"
+            ),
+            {
+                "id": f"known-pattern-other-{run_id}",
+                "ownerMarker": f"other-known-pattern-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(
+                KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"known-pattern-mutation-current-{run_id}"),
+            {
+                "id": f"known-pattern-mutation-current-{run_id}",
+                "ownerMarker": f"current-known-pattern-mutation-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(
+                KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"known-pattern-mutation-other-{run_id}"),
+            {
+                "id": f"known-pattern-mutation-other-{run_id}",
+                "ownerMarker": f"other-known-pattern-mutation-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(PLANNED_MEALS_SUBCOLLECTION).document(
+                f"planned-meal-current-{run_id}"
+            ),
+            {
+                "id": f"planned-meal-current-{run_id}",
+                "ownerMarker": f"current-planned-meal-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(PLANNED_MEALS_SUBCOLLECTION).document(
+                f"planned-meal-other-{run_id}"
+            ),
+            {
+                "id": f"planned-meal-other-{run_id}",
+                "ownerMarker": f"other-planned-meal-{run_id}",
+            },
+        ),
+        (
+            current_user_ref.collection(
+                PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"planned-meal-mutation-current-{run_id}"),
+            {
+                "id": f"planned-meal-mutation-current-{run_id}",
+                "ownerMarker": f"current-planned-meal-mutation-{run_id}",
+            },
+        ),
+        (
+            other_user_ref.collection(
+                PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION
+            ).document(f"planned-meal-mutation-other-{run_id}"),
+            {
+                "id": f"planned-meal-mutation-other-{run_id}",
+                "ownerMarker": f"other-planned-meal-mutation-{run_id}",
+            },
+        ),
+    )
+    for document_ref, payload in domain_docs:
         document_ref.set(payload)
         seeded_refs.append(document_ref)
 
@@ -765,12 +880,17 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             "notificationPrefs",
             "feedback",
             "mealMutationDedupe",
+            "mealEffectOutbox",
             "ingredientProducts",
             "smartMemoryItems",
             "smartMemoryCandidates",
             "smartMemorySettings",
             "smartMemoryTombstones",
             "smartMemoryMutationDedupe",
+            "knownPatternControls",
+            "knownPatternMutationDedupe",
+            "plannedMealItems",
+            "plannedMealMutationDedupe",
             "billing",
             "aiCredits",
             "aiCreditTransactions",
@@ -802,6 +922,7 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         }
         assert _ids(export["feedback"]) == {f"feedback-current-{run_id}"}
         assert _ids(export["mealMutationDedupe"]) == {f"mutation-current-{run_id}"}
+        assert _ids(export["mealEffectOutbox"]) == {f"meal-effect-current-{run_id}"}
         assert _ids(export["ingredientProducts"]) == {
             f"ingredient-product-current-{run_id}"
         }
@@ -815,6 +936,18 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
         }
         assert _ids(export["smartMemoryMutationDedupe"]) == {
             f"memory-mutation-current-{run_id}"
+        }
+        assert _ids(export["knownPatternControls"]) == {
+            f"known-pattern-current-{run_id}"
+        }
+        assert _ids(export["knownPatternMutationDedupe"]) == {
+            f"known-pattern-mutation-current-{run_id}"
+        }
+        assert _ids(export["plannedMealItems"]) == {
+            f"planned-meal-current-{run_id}"
+        }
+        assert _ids(export["plannedMealMutationDedupe"]) == {
+            f"planned-meal-mutation-current-{run_id}"
         }
         assert _ids(export["billing"]) == {"main", "annual"}
         assert _ids(export["aiCredits"]) == {"current", "renewal"}
@@ -856,12 +989,17 @@ async def test_account_export_scopes_every_release_surface_and_preserves_refs(
             f"other-notification-prefs-{run_id}",
             f"other-feedback-{run_id}",
             f"other-meal-mutation-{run_id}",
+            f"other-meal-effect-{run_id}",
             f"other-ingredient-product-{run_id}",
             f"other-smart-memory-item-{run_id}",
             f"other-smart-memory-candidate-{run_id}",
             f"other-smart-memory-settings-{run_id}",
             f"other-smart-memory-tombstone-{run_id}",
             f"other-smart-memory-mutation-{run_id}",
+            f"other-known-pattern-{run_id}",
+            f"other-known-pattern-mutation-{run_id}",
+            f"other-planned-meal-{run_id}",
+            f"other-planned-meal-mutation-{run_id}",
             f"other-reminder-daily-stats-{run_id}",
             f"2026-03-03:breakfast:other-reminder-{run_id}",
             f"other-billing-main-{run_id}",
@@ -910,6 +1048,18 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     anonymous_event_ref = client.collection(telemetry_service.COLLECTION_NAME).document(
         f"telemetry-anon-delete-{run_id}"
     )
+    current_rate_limit_ref = client.collection(RATE_LIMITS_COLLECTION).document(
+        current_user_id
+    )
+    other_rate_limit_ref = client.collection(RATE_LIMITS_COLLECTION).document(
+        other_user_id
+    )
+    current_username = f"current-{run_id}"
+    other_username = f"other-{run_id}"
+    current_username_ref = client.collection(USERNAMES_COLLECTION).document(
+        current_username
+    )
+    other_username_ref = client.collection(USERNAMES_COLLECTION).document(other_username)
     current_reminder_stats_ref = current_user_ref.collection(
         DAILY_STATS_SUBCOLLECTION
     ).document(f"2026-03-03-{run_id}")
@@ -946,6 +1096,12 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     other_memory_mutation_ref = other_user_ref.collection(
         SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION
     ).document(f"memory-mutation-other-delete-{run_id}")
+    current_meal_effect_outbox_ref = current_user_ref.collection(
+        MEAL_EFFECT_OUTBOX_SUBCOLLECTION
+    ).document(f"meal-effect-current-delete-{run_id}")
+    other_meal_effect_outbox_ref = other_user_ref.collection(
+        MEAL_EFFECT_OUTBOX_SUBCOLLECTION
+    ).document(f"meal-effect-other-delete-{run_id}")
     current_ingredient_product_ref = current_user_ref.collection(
         INGREDIENT_PRODUCTS_SUBCOLLECTION
     ).document(f"ingredient-product-current-delete-{run_id}")
@@ -967,11 +1123,17 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         other_memory_tombstone_ref,
         current_memory_mutation_ref,
         other_memory_mutation_ref,
+        current_meal_effect_outbox_ref,
+        other_meal_effect_outbox_ref,
         current_ingredient_product_ref,
         other_ingredient_product_ref,
         current_event_ref,
         other_event_ref,
         anonymous_event_ref,
+        current_rate_limit_ref,
+        other_rate_limit_ref,
+        current_username_ref,
+        other_username_ref,
     ]
 
     bucket = mocker.Mock()
@@ -980,8 +1142,10 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
     mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
 
-    current_user_ref.set({"uid": current_user_id, "username": f"current-{run_id}"})
-    other_user_ref.set({"uid": other_user_id, "username": f"other-{run_id}"})
+    current_user_ref.set({"uid": current_user_id, "username": current_username})
+    other_user_ref.set({"uid": other_user_id, "username": other_username})
+    current_username_ref.set({"uid": current_user_id})
+    other_username_ref.set({"uid": other_user_id})
     current_reminder_stats_ref.set(
         {
             "sendCount": 2,
@@ -1042,6 +1206,20 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
     other_memory_mutation_ref.set(
         {"ownerMarker": f"other-smart-memory-mutation-delete-{run_id}"}
     )
+    current_meal_effect_outbox_ref.set(
+        {
+            "eventId": current_meal_effect_outbox_ref.id,
+            "kind": "meal_saved.streak_sync",
+            "ownerMarker": f"current-meal-effect-delete-{run_id}",
+        }
+    )
+    other_meal_effect_outbox_ref.set(
+        {
+            "eventId": other_meal_effect_outbox_ref.id,
+            "kind": "meal_saved.streak_sync",
+            "ownerMarker": f"other-meal-effect-delete-{run_id}",
+        }
+    )
     current_ingredient_product_ref.set(
         {
             "ingredientProductId": f"ingredient-product-current-delete-{run_id}",
@@ -1082,6 +1260,18 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
             "expiresAt": "2026-04-17T12:00:00Z",
         }
     )
+    current_rate_limit_ref.set(
+        {
+            "ts": [1.0, 2.0],
+            "ownerMarker": f"current-rate-limit-delete-{run_id}",
+        }
+    )
+    other_rate_limit_ref.set(
+        {
+            "ts": [3.0],
+            "ownerMarker": f"other-rate-limit-delete-{run_id}",
+        }
+    )
 
     try:
         await user_account_service.delete_account_data(current_user_id)
@@ -1092,6 +1282,7 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         assert current_memory_settings_ref.get().exists is False
         assert current_memory_tombstone_ref.get().exists is False
         assert current_memory_mutation_ref.get().exists is False
+        assert current_meal_effect_outbox_ref.get().exists is False
         assert current_ingredient_product_ref.get().exists is False
         other_reminder_snapshot = other_reminder_stats_ref.get()
         assert other_reminder_snapshot.exists is True
@@ -1118,6 +1309,10 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
                 f"other-smart-memory-mutation-delete-{run_id}",
             ),
             (
+                other_meal_effect_outbox_ref,
+                f"other-meal-effect-delete-{run_id}",
+            ),
+            (
                 other_ingredient_product_ref,
                 f"other-ingredient-product-delete-{run_id}",
             ),
@@ -1126,7 +1321,17 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
             assert snapshot.exists is True
             assert (snapshot.to_dict() or {})["ownerMarker"] == owner_marker
         assert current_event_ref.get().exists is False
+        assert current_rate_limit_ref.get().exists is False
+        assert current_username_ref.get().exists is False
         assert other_event_ref.get().exists is True
+        other_rate_limit_snapshot = other_rate_limit_ref.get()
+        assert other_rate_limit_snapshot.exists is True
+        assert (other_rate_limit_snapshot.to_dict() or {})["ownerMarker"] == (
+            f"other-rate-limit-delete-{run_id}"
+        )
+        other_username_snapshot = other_username_ref.get()
+        assert other_username_snapshot.exists is True
+        assert (other_username_snapshot.to_dict() or {})["uid"] == other_user_id
         anonymous_snapshot = anonymous_event_ref.get()
         assert anonymous_snapshot.exists is True
         anonymous_payload = anonymous_snapshot.to_dict() or {}
@@ -1137,6 +1342,35 @@ async def test_delete_account_data_scopes_user_hash_telemetry_events(
         bucket.list_blobs.assert_any_call(prefix=f"avatars/{current_user_id}/")
         bucket.list_blobs.assert_any_call(prefix=f"meals/{current_user_id}/")
         bucket.list_blobs.assert_any_call(prefix=f"mealTemplates/{current_user_id}/")
+
+        await user_account_service.delete_account_data(current_user_id)
+
+        assert current_user_ref.get().exists is False
+        assert current_reminder_stats_ref.get().exists is False
+        assert current_memory_item_ref.get().exists is False
+        assert current_memory_candidate_ref.get().exists is False
+        assert current_memory_settings_ref.get().exists is False
+        assert current_memory_tombstone_ref.get().exists is False
+        assert current_memory_mutation_ref.get().exists is False
+        assert current_meal_effect_outbox_ref.get().exists is False
+        assert current_ingredient_product_ref.get().exists is False
+        assert current_event_ref.get().exists is False
+        assert current_rate_limit_ref.get().exists is False
+        assert current_username_ref.get().exists is False
+        assert other_user_ref.get().exists is True
+        assert other_reminder_stats_ref.get().exists is True
+        assert other_memory_item_ref.get().exists is True
+        assert other_memory_candidate_ref.get().exists is True
+        assert other_memory_settings_ref.get().exists is True
+        assert other_memory_tombstone_ref.get().exists is True
+        assert other_memory_mutation_ref.get().exists is True
+        assert other_meal_effect_outbox_ref.get().exists is True
+        assert other_ingredient_product_ref.get().exists is True
+        assert other_event_ref.get().exists is True
+        assert other_rate_limit_ref.get().exists is True
+        assert other_username_ref.get().exists is True
+        assert anonymous_event_ref.get().exists is True
+        assert bucket.list_blobs.call_count == 6
     finally:
         for document_ref in reversed(seeded_refs):
             document_ref.delete()
