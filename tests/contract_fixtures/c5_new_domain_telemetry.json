@@ -9,7 +9,10 @@
     "planned_meal_created",
     "planned_meal_confirmed",
     "planned_meal_changed",
-    "planned_meal_skipped"
+    "planned_meal_skipped",
+    "known_pattern_candidate_shown",
+    "known_pattern_review_started",
+    "known_pattern_candidate_dismissed"
   ],
   "propsByEvent": {
     "memory_candidate_created": [
@@ -73,6 +76,26 @@
       "sourceType",
       "estimateState",
       "surface",
+      "actionResult",
+      "featureState"
+    ],
+    "known_pattern_candidate_shown": [
+      "surface",
+      "confidenceBucket",
+      "sourceCountBucket",
+      "featureState"
+    ],
+    "known_pattern_review_started": [
+      "surface",
+      "confidenceBucket",
+      "sourceCountBucket",
+      "actionResult",
+      "featureState"
+    ],
+    "known_pattern_candidate_dismissed": [
+      "surface",
+      "confidenceBucket",
+      "sourceCountBucket",
       "actionResult",
       "featureState"
     ]
@@ -349,6 +372,72 @@
         "enabled",
         "shadow"
       ]
+    },
+    "known_pattern_candidate_shown": {
+      "surface": [
+        "meal_add_method"
+      ],
+      "confidenceBucket": [
+        "high",
+        "medium"
+      ],
+      "sourceCountBucket": [
+        "3_4",
+        "5_plus"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "known_pattern_review_started": {
+      "surface": [
+        "meal_add_method"
+      ],
+      "confidenceBucket": [
+        "high",
+        "medium"
+      ],
+      "sourceCountBucket": [
+        "3_4",
+        "5_plus"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
+    },
+    "known_pattern_candidate_dismissed": {
+      "surface": [
+        "meal_add_method"
+      ],
+      "confidenceBucket": [
+        "high",
+        "medium"
+      ],
+      "sourceCountBucket": [
+        "3_4",
+        "5_plus"
+      ],
+      "actionResult": [
+        "blocked",
+        "failed",
+        "queued",
+        "succeeded"
+      ],
+      "featureState": [
+        "disabled",
+        "enabled",
+        "shadow"
+      ]
     }
   },
   "disallowedEventNames": [
@@ -357,16 +446,23 @@
     "memory_prompt_sent",
     "planned_meal_generated",
     "planned_meal_raw_saved",
-    "planning_prompt_sent"
+    "planning_prompt_sent",
+    "known_pattern_candidate_debugged",
+    "known_pattern_raw_candidate_saved",
+    "known_pattern_prompt_sent"
   ],
   "disallowedPropNames": [
     "mealName",
     "ingredientName",
     "notes",
     "candidateId",
+    "subjectKeyHash",
+    "createdByRuleVersion",
+    "sourceHash",
     "memoryId",
     "plannedMealId",
     "sourceRef",
+    "sourceRefs",
     "rawReason",
     "rawPrompt",
     "rawResponse",

@@ -77,6 +77,9 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "planned_meal_confirmed",
         "planned_meal_changed",
         "planned_meal_skipped",
+        "known_pattern_candidate_shown",
+        "known_pattern_review_started",
+        "known_pattern_candidate_dismissed",
     }
 )
 
@@ -243,6 +246,9 @@ C5_PLANNED_MEAL_SOURCE_TYPES = frozenset(
     {"manual", "saved_meal", "recipe", "ingredient_product_draft"}
 )
 C5_PLANNED_MEAL_ESTIMATE_STATES = frozenset({"known", "partial", "unknown"})
+C5_KNOWN_PATTERN_SURFACES = frozenset({"meal_add_method"})
+C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS = frozenset({"medium", "high"})
+C5_KNOWN_PATTERN_COUNT_BUCKETS = frozenset({"3_4", "5_plus"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -367,6 +373,27 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     ),
     "planned_meal_skipped": frozenset(
         {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "known_pattern_candidate_shown": frozenset(
+        {"surface", "confidenceBucket", "sourceCountBucket", "featureState"}
+    ),
+    "known_pattern_review_started": frozenset(
+        {
+            "surface",
+            "confidenceBucket",
+            "sourceCountBucket",
+            "actionResult",
+            "featureState",
+        }
+    ),
+    "known_pattern_candidate_dismissed": frozenset(
+        {
+            "surface",
+            "confidenceBucket",
+            "sourceCountBucket",
+            "actionResult",
+            "featureState",
+        }
     ),
 }
 
@@ -568,6 +595,26 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
         "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
         "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_candidate_shown": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_review_started": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_candidate_dismissed": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
         "actionResult": C5_ACTION_RESULTS,
         "featureState": C5_FEATURE_STATES,
     },

@@ -1557,6 +1557,73 @@ def test_telemetry_batch_accepts_c5_smart_memory_and_planning_events(
         assert firestore_client.storage[f"evt-c5-{event_name}"]["props"] == props
 
 
+def test_telemetry_batch_accepts_c5_known_pattern_events(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    events: tuple[tuple[str, dict[str, object]], ...] = (
+        (
+            "known_pattern_candidate_shown",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "known_pattern_review_started",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "high",
+                "sourceCountBucket": "5_plus",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "known_pattern_candidate_dismissed",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "actionResult": "queued",
+                "featureState": "shadow",
+            },
+        ),
+    )
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id=f"evt-c5-{event_name}",
+                actor={"userId": "user-123"},
+            ),
+            "name": event_name,
+            "props": props,
+        }
+        for event_name, props in events
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == len(events)
+    assert response.json()["rejectedCount"] == 0
+    for event_name, props in events:
+        assert firestore_client.storage[f"evt-c5-{event_name}"]["props"] == props
+
+
 def test_telemetry_batch_rejects_c5_unbounded_enums(
     mocker: MockerFixture,
     auth_headers: AuthHeaders,
@@ -1631,6 +1698,38 @@ def test_telemetry_batch_rejects_c5_unbounded_enums(
                 "featureState": "private beta user",
             },
         },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-surface",
+            "name": "known_pattern_candidate_shown",
+            "props": {
+                "surface": "raw card name",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-count",
+            "name": "known_pattern_review_started",
+            "props": {
+                "surface": "meal_add_method",
+                "confidenceBucket": "high",
+                "sourceCountBucket": "4 exact meals",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-confidence",
+            "name": "known_pattern_candidate_dismissed",
+            "props": {
+                "surface": "meal_add_method",
+                "confidenceBucket": "low",
+                "sourceCountBucket": "3_4",
+                "actionResult": "queued",
+                "featureState": "enabled",
+            },
+        },
     )
 
     for event in invalid_events:
@@ -1658,9 +1757,13 @@ def test_telemetry_batch_rejects_c5_forbidden_props(
         ("ingredientName", "Oats"),
         ("notes", "private meal note"),
         ("candidateId", "candidate-1"),
+        ("subjectKeyHash", "subject-hash-1"),
+        ("createdByRuleVersion", "known-pattern-v2-content-signature"),
+        ("sourceHash", "source-hash-1"),
         ("memoryId", "memory-1"),
         ("plannedMealId", "planned-1"),
         ("sourceRef", "source-ref-1"),
+        ("sourceRefs", ["source-ref-1"]),
         ("rawReason", "Skipped because the note said oats"),
         ("rawPrompt", "provider prompt"),
         ("rawResponse", "provider response"),
@@ -1685,14 +1788,28 @@ def test_telemetry_batch_rejects_c5_forbidden_props(
         "surface": "planning",
         "featureState": "disabled",
     }
+    known_pattern_props: dict[str, object] = {
+        "surface": "meal_add_method",
+        "confidenceBucket": "medium",
+        "sourceCountBucket": "3_4",
+        "featureState": "enabled",
+    }
 
     for index, (prop_key, prop_value) in enumerate(forbidden_props):
         event_name = (
             "memory_candidate_created"
-            if index % 2 == 0
+            if index % 3 == 0
             else "planned_meal_created"
+            if index % 3 == 1
+            else "known_pattern_candidate_shown"
         )
-        base_props = memory_props if event_name == "memory_candidate_created" else planning_props
+        base_props = (
+            memory_props
+            if event_name == "memory_candidate_created"
+            else planning_props
+            if event_name == "planned_meal_created"
+            else known_pattern_props
+        )
         response = client.post(
             "/api/v2/telemetry/events/batch",
             headers=auth_headers("user-123"),

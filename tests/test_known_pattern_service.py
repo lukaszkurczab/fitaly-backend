@@ -155,7 +155,29 @@ def _meal(
     day_key: str = "2026-06-01",
     logged_at: str = "2026-06-01T07:30:00.000Z",
     deleted: bool = False,
+    ingredients: list[dict[str, object]] | None = None,
+    totals: dict[str, float] | None = None,
 ) -> dict[str, object]:
+    meal_ingredients = ingredients or [
+        {
+            "name": "Płatki owsiane",
+            "amount": 50,
+            "unit": "g",
+            "kcal": 180,
+            "protein": 6,
+            "fat": 3,
+            "carbs": 32,
+        },
+        {
+            "name": "Jogurt naturalny",
+            "amount": 150,
+            "unit": "g",
+            "kcal": 90,
+            "protein": 9,
+            "fat": 4,
+            "carbs": 6,
+        },
+    ]
     return {
         "id": meal_id,
         "type": "breakfast",
@@ -163,9 +185,9 @@ def _meal(
         "dayKey": day_key,
         "loggedAt": logged_at,
         "deleted": deleted,
-        "ingredients": [{"name": "private ingredient"}],
+        "ingredients": meal_ingredients,
         "notes": "private note",
-        "totals": {"kcal": 420, "protein": 18, "fat": 12, "carbs": 56},
+        "totals": totals or {"kcal": 270, "protein": 15, "fat": 7, "carbs": 38},
     }
 
 
@@ -205,10 +227,494 @@ def test_known_pattern_candidates_return_bounded_repeated_meal_candidate() -> No
 
     payload = response.model_dump_json()
     assert "Owsianka" not in payload
-    assert "private ingredient" not in payload
+    assert "Płatki" not in payload
     assert "private note" not in payload
     assert "kcal" not in payload
     assert "meal-1" not in payload
+
+
+def test_known_pattern_candidates_do_not_group_generic_name_with_different_content() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                name="Obiad",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T12:30:00Z",
+                ingredients=[
+                    {"name": "Ryż", "amount": 120, "unit": "g", "kcal": 150},
+                ],
+                totals={"kcal": 150, "protein": 3, "fat": 1, "carbs": 32},
+            ),
+            _meal(
+                "meal-2",
+                name="Obiad",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T12:30:00Z",
+                ingredients=[
+                    {"name": "Makaron", "amount": 140, "unit": "g", "kcal": 210},
+                ],
+                totals={"kcal": 210, "protein": 7, "fat": 2, "carbs": 42},
+            ),
+            _meal(
+                "meal-3",
+                name="Obiad",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T12:30:00Z",
+                ingredients=[
+                    {"name": "Ziemniaki", "amount": 180, "unit": "g", "kcal": 160},
+                ],
+                totals={"kcal": 160, "protein": 4, "fat": 1, "carbs": 35},
+            ),
+        ],
+        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_group_matching_content_despite_name_and_order() -> None:
+    ingredients: list[dict[str, object]] = [
+        {
+            "name": "Płatki owsiane",
+            "amount": 51,
+            "unit": "g",
+            "kcal": 180,
+            "protein": 6,
+            "fat": 3,
+            "carbs": 32,
+        },
+        {
+            "name": "Jogurt naturalny",
+            "amount": 149,
+            "unit": "g",
+            "kcal": 90,
+            "protein": 9,
+            "fat": 4,
+            "carbs": 6,
+        },
+    ]
+
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                name="Owsianka",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=ingredients,
+            ),
+            _meal(
+                "meal-2",
+                name="Śniadanie",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=list(reversed(ingredients)),
+            ),
+            _meal(
+                "meal-3",
+                name="Oats bowl",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=ingredients,
+            ),
+        ],
+        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert response.queryEcho.ruleVersion == "known-pattern-v2-content-signature"
+    assert len(response.items) == 1
+    assert response.items[0].createdByRuleVersion == "known-pattern-v2-content-signature"
+
+
+def test_known_pattern_candidates_group_pl_en_ingredient_aliases() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                name="Owsianka",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                ],
+            ),
+            _meal(
+                "meal-2",
+                name="Oats bowl",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[
+                    {"name": "Oats", "amount": 50, "unit": "g"},
+                    {"name": "Natural yogurt", "amount": 150, "unit": "g"},
+                ],
+            ),
+            _meal(
+                "meal-3",
+                name="Śniadanie",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Rolled oats", "amount": 50, "unit": "g"},
+                    {"name": "Plain yogurt", "amount": 150, "unit": "g"},
+                ],
+            ),
+        ],
+        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert len(response.items) == 1
+
+
+def test_known_pattern_candidates_group_bounded_partial_ingredient_overlap() -> None:
+    base_totals: dict[str, float] = {
+        "kcal": 320.0,
+        "protein": 18.0,
+        "fat": 7.0,
+        "carbs": 44.0,
+    }
+
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Banan", "amount": 80, "unit": "g"},
+                ],
+                totals=base_totals,
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Jabłko", "amount": 80, "unit": "g"},
+                ],
+                totals=base_totals,
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Truskawki", "amount": 80, "unit": "g"},
+                ],
+                totals=base_totals,
+            ),
+        ],
+        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert len(response.items) == 1
+    assert response.items[0].confidenceBucket == "medium"
+
+
+def test_known_pattern_candidates_fail_closed_for_insufficient_overlap() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Banan", "amount": 80, "unit": "g"},
+                ],
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Tuńczyk", "amount": 80, "unit": "g"},
+                ],
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Tofu", "amount": 80, "unit": "g"},
+                ],
+            ),
+        ]
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_fail_closed_for_macro_drifted_partial_overlap() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Banan", "amount": 80, "unit": "g"},
+                ],
+                totals={"kcal": 320, "protein": 18, "fat": 7, "carbs": 44},
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Jabłko", "amount": 80, "unit": "g"},
+                ],
+                totals={"kcal": 520, "protein": 18, "fat": 7, "carbs": 84},
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                    {"name": "Truskawki", "amount": 80, "unit": "g"},
+                ],
+                totals={"kcal": 720, "protein": 18, "fat": 7, "carbs": 124},
+            ),
+        ]
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_fail_closed_for_skipped_raw_ingredient_rows() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"amount": 150, "unit": "g"},
+                ],
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=cast(
+                    list[dict[str, object]],
+                    [
+                        {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                        "not-an-ingredient",
+                    ],
+                ),
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny", "unit": "g"},
+                ],
+            ),
+        ],
+        now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_apply_legacy_alias_decline_control() -> None:
+    meals = [
+        _meal(
+            "meal-1",
+            day_key="2026-06-01",
+            logged_at="2026-06-01T07:30:00Z",
+            ingredients=[
+                {"name": "Oats", "amount": 50, "unit": "g"},
+                {"name": "Natural yogurt", "amount": 150, "unit": "g"},
+            ],
+        ),
+        _meal(
+            "meal-2",
+            day_key="2026-06-02",
+            logged_at="2026-06-02T07:30:00Z",
+            ingredients=[
+                {"name": "Oats", "amount": 50, "unit": "g"},
+                {"name": "Natural yogurt", "amount": 150, "unit": "g"},
+            ],
+        ),
+        _meal(
+            "meal-3",
+            day_key="2026-06-03",
+            logged_at="2026-06-03T07:30:00Z",
+            ingredients=[
+                {"name": "Oats", "amount": 50, "unit": "g"},
+                {"name": "Natural yogurt", "amount": 150, "unit": "g"},
+            ],
+        ),
+    ]
+    now = datetime(2026, 6, 10, tzinfo=timezone.utc)
+    candidate = evaluate_known_pattern_candidates(meals, now=now).items[0]
+    legacy_subject_key = (
+        "ingredients:natural yogurt:g:150,oats:g:50|"
+        "macros:kcal:250|p:15|f:5|c:40"
+    )
+    legacy_subject_hash = known_pattern_service._sha256_short(
+        f"{known_pattern_service.KNOWN_PATTERN_RULE_VERSION}|{legacy_subject_key}"
+    )
+
+    response = evaluate_known_pattern_candidates(
+        meals,
+        now=now,
+        controls=[
+            {
+                "subjectKeyHash": legacy_subject_hash,
+                "createdByRuleVersion": candidate.createdByRuleVersion,
+                "state": "declined",
+                "expiresAt": candidate.expiresAt,
+            }
+        ],
+    )
+
+    assert legacy_subject_hash != candidate.subjectKeyHash
+    assert response.items == []
+
+
+def test_known_pattern_candidates_apply_partial_overlap_decline_control() -> None:
+    base_totals: dict[str, float] = {
+        "kcal": 320.0,
+        "protein": 18.0,
+        "fat": 7.0,
+        "carbs": 44.0,
+    }
+    meals = [
+        _meal(
+            "meal-1",
+            day_key="2026-06-01",
+            logged_at="2026-06-01T07:30:00Z",
+            ingredients=[
+                {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                {"name": "Banan", "amount": 80, "unit": "g"},
+            ],
+            totals=base_totals,
+        ),
+        _meal(
+            "meal-2",
+            day_key="2026-06-02",
+            logged_at="2026-06-02T07:30:00Z",
+            ingredients=[
+                {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                {"name": "Jabłko", "amount": 80, "unit": "g"},
+            ],
+            totals=base_totals,
+        ),
+        _meal(
+            "meal-3",
+            day_key="2026-06-03",
+            logged_at="2026-06-03T07:30:00Z",
+            ingredients=[
+                {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                {"name": "Jogurt naturalny", "amount": 150, "unit": "g"},
+                {"name": "Truskawki", "amount": 80, "unit": "g"},
+            ],
+            totals=base_totals,
+        ),
+    ]
+    now = datetime(2026, 6, 10, tzinfo=timezone.utc)
+    candidate = evaluate_known_pattern_candidates(meals, now=now).items[0]
+
+    response = evaluate_known_pattern_candidates(
+        meals,
+        now=now,
+        controls=[
+            {
+                "subjectKeyHash": candidate.subjectKeyHash,
+                "createdByRuleVersion": candidate.createdByRuleVersion,
+                "state": "declined",
+                "expiresAt": candidate.expiresAt,
+            }
+        ],
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_fail_closed_without_compatible_quantified_content() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[{"name": "Płatki owsiane"}],
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[{"name": "Płatki owsiane", "amount": 50}],
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[{"name": "Płatki owsiane", "unit": "g"}],
+            ),
+        ]
+    )
+
+    assert response.items == []
+
+
+def test_known_pattern_candidates_fail_closed_for_partial_unquantified_content() -> None:
+    response = evaluate_known_pattern_candidates(
+        [
+            _meal(
+                "meal-1",
+                day_key="2026-06-01",
+                logged_at="2026-06-01T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny"},
+                ],
+            ),
+            _meal(
+                "meal-2",
+                day_key="2026-06-02",
+                logged_at="2026-06-02T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny"},
+                ],
+            ),
+            _meal(
+                "meal-3",
+                day_key="2026-06-03",
+                logged_at="2026-06-03T07:30:00Z",
+                ingredients=[
+                    {"name": "Płatki owsiane", "amount": 50, "unit": "g"},
+                    {"name": "Jogurt naturalny"},
+                ],
+            ),
+        ]
+    )
+
+    assert response.items == []
 
 
 def test_known_pattern_candidates_apply_shown_and_declined_controls() -> None:
@@ -369,7 +875,7 @@ def test_mark_control_declines_candidate_without_meal_write(
 
     persisted = json.dumps(result["document"], sort_keys=True)
     assert "Owsianka" not in persisted
-    assert "private ingredient" not in persisted
+    assert "Płatki" not in persisted
     assert "private note" not in persisted
     assert "kcal" not in persisted
 
@@ -456,7 +962,7 @@ def test_open_review_draft_marks_shown_and_returns_explicit_draft_only(
     assert result["control"]["state"] == "shown"
     assert result["draft"].name == "Owsianka z owocami"
     assert result["draft"].type == "breakfast"
-    assert result["draft"].ingredients[0].name == "private ingredient"
+    assert result["draft"].ingredients[0].name == "Płatki owsiane"
     assert result["draft"].notes is None
     assert result["draft"].tags == []
     assert "meals" not in user_ref.collection_calls

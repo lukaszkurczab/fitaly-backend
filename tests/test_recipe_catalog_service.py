@@ -19,6 +19,7 @@ from app.services.recipe_catalog_service import (
     evaluate_default_recipe_catalog_coverage,
     evaluate_recipe_catalog,
 )
+from tests.recipe_catalog_fixtures import recipe_catalog_coverage_cases
 
 
 def _recipe(
@@ -195,6 +196,19 @@ def test_empty_catalog_is_explicit_not_low_results() -> None:
     assert response.lowResults is False
 
 
+def test_default_catalog_is_true_empty_state_without_injected_content() -> None:
+    response = evaluate_recipe_catalog(_request(allergies=["peanuts"]))
+
+    assert response.items == []
+    assert response.totalCatalogCount == 0
+    assert response.visibleCount == 0
+    assert response.hiddenHardExclusionCount == 0
+    assert response.unknownRevealRequiredCount == 0
+    assert response.emptyCatalog is True
+    assert response.lowResults is False
+    assert response.queryEcho.lowResultsThreshold == 0
+
+
 def test_unknown_flags_require_reveal_and_are_not_treated_as_safe() -> None:
     catalog = [
         _recipe(
@@ -297,8 +311,22 @@ def test_nutrition_snapshot_thresholds_are_deterministic() -> None:
     ]
 
 
-def test_default_catalog_coverage_gate_reports_accepted_cases() -> None:
+def test_default_coverage_gate_reports_empty_production_catalog_without_fixture() -> None:
     report = evaluate_default_recipe_catalog_coverage()
+
+    assert len(report) == 1
+    assert report[0].case_id == "empty-catalog"
+    assert report[0].total_catalog_count == 0
+    assert report[0].returned_item_count == 0
+    assert report[0].empty_catalog is True
+    assert report[0].low_results is False
+    assert report[0].passes_coverage_gate is True
+
+
+def test_fixture_catalog_coverage_gate_reports_accepted_cases() -> None:
+    report = evaluate_default_recipe_catalog_coverage(
+        cases=recipe_catalog_coverage_cases()
+    )
     rows = {row.case_id: row for row in report}
 
     assert set(rows) == {
@@ -350,8 +378,13 @@ def test_default_catalog_coverage_gate_reports_accepted_cases() -> None:
     assert combined.hidden_hard_exclusion_count > 0
 
 
-def test_default_catalog_coverage_gate_reports_low_empty_and_unknown_states() -> None:
-    rows = {row.case_id: row for row in evaluate_default_recipe_catalog_coverage()}
+def test_fixture_catalog_coverage_gate_reports_low_empty_and_unknown_states() -> None:
+    rows = {
+        row.case_id: row
+        for row in evaluate_default_recipe_catalog_coverage(
+            cases=recipe_catalog_coverage_cases()
+        )
+    }
 
     low_results = rows["low-results"]
     assert low_results.query_echo.activeRestrictions == ["pescatarian"]

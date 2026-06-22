@@ -893,6 +893,9 @@ class TestC5NewDomainTelemetryContract:
             "planned_meal_confirmed",
             "planned_meal_changed",
             "planned_meal_skipped",
+            "known_pattern_candidate_shown",
+            "known_pattern_review_started",
+            "known_pattern_candidate_dismissed",
         }
         assert set(fixture["eventNames"]) == expected
         assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
@@ -963,6 +966,26 @@ class TestC5NewDomainTelemetryContract:
                 "actionResult",
                 "featureState",
             },
+            "known_pattern_candidate_shown": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "featureState",
+            },
+            "known_pattern_review_started": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "actionResult",
+                "featureState",
+            },
+            "known_pattern_candidate_dismissed": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "actionResult",
+                "featureState",
+            },
         }
         assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
         for event_name, prop_names in expected.items():
@@ -987,6 +1010,9 @@ class TestC5NewDomainTelemetryContract:
         feature_states = {"disabled", "enabled", "shadow"}
         source_types = {"ingredient_product_draft", "manual", "recipe", "saved_meal"}
         estimate_states = {"known", "partial", "unknown"}
+        known_pattern_surfaces = {"meal_add_method"}
+        known_pattern_confidence_buckets = {"high", "medium"}
+        known_pattern_count_buckets = {"3_4", "5_plus"}
         expected = {
             "memory_candidate_created": {
                 "memoryType": memory_types,
@@ -1049,6 +1075,26 @@ class TestC5NewDomainTelemetryContract:
                 "sourceType": source_types,
                 "estimateState": estimate_states,
                 "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "known_pattern_candidate_shown": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
+                "featureState": feature_states,
+            },
+            "known_pattern_review_started": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "known_pattern_candidate_dismissed": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
                 "actionResult": action_results,
                 "featureState": feature_states,
             },

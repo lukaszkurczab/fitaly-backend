@@ -9,11 +9,13 @@ lifetime.
 
 from functools import lru_cache
 import logging
+import os
 import re
 from urllib.parse import quote
 
 import firebase_admin
 from firebase_admin import credentials, firestore as admin_firestore, storage as admin_storage
+from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 from google.cloud.storage import bucket as storage_bucket
 
@@ -21,6 +23,45 @@ from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 
 logger = logging.getLogger(__name__)
+
+
+class _AnonymousFirebaseCredential(credentials.Base):
+    def __init__(self) -> None:
+        super().__init__()
+        self._credential = AnonymousCredentials()
+
+    def get_credential(self) -> AnonymousCredentials:
+        return self._credential
+
+
+def _has_firebase_credentials_configured() -> bool:
+    if settings.FIREBASE_CLIENT_EMAIL and settings.FIREBASE_PRIVATE_KEY:
+        return True
+    return bool(settings.GOOGLE_APPLICATION_CREDENTIALS)
+
+
+def _uses_firebase_data_emulator() -> bool:
+    return any(
+        os.getenv(name, "").strip()
+        for name in (
+            "FIRESTORE_EMULATOR_HOST",
+            "FIREBASE_STORAGE_EMULATOR_HOST",
+        )
+    )
+
+
+def _allows_anonymous_emulator_credentials() -> bool:
+    return settings.ENVIRONMENT in {"local", "development"}
+
+
+def _build_firebase_options() -> dict[str, str]:
+    options = {"projectId": settings.FIREBASE_PROJECT_ID}
+    storage_bucket = settings.FIREBASE_STORAGE_BUCKET.strip()
+    if not storage_bucket and settings.FIREBASE_PROJECT_ID:
+        storage_bucket = f"{settings.FIREBASE_PROJECT_ID}.appspot.com"
+    if storage_bucket:
+        options["storageBucket"] = storage_bucket
+    return options
 
 
 def _normalize_firebase_private_key(raw_private_key: str) -> str:
@@ -73,13 +114,19 @@ def init_firebase() -> firebase_admin.App:
         return firebase_admin.get_app()
 
     try:
+        options = _build_firebase_options()
+        if (
+            _uses_firebase_data_emulator()
+            and not _has_firebase_credentials_configured()
+            and _allows_anonymous_emulator_credentials()
+            and settings.FIREBASE_PROJECT_ID.strip()
+        ):
+            return firebase_admin.initialize_app(
+                credential=_AnonymousFirebaseCredential(),
+                options=options,
+            )
+
         credential = _build_firebase_credential()
-        options = {"projectId": settings.FIREBASE_PROJECT_ID}
-        storage_bucket = settings.FIREBASE_STORAGE_BUCKET.strip()
-        if not storage_bucket and settings.FIREBASE_PROJECT_ID:
-            storage_bucket = f"{settings.FIREBASE_PROJECT_ID}.appspot.com"
-        if storage_bucket:
-            options["storageBucket"] = storage_bucket
         return firebase_admin.initialize_app(
             credential=credential,
             options=options,

@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     SMART_MEMORY_APPLY_ENABLED: bool = False
     KNOWN_PATTERNS_ENABLED: bool = False
     RECIPE_CATALOG_ENABLED: bool = False
+    RECIPE_CATALOG_CONTENT_APPROVED: bool = False
+    RECIPE_CATALOG_CONTENT_PATH: str = ""
     PLANNED_MEALS_ENABLED: bool = False
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)

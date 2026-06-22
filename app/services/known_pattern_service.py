@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from typing import Any, TypedDict, cast
 
 from firebase_admin.exceptions import FirebaseError
@@ -39,7 +40,7 @@ from app.services import meal_service
 
 logger = logging.getLogger(__name__)
 
-KNOWN_PATTERN_RULE_VERSION = "known-pattern-v1"
+KNOWN_PATTERN_RULE_VERSION = "known-pattern-v2-content-signature"
 KNOWN_PATTERN_MIN_SOURCE_COUNT = 3
 KNOWN_PATTERN_MIN_DISTINCT_DAYS = 3
 KNOWN_PATTERN_MAX_HISTORY_ITEMS = 100
@@ -47,9 +48,42 @@ KNOWN_PATTERN_MAX_SOURCE_REFS = 5
 KNOWN_PATTERN_DEFAULT_LIMIT = 5
 KNOWN_PATTERN_EXPIRES_AFTER_DAYS = 14
 KNOWN_PATTERN_MAX_CONTROL_DOCS = 100
+KNOWN_PATTERN_AMOUNT_BUCKET_SIZE = 10
+KNOWN_PATTERN_MACRO_KCAL_BUCKET_SIZE = 50
+KNOWN_PATTERN_MACRO_GRAM_BUCKET_SIZE = 5
+KNOWN_PATTERN_INGREDIENT_OVERLAP_THRESHOLD = 2 / 3
+KNOWN_PATTERN_MIN_SHARED_INGREDIENT_TOKENS = 2
+KNOWN_PATTERN_INGREDIENT_ALIASES = {
+    "apple": "jabłko",
+    "apples": "jabłko",
+    "banana": "banan",
+    "bananas": "banan",
+    "berries": "owoce jagodowe",
+    "blueberries": "borówki",
+    "natural yogurt": "jogurt naturalny",
+    "oat flakes": "płatki owsiane",
+    "oats": "płatki owsiane",
+    "plain yogurt": "jogurt naturalny",
+    "porridge oats": "płatki owsiane",
+    "rolled oats": "płatki owsiane",
+    "strawberries": "truskawki",
+}
 
 _WORD_RE = re.compile(r"[^a-z0-9ąćęłńóśźż]+", re.IGNORECASE)
 _SPACE_RE = re.compile(r"\s+")
+_POLISH_ASCII_TRANSLATION = str.maketrans(
+    {
+        "ą": "a",
+        "ć": "c",
+        "ę": "e",
+        "ł": "l",
+        "ń": "n",
+        "ó": "o",
+        "ś": "s",
+        "ź": "z",
+        "ż": "z",
+    }
+)
 
 
 class KnownPatternNotFoundError(ValueError):
@@ -82,12 +116,17 @@ class _CandidateEvidence:
     logged_at_dt: datetime
     ingredients: list[MealIngredient]
     totals: MealTotals
+    ingredient_identity_tokens: tuple[str, ...]
+    macro_identity_token: str
+    identity_signature: str
+    legacy_identity_signature: str
 
 
 @dataclass(frozen=True, slots=True)
 class _EvaluatedCandidate:
     candidate: KnownPatternCandidate
     evidence_items: list[_CandidateEvidence]
+    control_subject_key_hashes: tuple[str, ...]
 
 
 def _sha256_short(value: str) -> str:
@@ -131,6 +170,107 @@ def _normalize_name(value: object) -> str | None:
     normalized = _WORD_RE.sub(" ", value.casefold())
     normalized = _SPACE_RE.sub(" ", normalized).strip()
     return normalized if len(normalized) >= 2 else None
+
+
+def _ascii_lookup_key(value: str) -> str:
+    translated = value.translate(_POLISH_ASCII_TRANSLATION)
+    folded = unicodedata.normalize("NFKD", translated)
+    ascii_only = "".join(char for char in folded if not unicodedata.combining(char))
+    normalized = _WORD_RE.sub(" ", ascii_only.casefold())
+    return _SPACE_RE.sub(" ", normalized).strip()
+
+
+def _canonical_ingredient_name(normalized_name: str) -> str:
+    return KNOWN_PATTERN_INGREDIENT_ALIASES.get(
+        _ascii_lookup_key(normalized_name),
+        normalized_name,
+    )
+
+
+def _bucket_float(value: float, bucket_size: int) -> int:
+    if value <= 0:
+        return 0
+    return int((value + bucket_size / 2) // bucket_size) * bucket_size
+
+
+def _ingredient_identity_token(
+    ingredient: MealIngredient,
+    *,
+    canonicalize_aliases: bool = True,
+) -> str | None:
+    normalized_name = _normalize_name(ingredient.name)
+    if normalized_name is None:
+        return None
+    if ingredient.unit not in {"g", "ml"} or ingredient.amount <= 0:
+        return None
+    canonical_name = (
+        _canonical_ingredient_name(normalized_name)
+        if canonicalize_aliases
+        else normalized_name
+    )
+
+    amount_bucket = _bucket_float(
+        ingredient.amount,
+        KNOWN_PATTERN_AMOUNT_BUCKET_SIZE,
+    )
+    if amount_bucket <= 0:
+        return None
+    return f"{canonical_name}:{ingredient.unit}:{amount_bucket}"
+
+
+def _macro_identity_token(totals: MealTotals) -> str:
+    return "|".join(
+        (
+            f"kcal:{_bucket_float(totals.kcal, KNOWN_PATTERN_MACRO_KCAL_BUCKET_SIZE)}",
+            f"p:{_bucket_float(totals.protein, KNOWN_PATTERN_MACRO_GRAM_BUCKET_SIZE)}",
+            f"f:{_bucket_float(totals.fat, KNOWN_PATTERN_MACRO_GRAM_BUCKET_SIZE)}",
+            f"c:{_bucket_float(totals.carbs, KNOWN_PATTERN_MACRO_GRAM_BUCKET_SIZE)}",
+        )
+    )
+
+
+def _content_identity_signature(
+    ingredients: list[MealIngredient],
+    totals: MealTotals,
+) -> str | None:
+    parts = _content_identity_parts(ingredients, totals)
+    if parts is None:
+        return None
+    ingredient_tokens, macro_token = parts
+    return _content_identity_signature_from_parts(ingredient_tokens, macro_token)
+
+
+def _content_identity_parts(
+    ingredients: list[MealIngredient],
+    totals: MealTotals,
+    *,
+    canonicalize_aliases: bool = True,
+) -> tuple[tuple[str, ...], str] | None:
+    ingredient_tokens: list[str] = []
+    for ingredient in ingredients:
+        token = _ingredient_identity_token(
+            ingredient,
+            canonicalize_aliases=canonicalize_aliases,
+        )
+        if token is None:
+            return None
+        ingredient_tokens.append(token)
+    if not ingredient_tokens:
+        return None
+    ingredient_tokens.sort()
+    return (tuple(ingredient_tokens), _macro_identity_token(totals))
+
+
+def _content_identity_signature_from_parts(
+    ingredient_tokens: tuple[str, ...],
+    macro_token: str,
+) -> str:
+    return "|".join(
+        (
+            f"ingredients:{','.join(ingredient_tokens)}",
+            f"macros:{macro_token}",
+        )
+    )
 
 
 def _normalize_meal_type(value: object) -> str:
@@ -219,6 +359,54 @@ def _normalize_draft_ingredients(value: object) -> list[MealIngredient]:
     return ingredients
 
 
+def _normalize_evidence_ingredients(value: object) -> list[MealIngredient] | None:
+    if not isinstance(value, list):
+        return None
+
+    raw_items = cast(list[object], value)
+    if not raw_items or len(raw_items) > 50:
+        return None
+
+    ingredients: list[MealIngredient] = []
+    for index, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            return None
+        item = cast(dict[str, Any], raw_item)
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        unit = item.get("unit")
+        if unit not in {"g", "ml"}:
+            return None
+        amount = _coerce_float(item.get("amount"))
+        if amount <= 0:
+            return None
+
+        ingredient_id = item.get("id")
+        if not isinstance(ingredient_id, str) or not ingredient_id.strip():
+            ingredient_id = _sha256_short(f"known-pattern-ingredient|{index}|{name}")
+        try:
+            ingredient = MealIngredient.model_validate(
+                {
+                    "id": ingredient_id,
+                    "name": name.strip(),
+                    "amount": amount,
+                    "unit": unit,
+                    "kcal": _coerce_float(item.get("kcal")),
+                    "protein": _coerce_float(item.get("protein")),
+                    "fat": _coerce_float(item.get("fat")),
+                    "carbs": _coerce_float(item.get("carbs")),
+                }
+            )
+        except ValueError:
+            return None
+        if _ingredient_identity_token(ingredient) is None:
+            return None
+        ingredients.append(ingredient)
+
+    return ingredients
+
+
 def _normalize_draft_totals(
     value: object,
     ingredients: list[MealIngredient],
@@ -248,7 +436,29 @@ def _evidence_from_meal(raw_meal: object) -> _CandidateEvidence | None:
         return None
 
     logged_at = _format_instant(logged_at_dt)
-    ingredients = _normalize_draft_ingredients(meal.get("ingredients"))
+    ingredients = _normalize_evidence_ingredients(meal.get("ingredients"))
+    if ingredients is None:
+        return None
+    totals = _normalize_draft_totals(meal.get("totals"), ingredients)
+    identity_parts = _content_identity_parts(ingredients, totals)
+    if identity_parts is None:
+        return None
+    ingredient_identity_tokens, macro_identity_token = identity_parts
+    identity_signature = _content_identity_signature_from_parts(
+        ingredient_identity_tokens,
+        macro_identity_token,
+    )
+    legacy_identity_parts = _content_identity_parts(
+        ingredients,
+        totals,
+        canonicalize_aliases=False,
+    )
+    if legacy_identity_parts is None:
+        return None
+    legacy_identity_signature = _content_identity_signature_from_parts(
+        legacy_identity_parts[0],
+        legacy_identity_parts[1],
+    )
     return _CandidateEvidence(
         meal_id=_meal_id(meal, normalized_name, logged_at),
         meal_type=_normalize_meal_type(meal.get("type")),
@@ -260,7 +470,11 @@ def _evidence_from_meal(raw_meal: object) -> _CandidateEvidence | None:
         logged_at=logged_at,
         logged_at_dt=logged_at_dt,
         ingredients=ingredients,
-        totals=_normalize_draft_totals(meal.get("totals"), ingredients),
+        totals=totals,
+        ingredient_identity_tokens=ingredient_identity_tokens,
+        macro_identity_token=macro_identity_token,
+        identity_signature=identity_signature,
+        legacy_identity_signature=legacy_identity_signature,
     )
 
 
@@ -275,6 +489,10 @@ def _source_ref(evidence: _CandidateEvidence) -> KnownPatternSourceRef:
             f"{KNOWN_PATTERN_RULE_VERSION}|meal|{evidence.meal_id}|{evidence.logged_at}"
         ),
     )
+
+
+def _subject_key_hash(subject_key: str) -> str:
+    return _sha256_short(f"{KNOWN_PATTERN_RULE_VERSION}|{subject_key}")
 
 
 def _candidate_from_group(
@@ -293,7 +511,7 @@ def _candidate_from_group(
     sorted_evidence = sorted(evidence_items, key=lambda item: item.logged_at_dt)
     first_seen = sorted_evidence[0].logged_at_dt
     last_seen = sorted_evidence[-1].logged_at_dt
-    subject_hash = _sha256_short(f"{KNOWN_PATTERN_RULE_VERSION}|{subject_key}")
+    subject_hash = _subject_key_hash(subject_key)
     candidate_hash = _sha256_short(f"{KNOWN_PATTERN_RULE_VERSION}|candidate|{subject_hash}")
     expires_at = last_seen + timedelta(days=KNOWN_PATTERN_EXPIRES_AFTER_DAYS)
     if expires_at <= now:
@@ -325,6 +543,117 @@ def _candidate_from_group(
     )
 
 
+def _evaluated_candidate(
+    *,
+    subject_key: str,
+    candidate: KnownPatternCandidate,
+    evidence_items: list[_CandidateEvidence],
+) -> _EvaluatedCandidate:
+    control_hashes = {_subject_key_hash(subject_key), candidate.subjectKeyHash}
+    for evidence in evidence_items:
+        control_hashes.add(_subject_key_hash(evidence.legacy_identity_signature))
+    return _EvaluatedCandidate(
+        candidate=candidate,
+        evidence_items=evidence_items,
+        control_subject_key_hashes=tuple(sorted(control_hashes)),
+    )
+
+
+def _ingredient_overlap_ratio(
+    left: _CandidateEvidence,
+    right: _CandidateEvidence,
+) -> float:
+    left_tokens = set(left.ingredient_identity_tokens)
+    right_tokens = set(right.ingredient_identity_tokens)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens.intersection(right_tokens)) / max(
+        len(left_tokens),
+        len(right_tokens),
+    )
+
+
+def _candidate_evidence_is_similar(
+    left: _CandidateEvidence,
+    right: _CandidateEvidence,
+) -> bool:
+    if left.identity_signature == right.identity_signature:
+        return True
+    if left.macro_identity_token != right.macro_identity_token:
+        return False
+
+    left_tokens = set(left.ingredient_identity_tokens)
+    right_tokens = set(right.ingredient_identity_tokens)
+    shared_count = len(left_tokens.intersection(right_tokens))
+    min_shared_count = min(
+        KNOWN_PATTERN_MIN_SHARED_INGREDIENT_TOKENS,
+        len(left_tokens),
+        len(right_tokens),
+    )
+    return (
+        shared_count >= min_shared_count
+        and _ingredient_overlap_ratio(left, right)
+        >= KNOWN_PATTERN_INGREDIENT_OVERLAP_THRESHOLD
+    )
+
+
+def _partial_overlap_subject_key(
+    evidence_items: list[_CandidateEvidence],
+) -> str | None:
+    if not evidence_items:
+        return None
+    macro_tokens = {item.macro_identity_token for item in evidence_items}
+    if len(macro_tokens) != 1:
+        return None
+
+    common_tokens = set(evidence_items[0].ingredient_identity_tokens)
+    max_token_count = len(common_tokens)
+    for item in evidence_items[1:]:
+        item_tokens = set(item.ingredient_identity_tokens)
+        common_tokens.intersection_update(item_tokens)
+        max_token_count = max(max_token_count, len(item_tokens))
+
+    if (
+        len(common_tokens) < KNOWN_PATTERN_MIN_SHARED_INGREDIENT_TOKENS
+        or max_token_count <= 0
+        or len(common_tokens) / max_token_count
+        < KNOWN_PATTERN_INGREDIENT_OVERLAP_THRESHOLD
+    ):
+        return None
+
+    return "|".join(
+        (
+            f"similarity:ingredients:{','.join(sorted(common_tokens))}",
+            f"macros:{next(iter(macro_tokens))}",
+            f"overlap:{KNOWN_PATTERN_INGREDIENT_OVERLAP_THRESHOLD:.2f}",
+        )
+    )
+
+
+def _partial_overlap_groups(
+    evidence_items: list[_CandidateEvidence],
+) -> list[tuple[str, list[_CandidateEvidence]]]:
+    groups: list[list[_CandidateEvidence]] = []
+    for evidence in sorted(evidence_items, key=lambda item: (item.logged_at_dt, item.meal_id)):
+        for group in groups:
+            candidate_group = [*group, evidence]
+            if all(
+                _candidate_evidence_is_similar(evidence, existing)
+                for existing in group
+            ) and _partial_overlap_subject_key(candidate_group) is not None:
+                group.append(evidence)
+                break
+        else:
+            groups.append([evidence])
+
+    subject_groups: list[tuple[str, list[_CandidateEvidence]]] = []
+    for group in groups:
+        subject_key = _partial_overlap_subject_key(group)
+        if subject_key is not None:
+            subject_groups.append((subject_key, group))
+    return subject_groups
+
+
 def _evaluated_candidates_from_meals(
     meals: Iterable[object],
     *,
@@ -336,10 +665,11 @@ def _evaluated_candidates_from_meals(
         evidence = _evidence_from_meal(raw_meal)
         if evidence is None:
             continue
-        subject_key = f"{evidence.meal_type}|{evidence.normalized_name}"
+        subject_key = evidence.identity_signature
         grouped.setdefault(subject_key, []).append(evidence)
 
     evaluated: list[_EvaluatedCandidate] = []
+    partial_overlap_pool: list[_CandidateEvidence] = []
     for subject_key, evidence_items in grouped.items():
         candidate = _candidate_from_group(
             subject_key,
@@ -347,7 +677,30 @@ def _evaluated_candidates_from_meals(
             now=evaluation_now,
         )
         if candidate is not None:
-            evaluated.append(_EvaluatedCandidate(candidate=candidate, evidence_items=evidence_items))
+            evaluated.append(
+                _evaluated_candidate(
+                    subject_key=subject_key,
+                    candidate=candidate,
+                    evidence_items=evidence_items,
+                )
+            )
+        else:
+            partial_overlap_pool.extend(evidence_items)
+
+    for subject_key, evidence_items in _partial_overlap_groups(partial_overlap_pool):
+        candidate = _candidate_from_group(
+            subject_key,
+            evidence_items,
+            now=evaluation_now,
+        )
+        if candidate is not None:
+            evaluated.append(
+                _evaluated_candidate(
+                    subject_key=subject_key,
+                    candidate=candidate,
+                    evidence_items=evidence_items,
+                )
+            )
 
     evaluated.sort(
         key=lambda item: (
@@ -374,8 +727,25 @@ def _control_expires_after(
     return expires_at is None or expires_at <= now
 
 
+def _candidate_control(
+    evaluated: _EvaluatedCandidate,
+    controls_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    shown_control: dict[str, Any] | None = None
+    for subject_key_hash in evaluated.control_subject_key_hashes:
+        control = controls_by_key.get(
+            (subject_key_hash, evaluated.candidate.createdByRuleVersion)
+        )
+        control_state = control.get("state") if control else None
+        if control_state == "declined":
+            return control
+        if control_state == "shown" and shown_control is None:
+            shown_control = control
+    return shown_control
+
+
 def _apply_known_pattern_controls(
-    candidates: list[KnownPatternCandidate],
+    evaluated_candidates: list[_EvaluatedCandidate],
     controls: Iterable[dict[str, Any]],
     *,
     now: datetime,
@@ -393,8 +763,9 @@ def _apply_known_pattern_controls(
             controls_by_key[(subject_key_hash, rule_version)] = control
 
     items: list[KnownPatternCandidate] = []
-    for candidate in candidates:
-        control = controls_by_key.get(_control_key(candidate))
+    for evaluated in evaluated_candidates:
+        candidate = evaluated.candidate
+        control = _candidate_control(evaluated, controls_by_key)
         control_state = control.get("state") if control else None
         if control_state == "declined":
             continue
@@ -417,7 +788,7 @@ def evaluate_known_pattern_candidates(
     evaluation_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     evaluated = _evaluated_candidates_from_meals(meals, now=evaluation_now)
     items = _apply_known_pattern_controls(
-        [item.candidate for item in evaluated],
+        evaluated,
         controls,
         now=evaluation_now,
         limit=limit,

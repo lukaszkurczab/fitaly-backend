@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
@@ -10,8 +10,16 @@ from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
 from app.domain.users.models.user_profile import UserProfile
 from app.domain.users.services.user_profile_service import UserProfileService
-from app.schemas.recipes import RecipeCatalogFilterRequest, RecipeCatalogFilterResponse
+from app.schemas.recipes import (
+    RecipeCatalogFilterRequest,
+    RecipeCatalogFilterResponse,
+    RecipeCatalogRecord,
+)
 from app.schemas.user_account import AllergyValue, ChronicDiseaseValue, PreferenceValue
+from app.services.recipe_catalog_content_validator import (
+    RecipeCatalogContentValidationError,
+    load_recipe_catalog_content,
+)
 from app.services.recipe_catalog_service import evaluate_recipe_catalog
 
 router = APIRouter(prefix="/users/me/recipes", tags=["Recipes V2"])
@@ -23,6 +31,28 @@ def _ensure_recipe_catalog_enabled() -> None:
             code="recipe_catalog_disabled",
             message="Recipe Catalog is temporarily disabled.",
         )
+
+
+def _ensure_recipe_catalog_content_approved() -> None:
+    if not settings.RECIPE_CATALOG_CONTENT_APPROVED:
+        raise_feature_disabled(
+            code="recipe_catalog_content_not_approved",
+            message="Recipe Catalog content is temporarily unavailable.",
+        )
+
+
+def _load_recipe_catalog_records() -> tuple[RecipeCatalogRecord, ...]:
+    try:
+        return load_recipe_catalog_content(settings.RECIPE_CATALOG_CONTENT_PATH)
+    except RecipeCatalogContentValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "recipe_catalog_content_invalid",
+                "message": "Recipe Catalog content pack is invalid.",
+                "issueCodes": exc.report.summary.issueCodes,
+            },
+        ) from exc
 
 
 def _profile_allergies(profile: UserProfile | None) -> list[str]:
@@ -60,6 +90,8 @@ async def list_recipe_catalog_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> RecipeCatalogFilterResponse:
     _ensure_recipe_catalog_enabled()
+    _ensure_recipe_catalog_content_approved()
+    catalog = _load_recipe_catalog_records()
     try:
         profile = await UserProfileService().get_profile(user_id=current_user.uid)
     except FirestoreServiceError as exc:
@@ -91,4 +123,4 @@ async def list_recipe_catalog_me(
     except ValidationError as exc:
         raise_bad_request(exc)
 
-    return evaluate_recipe_catalog(request)
+    return evaluate_recipe_catalog(request, catalog=catalog)
