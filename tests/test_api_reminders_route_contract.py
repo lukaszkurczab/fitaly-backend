@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
-from httpx import Response
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -25,6 +24,10 @@ client = TestClient(app)
 JsonObject = dict[str, object]
 
 
+class JsonResponse(Protocol):
+    def json(self) -> object: ...
+
+
 def _load_state_fixture() -> NutritionStateResponse:
     payload: object = json.loads(
         (FIXTURES_DIR / "nutrition_state.json").read_text(encoding="utf-8")
@@ -34,7 +37,7 @@ def _load_state_fixture() -> NutritionStateResponse:
     return state
 
 
-def _response_json(response: Response) -> JsonObject:
+def _response_json(response: JsonResponse) -> JsonObject:
     return cast(JsonObject, response.json())
 
 

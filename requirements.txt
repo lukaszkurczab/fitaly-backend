@@ -25,6 +25,7 @@ pytest-asyncio==1.3.0
 pytest-cov==6.3.0
 pytest-mock>=3.10.0
 httpx==0.28.1
+httpx2==2.4.0
 
 # Lint
 ruff==0.15.10
