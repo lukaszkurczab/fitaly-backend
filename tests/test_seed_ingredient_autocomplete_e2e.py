@@ -68,3 +68,84 @@ def test_script_file_execution_resolves_backend_imports() -> None:
     assert result.returncode != 0
     assert "ModuleNotFoundError" not in result.stderr
     assert "FIRESTORE_EMULATOR_HOST must be set" in result.stderr
+
+
+def test_emulator_hosts_must_be_loopback(mocker: MockerFixture) -> None:
+    mocker.patch.dict(
+        os.environ,
+        {
+            "FIREBASE_AUTH_EMULATOR_HOST": "firebase.example.com:9099",
+            "FIRESTORE_EMULATOR_HOST": "10.0.0.4:8080",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="FIREBASE_AUTH_EMULATOR_HOST"):
+        seed._auth_emulator_url("accounts:signUp")
+
+    with pytest.raises(RuntimeError, match="FIRESTORE_EMULATOR_HOST"):
+        seed._emulator_firestore_client()
+
+
+def test_emulator_hosts_accept_loopback(mocker: MockerFixture) -> None:
+    mocker.patch.dict(
+        os.environ,
+        {
+            "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+            "FIRESTORE_EMULATOR_HOST": "localhost:8080",
+        },
+    )
+
+    assert seed._auth_emulator_url("accounts:signUp").startswith(
+        "http://127.0.0.1:9099/"
+    )
+    assert seed._require_local_emulator_host("FIRESTORE_EMULATOR_HOST") == (
+        "localhost:8080"
+    )
+
+
+def test_main_blocks_non_loopback_firestore_before_auth_or_firestore_writes(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch.dict(
+        os.environ,
+        {
+            "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+            "FIRESTORE_EMULATOR_HOST": "10.0.0.4:8080",
+        },
+    )
+    post_auth = mocker.patch(
+        "scripts.seed_ingredient_autocomplete_e2e._post_auth_emulator"
+    )
+    firestore_client = mocker.patch(
+        "scripts.seed_ingredient_autocomplete_e2e.firestore.Client"
+    )
+
+    with pytest.raises(RuntimeError, match="FIRESTORE_EMULATOR_HOST"):
+        seed.main()
+
+    post_auth.assert_not_called()
+    firestore_client.assert_not_called()
+
+
+def test_main_blocks_non_loopback_auth_before_auth_or_firestore_writes(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch.dict(
+        os.environ,
+        {
+            "FIREBASE_AUTH_EMULATOR_HOST": "firebase.example.com:9099",
+            "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+        },
+    )
+    post_auth = mocker.patch(
+        "scripts.seed_ingredient_autocomplete_e2e._post_auth_emulator"
+    )
+    firestore_client = mocker.patch(
+        "scripts.seed_ingredient_autocomplete_e2e.firestore.Client"
+    )
+
+    with pytest.raises(RuntimeError, match="FIREBASE_AUTH_EMULATOR_HOST"):
+        seed.main()
+
+    post_auth.assert_not_called()
+    firestore_client.assert_not_called()

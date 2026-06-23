@@ -10,6 +10,7 @@ import sys
 from typing import Any, cast
 import unicodedata
 from urllib import error, request
+from urllib.parse import urlsplit
 
 from google.cloud import firestore
 
@@ -64,8 +65,19 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _require_local_emulator_host(name: str) -> str:
+    value = _require_env(name)
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    host = (parsed.hostname or "").strip().lower()
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError(
+            f"{name} must point to localhost/127.0.0.1 for local emulator seeding."
+        )
+    return value
+
+
 def _auth_emulator_url(path: str) -> str:
-    host = _require_env("FIREBASE_AUTH_EMULATOR_HOST")
+    host = _require_local_emulator_host("FIREBASE_AUTH_EMULATOR_HOST")
     return f"http://{host}/identitytoolkit.googleapis.com/v1/{path}?key=fake-api-key"
 
 
@@ -96,6 +108,15 @@ def _seed_auth_user() -> tuple[str, str]:
         {"email": EMAIL, "password": PASSWORD, "returnSecureToken": True},
     )
     return str(payload["localId"]), str(payload["idToken"])
+
+
+def _emulator_firestore_client() -> firestore.Client:
+    _require_local_emulator_host("FIRESTORE_EMULATOR_HOST")
+    client_factory = cast(Any, firestore.Client)
+    return cast(
+        firestore.Client,
+        client_factory(project=PROJECT_ID, database=DATABASE_ID),
+    )
 
 
 def _profile_document(uid: str) -> dict[str, Any]:
@@ -421,10 +442,10 @@ def _private_update_ingredient_product_document(uid: str) -> dict[str, Any]:
 def main() -> None:
     global_seed_records = _global_ingredient_product_documents()
     global_seed_validation = _validate_global_seed_records(global_seed_records)
-    _require_env("FIRESTORE_EMULATOR_HOST")
+    _require_local_emulator_host("FIRESTORE_EMULATOR_HOST")
+    _require_local_emulator_host("FIREBASE_AUTH_EMULATOR_HOST")
     uid, _ = _seed_auth_user()
-    firestore_client_factory = cast(Any, firestore.Client)
-    client = firestore_client_factory(project=PROJECT_ID, database=DATABASE_ID)
+    client = _emulator_firestore_client()
     client.collection("users").document(uid).set(_profile_document(uid), merge=True)
     for record in global_seed_records:
         product_id = cast(str, record["ingredientProductId"])
