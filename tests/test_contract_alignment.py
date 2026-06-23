@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, cast, get_args
@@ -134,8 +135,11 @@ from app.services.coach_rule_engine import evaluate_coach_insights, select_top_i
 from app.services.coach_service import get_coach_response
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
+MOBILE_REPO_DIR = os.environ.get("MOBILE_REPO")
 MOBILE_FIXTURES_DIR = (
-    Path(__file__).resolve().parents[2] / "fitaly" / "src" / "__contract_fixtures__"
+    Path(MOBILE_REPO_DIR) / "src" / "__contract_fixtures__"
+    if MOBILE_REPO_DIR
+    else Path(__file__).resolve().parents[2] / "fitaly" / "src" / "__contract_fixtures__"
 )
 JSONDict = dict[str, Any]
 StringListDict = dict[str, list[str]]

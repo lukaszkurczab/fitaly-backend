@@ -2,7 +2,29 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      mobile_contract_ref:
+        description: Optional fitaly ref for paired cross-repo contract PRs.
+        required: false
+        type: string
+        default: ""
+      require_exact_mobile_contract_ref:
+        description: Require mobile_contract_ref to be an exact 40-character commit SHA.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      mobile_contract_ref:
+        description: Optional fitaly ref for paired cross-repo contract PRs.
+        required: false
+        type: string
+        default: ""
+      require_exact_mobile_contract_ref:
+        description: Require mobile_contract_ref to be an exact 40-character commit SHA.
+        required: false
+        type: boolean
+        default: false
   pull_request:
   push:
     branches:
@@ -20,6 +42,31 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Resolve mobile contract ref
+        id: mobile-contract-ref
+        run: |
+          ref="${MOBILE_CONTRACT_REF_INPUT:-}"
+          if [ -z "$ref" ]; then
+            ref="main"
+          fi
+          if [ "${MOBILE_CONTRACT_REF_REQUIRE_EXACT_SHA:-false}" = "true" ]; then
+            if ! printf "%s" "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "mobile_contract_ref must be a 40-character commit SHA when exact mode is required" >&2
+              exit 1
+            fi
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        env:
+          MOBILE_CONTRACT_REF_INPUT: ${{ inputs.mobile_contract_ref }}
+          MOBILE_CONTRACT_REF_REQUIRE_EXACT_SHA: ${{ inputs.require_exact_mobile_contract_ref }}
+
+      - name: Checkout mobile repo (canonical contract source)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/fitaly
+          path: _mobile
+          ref: ${{ steps.mobile-contract-ref.outputs.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -46,3 +93,5 @@ jobs:
 
       - name: Run tests
         run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=80
+        env:
+          MOBILE_REPO: _mobile
