@@ -274,8 +274,64 @@ def _warning_ingredient_product_document() -> dict[str, Any]:
     }
 
 
+def _english_ingredient_product_document() -> dict[str, Any]:
+    now = "2026-06-15T10:30:00.000Z"
+    return {
+        "ingredientProductId": "e2e-local-oats-en",
+        "recordScope": "global_seed",
+        "lifecycleState": "verified",
+        "displayName": "Local oats",
+        "kind": "generic_ingredient",
+        "ingredientName": "Oats",
+        "brandName": None,
+        "packageName": None,
+        "category": "grain",
+        "searchPrefixes": _search_prefixes("Local oats", "Oats", "grain"),
+        "defaultServing": {"quantity": 50, "unit": "g"},
+        "nutritionPer100": {
+            "basis": "per_100g",
+            "unit": "g",
+            "kcal": 389,
+            "protein": 16.9,
+            "fat": 6.9,
+            "carbs": 66.3,
+            "fiber": None,
+            "sugar": None,
+            "salt": None,
+            "saturatedFat": None,
+        },
+        "sourceAttribution": {
+            "sourceType": "internal_seed",
+            "sourceId": "e2e-local-seed-en",
+            "sourceName": "Fitaly local E2E seed",
+            "provider": None,
+            "license": None,
+            "observedAt": now,
+            "reviewedAt": now,
+            "reviewedBy": "e2e",
+        },
+        "confidence": {
+            "identity": "verified",
+            "nutrition": "high",
+            "profile": "high",
+        },
+        "profileCompatibility": "compatible",
+        "profileFlags": {"dietaryFlags": [], "allergenFlags": []},
+        "warningReasonCodes": [],
+        "servingSizes": [],
+        "dietaryFlags": [],
+        "allergenFlags": [],
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
 def _global_ingredient_product_documents() -> list[dict[str, Any]]:
-    return [_ingredient_product_document(), _warning_ingredient_product_document()]
+    return [
+        _ingredient_product_document(),
+        _warning_ingredient_product_document(),
+        _english_ingredient_product_document(),
+    ]
 
 
 def _validate_global_seed_records(

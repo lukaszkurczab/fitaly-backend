@@ -17,13 +17,25 @@ def test_global_e2e_seed_records_validate_without_production_approval_claim() ->
     report = seed._validate_global_seed_records(seed._global_ingredient_product_documents())
 
     assert report.hasErrors is False
-    assert report.summary.recordCount == 2
-    assert report.summary.sourceTypes == {"internal_seed": 2}
-    assert report.summary.scopeCounts == {"global_seed": 2}
+    assert report.summary.recordCount == 3
+    assert report.summary.sourceTypes == {"internal_seed": 3}
+    assert report.summary.scopeCounts == {"global_seed": 3}
     assert (
         "Local E2E seed validation is emulator import evidence only, not approved production corpus evidence."
         in report.summary.coverageNotes
     )
+
+
+def test_global_e2e_seed_records_include_pl_en_search_terms() -> None:
+    records = seed._global_ingredient_product_documents()
+    prefixes_by_id = {
+        str(record["ingredientProductId"]): set(record["searchPrefixes"])
+        for record in records
+    }
+
+    assert "owies" in prefixes_by_id["e2e-local-oats"]
+    assert "ostrzezenie" in prefixes_by_id["e2e-warning-oats"]
+    assert "oats" in prefixes_by_id["e2e-local-oats-en"]
 
 
 def test_main_blocks_invalid_global_seed_before_emulator_writes(
