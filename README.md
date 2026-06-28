@@ -102,8 +102,8 @@ curl -X POST http://127.0.0.1:8000/api/v2/ai/chat/runs \
 ```
 
 Notes:
-- v2 adoption is controlled by API path (`/api/v2/...`), not by a dedicated runtime feature flag.
-- v1 analysis endpoints remain stable (`photo/text-meal/credits`), while chat is v2-only.
+- v2 adoption is controlled by API path (`/api/v2/...`); availability of the canonical chat run endpoint is controlled by backend `AI_CHAT_ENABLED`.
+- v1 analysis endpoints remain stable (`photo/text-meal/credits`), while chat is v2-only and must not fall back to legacy v1 chat.
 
 ## Local Run
 

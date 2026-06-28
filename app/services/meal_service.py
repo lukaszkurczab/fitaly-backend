@@ -1,6 +1,6 @@
 """Backend-owned storage and pagination for meals."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -19,8 +19,13 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import coerce_float, coerce_optional_str
+from app.core.config import settings
 from app.core.exceptions import FirestoreServiceError
-from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
+from app.core.firestore_constants import (
+    MEALS_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
+    USERS_COLLECTION,
+)
 from app.core.firestore_index_requirements import stream_required_indexed_query
 from app.db.firebase import (
     build_storage_download_url,
@@ -29,7 +34,13 @@ from app.db.firebase import (
     get_storage_bucket_name,
 )
 from app.schemas.meal import validate_day_key_format
-from app.services import meal_storage, streak_service
+from app.services import (
+    meal_effect_outbox_service,
+    meal_storage,
+    smart_memory_capture_service,
+    smart_memory_service,
+    streak_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +49,18 @@ DOCUMENT_ID_FIELD = "__name__"
 MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
 MEAL_INPUT_METHODS = {"manual", "photo", "barcode", "text"}
+MEAL_PLANNING_SOURCE_TYPES = {
+    "manual",
+    "saved_meal",
+    "recipe",
+    "ingredient_product_draft",
+}
+MEAL_PLANNING_NUTRITION_STATES = {"known", "partial", "unknown"}
+MEAL_PLANNING_NUTRITION_FIELDS = {"kcal", "protein", "fat", "carbs"}
+PLANNED_MEAL_CONSUMABLE_STATUSES = {"planned", "edited", "rescheduled"}
 MEAL_MUTATION_DEDUPE_SUBCOLLECTION = "mealMutationDedupe"
+SMART_MEMORY_TYPICAL_PORTION_CAPTURE_WINDOW_DAYS = 21
+SMART_MEMORY_TYPICAL_PORTION_CAPTURE_PAGE_SIZE = 100
 
 
 class MealPhotoPayload(TypedDict):
@@ -52,10 +74,29 @@ class MealMutationDedupeConflictError(ValueError):
     """Raised when a clientMutationId is reused for a different meal mutation."""
 
 
+class MealPlanningSourceConflictError(ValueError):
+    """Raised when a planned meal cannot be linked by a meal mutation."""
+
+
+class MealPlanningSourceDisabledError(ValueError):
+    """Raised when a planned-source meal mutation is blocked by the planning gate."""
+
+
+class MealEffectOutboxEvent(TypedDict):
+    event_ref: firestore.DocumentReference
+    event: dict[str, Any]
+    client: NotRequired[firestore.Client]
+
+
+class MealEffectFeatureDisabledError(RuntimeError):
+    """Raised when a queued effect is blocked by a runtime feature flag."""
+
+
 class MealMutationResult(TypedDict):
     meal: dict[str, Any]
     applied: bool
     reference_day_key: str | None
+    effect_events: NotRequired[list[MealEffectOutboxEvent]]
 
 
 def _as_object_map(value: object) -> dict[str, object] | None:
@@ -188,6 +229,105 @@ def _normalize_totals(value: Any, ingredients: list[dict[str, Any]]) -> dict[str
     }
 
 
+def _has_positive_nutrition_evidence(document: dict[str, Any]) -> bool:
+    totals = _as_object_map(document.get("totals")) or {}
+    if any(
+        coerce_float(totals.get(field)) > 0
+        for field in ("kcal", "protein", "fat", "carbs")
+    ):
+        return True
+
+    ingredients = document.get("ingredients")
+    if not isinstance(ingredients, list):
+        return False
+    ingredient_items = cast(list[object], ingredients)
+
+    return any(
+        isinstance(item, dict)
+        and any(
+            coerce_float(cast(dict[str, object], item).get(field)) > 0
+            for field in ("kcal", "protein", "fat", "carbs")
+        )
+        for item in ingredient_items
+    )
+
+
+def _validate_planning_source_save_safety(document: dict[str, Any]) -> None:
+    planning_source = _as_object_map(document.get("planningSource"))
+    if planning_source is None:
+        return
+    if _has_positive_nutrition_evidence(document):
+        return
+    raise ValueError("Planned meal source requires positive nutrition evidence")
+
+
+def _validate_planning_source_feature_gate(document: dict[str, Any]) -> None:
+    if (
+        _as_object_map(document.get("planningSource")) is not None
+        and not settings.PLANNED_MEALS_ENABLED
+    ):
+        raise MealPlanningSourceDisabledError("Planned Meals are temporarily disabled.")
+
+
+def _validate_raw_planning_source_feature_gate(payload: dict[str, Any]) -> None:
+    if payload.get("planningSource") is not None and not settings.PLANNED_MEALS_ENABLED:
+        raise MealPlanningSourceDisabledError("Planned Meals are temporarily disabled.")
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        parsed = int(value)
+        return parsed if parsed >= 1 else None
+    return None
+
+
+def _planned_meal_conversion_document(
+    snapshot: firestore.DocumentSnapshot,
+    *,
+    planned_meal_id: str,
+    expected_version: int,
+    meal_id: str,
+    client_mutation_id: str,
+    now_iso: str,
+) -> dict[str, Any] | None:
+    if not snapshot.exists:
+        raise MealPlanningSourceConflictError("Planned meal was not found")
+
+    document = dict(snapshot.to_dict() or {})
+    document.setdefault("plannedMealId", planned_meal_id)
+    status = coerce_optional_str(document.get("status"))
+    linked_meal_id = coerce_optional_str(document.get("linkedMealId"))
+
+    if linked_meal_id and linked_meal_id != meal_id:
+        raise MealPlanningSourceConflictError(
+            "Planned meal is already linked to another meal"
+        )
+    if status == "converted_to_review" and linked_meal_id == meal_id:
+        return None
+    if status == "converted_to_review":
+        raise MealPlanningSourceConflictError(
+            "Planned meal was already converted to Review"
+        )
+
+    current_version = _positive_int(document.get("version"))
+    if current_version is None or current_version != expected_version:
+        raise MealPlanningSourceConflictError("Planned meal version conflict")
+    if status not in PLANNED_MEAL_CONSUMABLE_STATUSES:
+        raise MealPlanningSourceConflictError(
+            "Planned meal is not available for Review"
+        )
+
+    next_document = dict(document)
+    next_document["plannedMealId"] = planned_meal_id
+    next_document["status"] = "converted_to_review"
+    next_document["version"] = current_version + 1
+    next_document["linkedMealId"] = meal_id
+    next_document["convertedAt"] = now_iso
+    next_document["conversionClientMutationId"] = client_mutation_id
+    next_document["updatedAt"] = now_iso
+    return next_document
 
 
 def _meals_collection(user_id: str) -> firestore.CollectionReference:
@@ -207,6 +347,16 @@ def _meal_ref_for_client(
     return client.collection(USERS_COLLECTION).document(user_id).collection(
         MEALS_SUBCOLLECTION
     ).document(meal_id)
+
+
+def _planned_meal_ref_for_client(
+    client: firestore.Client,
+    user_id: str,
+    planned_meal_id: str,
+) -> firestore.DocumentReference:
+    return client.collection(USERS_COLLECTION).document(user_id).collection(
+        PLANNED_MEALS_SUBCOLLECTION
+    ).document(planned_meal_id)
 
 
 def _meal_mutation_ref(
@@ -308,6 +458,70 @@ def _normalize_ai_meta(value: Any) -> dict[str, Any] | None:
         "runId": run_id,
         "confidence": confidence,
         "warnings": warnings,
+    }
+
+
+def _normalize_planning_source_ref(value: Any) -> dict[str, Any] | None:
+    value_map = _as_object_map(value)
+    if value_map is None:
+        return None
+
+    source_id = coerce_optional_str(value_map.get("sourceId"))
+    if not source_id:
+        return None
+
+    source_version_raw = value_map.get("sourceVersion")
+    source_version: int | None = None
+    if isinstance(source_version_raw, bool):
+        source_version = None
+    elif isinstance(source_version_raw, int | float):
+        parsed = int(source_version_raw)
+        source_version = parsed if parsed >= 1 else None
+
+    return {
+        "sourceId": source_id,
+        "sourceVersion": source_version,
+        "snapshotName": coerce_optional_str(value_map.get("snapshotName")),
+    }
+
+
+def _normalize_planning_source(value: Any) -> dict[str, Any] | None:
+    value_map = _as_object_map(value)
+    if value_map is None:
+        return None
+
+    planned_meal_id = coerce_optional_str(value_map.get("plannedMealId"))
+    version_raw = value_map.get("plannedMealVersion")
+    source_type = coerce_optional_str(value_map.get("sourceType"))
+    estimate_state = coerce_optional_str(value_map.get("nutritionEstimateState"))
+    if (
+        not planned_meal_id
+        or isinstance(version_raw, bool)
+        or not isinstance(version_raw, int | float)
+        or int(version_raw) < 1
+        or source_type not in MEAL_PLANNING_SOURCE_TYPES
+        or estimate_state not in MEAL_PLANNING_NUTRITION_STATES
+    ):
+        return None
+
+    missing_raw = value_map.get("missingNutritionFields")
+    missing_fields = (
+        [
+            field
+            for field in cast(list[object], missing_raw)
+            if isinstance(field, str) and field in MEAL_PLANNING_NUTRITION_FIELDS
+        ]
+        if isinstance(missing_raw, list)
+        else []
+    )
+
+    return {
+        "plannedMealId": planned_meal_id,
+        "plannedMealVersion": int(version_raw),
+        "sourceType": source_type,
+        "sourceRef": _normalize_planning_source_ref(value_map.get("sourceRef")),
+        "nutritionEstimateState": estimate_state,
+        "missingNutritionFields": missing_fields,
     }
 
 
@@ -454,8 +668,9 @@ def normalize_meal_document_payload(
         fallback_logged_at=logged_at if allow_logged_at_day_key_fallback else None,
     )
     deleted = _as_bool(payload.get("deleted"))
+    planning_source = _normalize_planning_source(payload.get("planningSource"))
 
-    return meal_id, {
+    document: dict[str, Any] = {
         "loggedAt": logged_at,
         "dayKey": day_key,
         "loggedAtLocalMin": _normalize_logged_at_local_min(payload.get("loggedAtLocalMin")),
@@ -482,6 +697,9 @@ def normalize_meal_document_payload(
         "deleted": deleted,
         "totals": _normalize_totals(payload.get("totals"), ingredients),
     }
+    if planning_source is not None:
+        document["planningSource"] = planning_source
+    return meal_id, document
 
 
 def _meal_item_from_document(
@@ -495,7 +713,7 @@ def _meal_item_from_document(
     )
     logged_at = coerce_optional_str(payload.get("loggedAt"))
 
-    return {
+    item: dict[str, Any] = {
         "id": meal_id,
         "loggedAt": logged_at,
         "dayKey": payload.get("dayKey"),
@@ -523,6 +741,9 @@ def _meal_item_from_document(
         "photoUrl": photo_url,
         "userUid": None,
     }
+    if payload.get("planningSource") is not None:
+        item["planningSource"] = payload.get("planningSource")
+    return item
 
 
 def _require_client_mutation_id(value: Any) -> str:
@@ -559,6 +780,84 @@ def _mutation_record(
     }
 
 
+def _meal_effect_event_refs(
+    client: firestore.Client,
+    *,
+    user_id: str,
+    source_mutation_id: str,
+    kinds: tuple[str, ...],
+) -> dict[str, firestore.DocumentReference]:
+    return {
+        kind: meal_effect_outbox_service.meal_effect_outbox_ref(
+            client,
+            user_id,
+            meal_effect_outbox_service.event_id(
+                source_mutation_id=source_mutation_id,
+                kind=kind,
+            ),
+        )
+        for kind in kinds
+    }
+
+
+def _upsert_effect_kinds_for_enqueue() -> tuple[str, ...]:
+    if settings.SMART_MEMORY_CAPTURE_ENABLED:
+        return (
+            meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+            meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE,
+        )
+    return (meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,)
+
+
+def _delete_effect_kinds_for_enqueue() -> tuple[str, ...]:
+    if settings.SMART_MEMORY_APPLY_ENABLED:
+        return (
+            meal_effect_outbox_service.KIND_MEAL_DELETED_STREAK_SYNC,
+            meal_effect_outbox_service.KIND_MEAL_DELETED_SMART_MEMORY_SOURCE_DELETE,
+        )
+    return (meal_effect_outbox_service.KIND_MEAL_DELETED_STREAK_SYNC,)
+
+
+def _all_upsert_effect_kinds() -> tuple[str, ...]:
+    return (
+        meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE,
+    )
+
+
+def _all_delete_effect_kinds() -> tuple[str, ...]:
+    return (
+        meal_effect_outbox_service.KIND_MEAL_DELETED_STREAK_SYNC,
+        meal_effect_outbox_service.KIND_MEAL_DELETED_SMART_MEMORY_SOURCE_DELETE,
+    )
+
+
+def _write_meal_effect_outbox_events(
+    transaction: firestore.Transaction,
+    *,
+    client: firestore.Client,
+    event_refs_by_kind: dict[str, firestore.DocumentReference],
+    user_id: str,
+    source_mutation_id: str,
+    meal_id: str,
+    reference_day_key: str | None,
+    result_meal: dict[str, Any],
+) -> list[MealEffectOutboxEvent]:
+    events: list[MealEffectOutboxEvent] = []
+    for kind, event_ref in event_refs_by_kind.items():
+        event = meal_effect_outbox_service.build_pending_event(
+            owner_user_id=user_id,
+            source_mutation_id=source_mutation_id,
+            source_entity_id=meal_id,
+            kind=kind,
+            reference_day_key=reference_day_key,
+            result_meal=result_meal,
+        )
+        transaction.set(event_ref, event, merge=False)
+        events.append({"event_ref": event_ref, "event": event, "client": client})
+    return events
+
+
 def _result_from_existing_mutation(
     data: dict[str, Any],
     *,
@@ -584,6 +883,7 @@ def _result_from_existing_mutation(
         "meal": dict(result_meal),
         "applied": False,
         "reference_day_key": None,
+        "effect_events": [],
     }
 
 
@@ -866,6 +1166,42 @@ async def list_history(
     return items, next_cursor
 
 
+def _smart_memory_typical_portion_capture_window(
+    reference_day_key: str,
+) -> tuple[str, str]:
+    normalized_reference_day_key = validate_day_key_format(reference_day_key)
+    reference_date = date.fromisoformat(normalized_reference_day_key)
+    start_date = reference_date - timedelta(
+        days=SMART_MEMORY_TYPICAL_PORTION_CAPTURE_WINDOW_DAYS - 1
+    )
+    return start_date.isoformat(), normalized_reference_day_key
+
+
+async def _list_meal_snapshots_for_smart_memory_capture_window(
+    user_id: str,
+    *,
+    reference_day_key: str,
+) -> list[dict[str, Any]]:
+    day_key_start, day_key_end = _smart_memory_typical_portion_capture_window(
+        reference_day_key
+    )
+    all_items: list[dict[str, Any]] = []
+    before_cursor: str | None = None
+
+    while True:
+        items, next_cursor = await list_history(
+            user_id,
+            limit_count=SMART_MEMORY_TYPICAL_PORTION_CAPTURE_PAGE_SIZE,
+            before_cursor=before_cursor,
+            day_key_start=day_key_start,
+            day_key_end=day_key_end,
+        )
+        all_items.extend(items)
+        if next_cursor is None:
+            return all_items
+        before_cursor = next_cursor
+
+
 async def list_changes(
     user_id: str,
     *,
@@ -888,8 +1224,11 @@ async def list_changes(
 def _upsert_meal_mutation_transaction(
     transaction: firestore.Transaction,
     *,
+    client: firestore.Client,
     mutation_ref: firestore.DocumentReference,
     meal_ref: firestore.DocumentReference,
+    planned_meal_ref: firestore.DocumentReference | None,
+    effect_event_refs_by_kind: dict[str, firestore.DocumentReference],
     user_id: str,
     meal_id: str,
     client_mutation_id: str,
@@ -904,6 +1243,23 @@ def _upsert_meal_mutation_transaction(
             kind="upsert",
             meal_id=meal_id,
             payload_hash=payload_hash,
+        )
+
+    planning_source = _as_object_map(normalized_document.get("planningSource"))
+    planned_meal_conversion: dict[str, Any] | None = None
+    if planning_source is not None and planned_meal_ref is not None:
+        planned_meal_version = _positive_int(planning_source.get("plannedMealVersion"))
+        if planned_meal_version is None:
+            raise MealPlanningSourceConflictError("Planned meal version conflict")
+        planned_snapshot = planned_meal_ref.get(transaction=transaction)
+        planned_meal_conversion = _planned_meal_conversion_document(
+            planned_snapshot,
+            planned_meal_id=coerce_optional_str(planning_source.get("plannedMealId"))
+            or "",
+            expected_version=planned_meal_version,
+            meal_id=meal_id,
+            client_mutation_id=client_mutation_id,
+            now_iso=_now_iso(),
         )
 
     snapshot = meal_ref.get(transaction=transaction)
@@ -927,10 +1283,14 @@ def _upsert_meal_mutation_transaction(
                 "meal": existing,
                 "applied": False,
                 "reference_day_key": None,
+                "effect_events": [],
             }
 
     result_meal = _meal_item_from_document(meal_id, normalized_document)
+    reference_day_key = coerce_optional_str(normalized_document.get("dayKey"))
     transaction.set(meal_ref, normalized_document, merge=True)
+    if planned_meal_ref is not None and planned_meal_conversion is not None:
+        transaction.set(planned_meal_ref, planned_meal_conversion, merge=False)
     transaction.set(
         mutation_ref,
         _mutation_record(
@@ -944,32 +1304,361 @@ def _upsert_meal_mutation_transaction(
         ),
         merge=False,
     )
+    effect_events = _write_meal_effect_outbox_events(
+        transaction,
+        client=client,
+        event_refs_by_kind=effect_event_refs_by_kind,
+        user_id=user_id,
+        source_mutation_id=client_mutation_id,
+        meal_id=meal_id,
+        reference_day_key=reference_day_key,
+        result_meal=result_meal,
+    )
     return {
         "meal": result_meal,
         "applied": True,
-        "reference_day_key": coerce_optional_str(normalized_document.get("dayKey")),
+        "reference_day_key": reference_day_key,
+        "effect_events": effect_events,
     }
+
+
+async def _capture_typical_portion_after_successful_upsert(
+    *,
+    user_id: str,
+    meal_id: str,
+    result_meal: dict[str, Any],
+) -> None:
+    if not settings.SMART_MEMORY_CAPTURE_ENABLED:
+        return
+
+    if bool(result_meal.get("deleted")):
+        return
+
+    memory_settings = await smart_memory_service.get_settings(user_id)
+    if memory_settings.get("enabled") is False:
+        return
+    reference_day_key = coerce_optional_str(result_meal.get("dayKey"))
+    if reference_day_key is None:
+        raise ValueError("Smart Memory capture requires canonical dayKey")
+    meal_snapshots = await _list_meal_snapshots_for_smart_memory_capture_window(
+        user_id,
+        reference_day_key=reference_day_key,
+    )
+    candidate_subject_keys = (
+        smart_memory_capture_service.subject_suppression_keys_for_typical_portion_meal_snapshots(
+            meal_snapshots
+        )
+    )
+    suppressed_subject_keys: list[str] = []
+    if candidate_subject_keys:
+        exact_tombstone_subject_keys = (
+            await smart_memory_service.filter_existing_tombstone_subject_keys(
+                user_id,
+                candidate_subject_keys,
+                limit_count=len(candidate_subject_keys),
+            )
+        )
+        listed_suppressed_subject_keys = (
+            await smart_memory_service.list_suppressed_subject_keys(
+                user_id,
+                memory_type="typical_portion",
+            )
+        )
+        seen_suppressed_subject_keys: set[str] = set()
+        for subject_key in (
+            *exact_tombstone_subject_keys,
+            *listed_suppressed_subject_keys,
+        ):
+            if subject_key in seen_suppressed_subject_keys:
+                continue
+            seen_suppressed_subject_keys.add(subject_key)
+            suppressed_subject_keys.append(subject_key)
+    await smart_memory_capture_service.capture_typical_portion_candidate_from_meal_snapshots(
+        owner_user_id=user_id,
+        meal_snapshots=meal_snapshots,
+        memory_enabled=True,
+        suppressed_subject_keys=suppressed_subject_keys,
+    )
+
+
+async def _mark_smart_memory_sources_deleted_after_meal_delete(
+    *,
+    user_id: str,
+    meal_id: str,
+    result_meal: dict[str, Any],
+) -> None:
+    if not settings.SMART_MEMORY_APPLY_ENABLED:
+        return
+
+    source_hashes = smart_memory_capture_service.source_hashes_for_typical_portion_meal_snapshot(
+        result_meal
+    )
+    subject_keys = (
+        smart_memory_capture_service.subject_suppression_keys_for_typical_portion_meal_snapshots(
+            [result_meal]
+        )
+    )
+    if not source_hashes and not subject_keys:
+        return
+    await smart_memory_service.mark_sources_deleted_by_source_hashes(
+        user_id,
+        source_hashes,
+        memory_type="typical_portion",
+        subject_keys=subject_keys,
+    )
+
+
+def _load_existing_meal_effect_outbox_events(
+    client: firestore.Client,
+    *,
+    user_id: str,
+    source_mutation_id: str,
+    kinds: tuple[str, ...],
+) -> list[MealEffectOutboxEvent]:
+    events: list[MealEffectOutboxEvent] = []
+    for kind in kinds:
+        event_id = meal_effect_outbox_service.event_id(
+            source_mutation_id=source_mutation_id,
+            kind=kind,
+        )
+        event_ref = meal_effect_outbox_service.meal_effect_outbox_ref(
+            client,
+            user_id,
+            event_id,
+        )
+        try:
+            event = meal_effect_outbox_service.snapshot_to_event(event_ref.get())
+        except (FirebaseError, GoogleAPICallError, RetryError):
+            logger.warning(
+                "meal_effect_outbox.read.failed",
+                extra={
+                    "user_id": user_id,
+                    "event_id": event_id,
+                    "kind": kind,
+                },
+                exc_info=True,
+            )
+            continue
+        if event is None:
+            continue
+        if event.get("sourceMutationId") != source_mutation_id or event.get("kind") != kind:
+            continue
+        events.append({"event_ref": event_ref, "event": event, "client": client})
+    return events
+
+
+async def _run_meal_effect_outbox_event(event: dict[str, Any]) -> str:
+    kind = coerce_optional_str(event.get("kind")) or ""
+    owner_user_id = coerce_optional_str(event.get("ownerUserId"))
+    meal_id = coerce_optional_str(event.get("sourceEntityId"))
+    if not owner_user_id or not meal_id:
+        raise ValueError("Meal effect outbox event is missing owner or meal id")
+
+    if kind in {
+        meal_effect_outbox_service.KIND_MEAL_SAVED_STREAK_SYNC,
+        meal_effect_outbox_service.KIND_MEAL_DELETED_STREAK_SYNC,
+    }:
+        await streak_service.sync_streak_from_meals(
+            owner_user_id,
+            reference_day_key=coerce_optional_str(event.get("referenceDayKey")),
+        )
+        return "processed"
+
+    if kind == meal_effect_outbox_service.KIND_MEAL_SAVED_SMART_MEMORY_CAPTURE:
+        if not settings.SMART_MEMORY_CAPTURE_ENABLED:
+            raise MealEffectFeatureDisabledError("SMART_MEMORY_CAPTURE_ENABLED is disabled")
+        result_meal = _as_object_map(event.get("resultMeal"))
+        if result_meal is None:
+            raise ValueError("Smart Memory capture event is missing resultMeal")
+        await _capture_typical_portion_after_successful_upsert(
+            user_id=owner_user_id,
+            meal_id=meal_id,
+            result_meal=dict(result_meal),
+        )
+        return "processed"
+
+    if kind == meal_effect_outbox_service.KIND_MEAL_DELETED_SMART_MEMORY_SOURCE_DELETE:
+        if not settings.SMART_MEMORY_APPLY_ENABLED:
+            raise MealEffectFeatureDisabledError("SMART_MEMORY_APPLY_ENABLED is disabled")
+        result_meal = _as_object_map(event.get("resultMeal"))
+        if result_meal is None:
+            raise ValueError("Smart Memory source delete event is missing resultMeal")
+        await _mark_smart_memory_sources_deleted_after_meal_delete(
+            user_id=owner_user_id,
+            meal_id=meal_id,
+            result_meal=dict(result_meal),
+        )
+        return "processed"
+
+    raise ValueError(f"Unsupported meal effect outbox kind: {kind}")
+
+
+async def _process_meal_effect_outbox_event(entry: MealEffectOutboxEvent) -> str:
+    event_ref = entry["event_ref"]
+    client = entry.get("client")
+    if client is None:
+        client = cast(firestore.Client, getattr(event_ref, "_client", None))
+    event = entry["event"]
+    if event.get("status") != meal_effect_outbox_service.STATUS_PENDING:
+        return "skipped"
+
+    try:
+        claimed_event = meal_effect_outbox_service.claim_pending_event(
+            client,
+            event_ref,
+        )
+    except (FirebaseError, GoogleAPICallError, RetryError):
+        logger.warning(
+            "meal_effect_outbox.claim.failed",
+            extra={
+                "user_id": event.get("ownerUserId"),
+                "event_id": event.get("eventId"),
+                "kind": event.get("kind"),
+            },
+            exc_info=True,
+        )
+        return "status_update_failed"
+
+    if claimed_event is None:
+        return "skipped"
+
+    try:
+        outcome = await _run_meal_effect_outbox_event(claimed_event)
+    except Exception as exc:
+        logger.warning(
+            "meal_effect_outbox.processing.failed",
+            extra={
+                "user_id": claimed_event.get("ownerUserId"),
+                "event_id": claimed_event.get("eventId"),
+                "kind": claimed_event.get("kind"),
+            },
+            exc_info=True,
+        )
+        try:
+            status_updated = meal_effect_outbox_service.mark_failed(
+                client,
+                event_ref,
+                claimed_event,
+                exc,
+            )
+        except (FirebaseError, GoogleAPICallError, RetryError):
+            logger.warning(
+                "meal_effect_outbox.mark_failed.failed",
+                extra={
+                    "user_id": claimed_event.get("ownerUserId"),
+                    "event_id": claimed_event.get("eventId"),
+                    "kind": claimed_event.get("kind"),
+                },
+                exc_info=True,
+            )
+            return "status_update_failed"
+        return "failed" if status_updated else "skipped"
+
+    if outcome == "skipped":
+        return "skipped"
+
+    try:
+        status_updated = meal_effect_outbox_service.mark_succeeded(
+            client,
+            event_ref,
+            claimed_event,
+        )
+    except (FirebaseError, GoogleAPICallError, RetryError):
+        logger.warning(
+            "meal_effect_outbox.mark_succeeded.failed",
+            extra={
+                "user_id": claimed_event.get("ownerUserId"),
+                "event_id": claimed_event.get("eventId"),
+                "kind": claimed_event.get("kind"),
+            },
+            exc_info=True,
+        )
+        return "status_update_failed"
+    return "succeeded" if status_updated else "skipped"
+
+
+async def _process_meal_effect_outbox_events(
+    events: list[MealEffectOutboxEvent],
+) -> dict[str, int]:
+    results = {
+        "succeeded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "status_update_failed": 0,
+    }
+    for entry in events:
+        outcome = await _process_meal_effect_outbox_event(entry)
+        results[outcome] = results.get(outcome, 0) + 1
+    return results
+
+
+async def reconcile_pending_meal_effects(
+    user_id: str,
+    *,
+    limit_count: int = meal_effect_outbox_service.MAX_RECONCILIATION_EVENTS,
+) -> dict[str, int]:
+    client: firestore.Client = get_firestore()
+    try:
+        pending_events: list[MealEffectOutboxEvent] = [
+            {"event_ref": event_ref, "event": event, "client": client}
+            for event_ref, event in meal_effect_outbox_service.list_pending_events(
+                client,
+                user_id,
+                limit_count=limit_count,
+            )
+        ]
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to list pending meal effect outbox events.",
+            extra={"user_id": user_id},
+        )
+        raise FirestoreServiceError("Failed to list pending meal effects.") from exc
+
+    return await _process_meal_effect_outbox_events(pending_events)
 
 
 async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     client_mutation_id = _require_client_mutation_id(payload.get("clientMutationId"))
+    _validate_raw_planning_source_feature_gate(payload)
     meal_id, normalized_document = normalize_meal_document_payload(
         user_id,
         payload,
         allow_logged_at_day_key_fallback=False,
     )
+    _validate_planning_source_feature_gate(normalized_document)
+    _validate_planning_source_save_safety(normalized_document)
     payload_hash = _stable_payload_hash(
         {"kind": "upsert", "mealId": meal_id, "document": normalized_document}
     )
     client: firestore.Client = get_firestore()
     meal_ref = _meal_ref_for_client(client, user_id, meal_id)
     mutation_ref = _meal_mutation_ref(client, user_id, client_mutation_id)
+    planning_source = _as_object_map(normalized_document.get("planningSource"))
+    planned_meal_id = (
+        coerce_optional_str(planning_source.get("plannedMealId"))
+        if planning_source is not None
+        else None
+    )
+    planned_meal_ref = (
+        _planned_meal_ref_for_client(client, user_id, planned_meal_id)
+        if planned_meal_id is not None
+        else None
+    )
+    effect_event_refs_by_kind = _meal_effect_event_refs(
+        client,
+        user_id=user_id,
+        source_mutation_id=client_mutation_id,
+        kinds=_upsert_effect_kinds_for_enqueue(),
+    )
 
     try:
         result = _upsert_meal_mutation_transaction(
             client.transaction(),
+            client=client,
             mutation_ref=mutation_ref,
             meal_ref=meal_ref,
+            planned_meal_ref=planned_meal_ref,
+            effect_event_refs_by_kind=effect_event_refs_by_kind,
             user_id=user_id,
             meal_id=meal_id,
             client_mutation_id=client_mutation_id,
@@ -983,11 +1672,15 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
         raise FirestoreServiceError("Failed to upsert meal.") from exc
 
-    if result["applied"]:
-        await streak_service.sync_streak_from_meals(
-            user_id,
-            reference_day_key=result["reference_day_key"],
+    effect_events = result.get("effect_events", [])
+    if not effect_events:
+        effect_events = _load_existing_meal_effect_outbox_events(
+            client,
+            user_id=user_id,
+            source_mutation_id=client_mutation_id,
+            kinds=_all_upsert_effect_kinds(),
         )
+    await _process_meal_effect_outbox_events(effect_events)
 
     return result["meal"]
 
@@ -996,8 +1689,10 @@ async def upsert_meal(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 def _delete_meal_mutation_transaction(
     transaction: firestore.Transaction,
     *,
+    client: firestore.Client,
     mutation_ref: firestore.DocumentReference,
     meal_ref: firestore.DocumentReference,
+    effect_event_refs_by_kind: dict[str, firestore.DocumentReference],
     user_id: str,
     meal_id: str,
     client_mutation_id: str,
@@ -1056,9 +1751,11 @@ def _delete_meal_mutation_transaction(
                 "meal": existing_normalized,
                 "applied": False,
                 "reference_day_key": None,
+                "effect_events": [],
             }
 
     result_meal = _meal_item_from_document(normalized_id, normalized_document)
+    reference_day_key = coerce_optional_str(normalized_document.get("dayKey"))
     transaction.set(meal_ref, normalized_document, merge=True)
     transaction.set(
         mutation_ref,
@@ -1073,10 +1770,21 @@ def _delete_meal_mutation_transaction(
         ),
         merge=False,
     )
+    effect_events = _write_meal_effect_outbox_events(
+        transaction,
+        client=client,
+        event_refs_by_kind=effect_event_refs_by_kind,
+        user_id=user_id,
+        source_mutation_id=client_mutation_id,
+        meal_id=meal_id,
+        reference_day_key=reference_day_key,
+        result_meal=result_meal,
+    )
     return {
         "meal": result_meal,
         "applied": True,
-        "reference_day_key": coerce_optional_str(normalized_document.get("dayKey")),
+        "reference_day_key": reference_day_key,
+        "effect_events": effect_events,
     }
 
 
@@ -1099,12 +1807,20 @@ async def mark_deleted(
     client: firestore.Client = get_firestore()
     meal_ref = _meal_ref_for_client(client, user_id, meal_id)
     mutation_ref = _meal_mutation_ref(client, user_id, normalized_client_mutation_id)
+    effect_event_refs_by_kind = _meal_effect_event_refs(
+        client,
+        user_id=user_id,
+        source_mutation_id=normalized_client_mutation_id,
+        kinds=_delete_effect_kinds_for_enqueue(),
+    )
 
     try:
         result = _delete_meal_mutation_transaction(
             client.transaction(),
+            client=client,
             mutation_ref=mutation_ref,
             meal_ref=meal_ref,
+            effect_event_refs_by_kind=effect_event_refs_by_kind,
             user_id=user_id,
             meal_id=meal_id,
             client_mutation_id=normalized_client_mutation_id,
@@ -1118,11 +1834,15 @@ async def mark_deleted(
         )
         raise FirestoreServiceError("Failed to delete meal.") from exc
 
-    if result["applied"]:
-        await streak_service.sync_streak_from_meals(
-            user_id,
-            reference_day_key=result["reference_day_key"],
+    effect_events = result.get("effect_events", [])
+    if not effect_events:
+        effect_events = _load_existing_meal_effect_outbox_events(
+            client,
+            user_id=user_id,
+            source_mutation_id=normalized_client_mutation_id,
+            kinds=_all_delete_effect_kinds(),
         )
+    await _process_meal_effect_outbox_events(effect_events)
 
     return result["meal"]
 

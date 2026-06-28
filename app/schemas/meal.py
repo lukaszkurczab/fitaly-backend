@@ -9,6 +9,14 @@ MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
 MealSyncState = Literal["synced", "pending", "conflict", "failed"]
 MealInputMethod = Literal["manual", "photo", "barcode", "text"]
+MealPlanningSourceType = Literal[
+    "manual",
+    "saved_meal",
+    "recipe",
+    "ingredient_product_draft",
+]
+MealPlanningNutritionEstimateState = Literal["known", "partial", "unknown"]
+MealPlanningNutritionField = Literal["kcal", "protein", "fat", "carbs"]
 _DAY_KEY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -47,6 +55,25 @@ class MealImageRefInput(BaseModel):
     imageId: str = Field(min_length=1)
     storagePath: str | None = None
     downloadUrl: str | None = None
+
+
+class MealPlanningSourceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    sourceId: str = Field(min_length=1, max_length=128)
+    sourceVersion: int | None = Field(default=None, ge=1)
+    snapshotName: str | None = Field(default=None, max_length=240)
+
+
+class MealPlanningSource(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    plannedMealId: str = Field(min_length=1, max_length=128)
+    plannedMealVersion: int = Field(ge=1)
+    sourceType: MealPlanningSourceType
+    sourceRef: MealPlanningSourceRef | None = None
+    nutritionEstimateState: MealPlanningNutritionEstimateState
+    missingNutritionFields: list[MealPlanningNutritionField] = Field(default_factory=list)
 
 
 class MealTemplateDraftItem(MealIngredient):
@@ -95,6 +122,7 @@ class MealDocument(BaseModel):
     inputMethod: MealInputMethod | None = None
     aiMeta: MealAiMeta | None = None
     imageRef: MealImageRef | None = None
+    planningSource: MealPlanningSource | None = None
     notes: str | None = None
     tags: list[str] = Field(default_factory=_str_list_default)
     deleted: bool = False
@@ -164,6 +192,7 @@ class MealUpsertRequest(BaseModel):
     inputMethod: MealInputMethod | None = None
     aiMeta: MealAiMeta | None = None
     imageRef: MealImageRefInput | None = None
+    planningSource: MealPlanningSource | None = None
     imageId: str | None = None
     photoUrl: str | None = None
     notes: str | None = None
@@ -186,6 +215,29 @@ class MealUpsertRequest(BaseModel):
         if not normalized:
             raise ValueError("clientMutationId must be non-empty")
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_planned_source_nutrition(self) -> "MealUpsertRequest":
+        if self.planningSource is None:
+            return self
+
+        totals = self.totals
+        has_positive_totals = totals is not None and any(
+            value > 0
+            for value in (totals.kcal, totals.protein, totals.fat, totals.carbs)
+        )
+        has_positive_ingredient_nutrition = any(
+            ingredient.kcal > 0
+            or ingredient.protein > 0
+            or ingredient.fat > 0
+            or ingredient.carbs > 0
+            for ingredient in self.ingredients
+        )
+        if not has_positive_totals and not has_positive_ingredient_nutrition:
+            raise ValueError(
+                "Planned meal source requires positive nutrition evidence"
+            )
+        return self
 
 
 class MealUpsertResponse(BaseModel):

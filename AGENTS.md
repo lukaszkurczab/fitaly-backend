@@ -222,3 +222,28 @@ During work with Firebase, check the canonical deployable rules in
 # After
 
 After finishig task suggest if there is still something to do or this part is done
+
+# Github
+
+## Review guidelines
+
+- Review only changes introduced by the pull request.
+- Report only concrete issues with a realistic failure scenario.
+- Prioritize:
+  - correctness and regressions,
+  - authentication and authorization,
+  - security vulnerabilities,
+  - data loss or corruption,
+  - race conditions and transaction boundaries,
+  - API compatibility,
+  - database migration safety,
+  - performance regressions,
+  - missing tests for changed behavior and failure paths.
+- Ignore formatting, naming, and stylistic preferences handled by linters.
+- Do not report speculative problems without explaining how they can occur.
+- For every finding include:
+  - impact,
+  - affected file and line,
+  - failure scenario,
+  - minimal recommended fix.
+- Ignore generated files, lockfiles, and vendored code unless they introduce a build or security problem.

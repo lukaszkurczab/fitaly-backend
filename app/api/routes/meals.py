@@ -4,7 +4,9 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Upload
 from pydantic import ValidationError
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.feature_flags import raise_feature_disabled
 from app.api.http_errors import raise_bad_request
+from app.core.config import settings
 from app.schemas.meal import (
     MealChangesPageResponse,
     MealDeleteRequest,
@@ -17,7 +19,11 @@ from app.schemas.meal import (
     validate_day_key_format,
 )
 from app.services import meal_service
-from app.services.meal_service import MealMutationDedupeConflictError
+from app.services.meal_service import (
+    MealMutationDedupeConflictError,
+    MealPlanningSourceDisabledError,
+    MealPlanningSourceConflictError,
+)
 
 router = APIRouter()
 
@@ -67,6 +73,22 @@ def _raise_meal_upsert_validation_error(exc: ValidationError) -> NoReturn:
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=exc.errors(include_context=False),
     )
+
+
+def _raise_planned_meals_disabled() -> NoReturn:
+    raise_feature_disabled(
+        code="planned_meals_disabled",
+        message="Planned Meals are temporarily disabled.",
+    )
+
+
+def _ensure_planned_source_enabled(has_planning_source: bool) -> None:
+    if has_planning_source and not settings.PLANNED_MEALS_ENABLED:
+        _raise_planned_meals_disabled()
+
+
+def _raw_request_has_planning_source(request: dict[str, Any]) -> bool:
+    return request.get("planningSource") is not None
 
 
 @router.get("/users/me/meals/history", response_model=MealsHistoryPageResponse)
@@ -174,11 +196,14 @@ async def upsert_meal_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> MealUpsertResponse:
     try:
+        _ensure_planned_source_enabled(_raw_request_has_planning_source(request))
         parsed_request = MealUpsertRequest.model_validate(request)
         meal = await meal_service.upsert_meal(current_user.uid, parsed_request.model_dump())
     except ValidationError as exc:
         _raise_meal_upsert_validation_error(exc)
-    except MealMutationDedupeConflictError as exc:
+    except MealPlanningSourceDisabledError:
+        _raise_planned_meals_disabled()
+    except (MealMutationDedupeConflictError, MealPlanningSourceConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)

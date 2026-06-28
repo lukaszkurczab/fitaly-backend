@@ -25,13 +25,18 @@ This document maps `firestore.indexes.json` to active backend query shapes after
 9. `meals` (`COLLECTION`) — `deleted ASC`, `loggedAt ASC`, `__name__ ASC`
 - Used by: bounded user-owned `loggedAt` range reads with `deleted == false` in signal/state services.
 
-10. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
+10. `ingredientProducts` (`COLLECTION`) — `updatedAt ASC`, `ingredientProductId ASC`
+- Used by: `/users/me/ingredient-products/pull` current-user Product/Ingredient
+  synchronization with deterministic compound `updatedAt|ingredientProductId`
+  pagination.
+
+11. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `name ASC`, `ts ASC`
 - Used by: `telemetry_service.count_events_for_user`.
 
-11. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `ts ASC`
+12. `telemetry_events` (`COLLECTION`) — `userHash ASC`, `ts ASC`
 - Used by: `telemetry_service.get_daily_summary` and `telemetry_service.get_smart_reminder_summary`.
 
-12. `ai_runs` (`COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
+13. `ai_runs` (`COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
 - Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`).
 
 ## Query shapes that do not need new composites

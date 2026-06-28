@@ -6,6 +6,7 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
+from app.schemas.user_account import USER_EXPORT_RECORD_COUNT_FIELDS
 from app.services.user_account_service import (
     EmailValidationError,
     UserProfileMutationDedupeConflictError,
@@ -729,6 +730,23 @@ def test_get_user_export_returns_backend_payload(
             {"motivationEnabled": True},
             [{"id": "feedback-1"}],
             [{"clientMutationId": "profile-mutation-1", "kind": "profile_update"}],
+            [
+                {
+                    "eventId": "meal-effect-1",
+                    "kind": "meal_saved.streak_sync",
+                    "status": "pending",
+                }
+            ],
+            [{"id": "ingredient-product-1", "recordScope": "user_scoped"}],
+            [{"id": "memory-item-1"}],
+            [{"id": "memory-candidate-1"}],
+            [{"id": "default", "enabled": True}],
+            [{"id": "memory-tombstone-1"}],
+            [{"id": "memory-mutation-1"}],
+            [{"id": "known-pattern-control-1"}],
+            [{"id": "known-pattern-mutation-1"}],
+            [{"id": "planned-meal-1"}],
+            [{"id": "planned-meal-mutation-1"}],
             [{"id": "main", "status": "active"}],
             [{"id": "current", "billingId": "main", "balance": 8}],
             [{"id": "tx-1", "billingId": "main", "amount": -1}],
@@ -756,6 +774,25 @@ def test_get_user_export_returns_backend_payload(
         "mealMutationDedupe": [
             {"clientMutationId": "profile-mutation-1", "kind": "profile_update"}
         ],
+        "mealEffectOutbox": [
+            {
+                "eventId": "meal-effect-1",
+                "kind": "meal_saved.streak_sync",
+                "status": "pending",
+            }
+        ],
+        "ingredientProducts": [
+            {"id": "ingredient-product-1", "recordScope": "user_scoped"}
+        ],
+        "smartMemoryItems": [{"id": "memory-item-1"}],
+        "smartMemoryCandidates": [{"id": "memory-candidate-1"}],
+        "smartMemorySettings": [{"id": "default", "enabled": True}],
+        "smartMemoryTombstones": [{"id": "memory-tombstone-1"}],
+        "smartMemoryMutationDedupe": [{"id": "memory-mutation-1"}],
+        "knownPatternControls": [{"id": "known-pattern-control-1"}],
+        "knownPatternMutationDedupe": [{"id": "known-pattern-mutation-1"}],
+        "plannedMealItems": [{"id": "planned-meal-1"}],
+        "plannedMealMutationDedupe": [{"id": "planned-meal-mutation-1"}],
         "billing": [{"id": "main", "status": "active"}],
         "aiCredits": [{"id": "current", "billingId": "main", "balance": 8}],
         "aiCreditTransactions": [{"id": "tx-1", "billingId": "main", "amount": -1}],
@@ -766,7 +803,100 @@ def test_get_user_export_returns_backend_payload(
         "streak": [{"id": "main", "current": 7}],
         "reminderDailyStats": [{"id": "2026-03-03", "sendCount": 2}],
         "telemetryEvents": [{"eventId": "telemetry-1", "name": "meal_logged"}],
+        "exportManifest": {
+            "schemaVersion": "user-export-manifest-v1",
+            "recordCounts": {
+                "profile": 1,
+                "meals": 1,
+                "myMeals": 1,
+                "chatMessages": 1,
+                "chatMemory": 1,
+                "aiRuns": 1,
+                "notifications": 1,
+                "notificationPrefs": 1,
+                "feedback": 1,
+                "mealMutationDedupe": 1,
+                "mealEffectOutbox": 1,
+                "ingredientProducts": 1,
+                "smartMemoryItems": 1,
+                "smartMemoryCandidates": 1,
+                "smartMemorySettings": 1,
+                "smartMemoryTombstones": 1,
+                "smartMemoryMutationDedupe": 1,
+                "knownPatternControls": 1,
+                "knownPatternMutationDedupe": 1,
+                "plannedMealItems": 1,
+                "plannedMealMutationDedupe": 1,
+                "billing": 1,
+                "aiCredits": 1,
+                "aiCreditTransactions": 1,
+                "aiCreditIdempotency": 1,
+                "badges": 1,
+                "streak": 1,
+                "reminderDailyStats": 1,
+                "telemetryEvents": 1,
+            },
+        },
     }
+    get_user_export_data.assert_called_once_with("user-1")
+
+
+def test_get_user_export_manifest_counts_empty_and_large_sections(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    smart_memory_items = [{"id": f"memory-item-{index}"} for index in range(251)]
+    known_pattern_controls = [
+        {"id": f"known-pattern-control-{index}"} for index in range(501)
+    ]
+    get_user_export_data = mocker.patch(
+        "app.api.routes.users.user_account_service.get_user_export_data",
+        return_value=(
+            None,
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            {},
+            [],
+            [],
+            [],
+            [],
+            smart_memory_items,
+            [],
+            [],
+            [],
+            [],
+            known_pattern_controls,
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        ),
+    )
+
+    response = client.get("/api/v1/users/me/export", headers=auth_headers("user-1"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    manifest = payload["exportManifest"]
+    assert manifest["schemaVersion"] == "user-export-manifest-v1"
+    assert set(manifest["recordCounts"]) == set(USER_EXPORT_RECORD_COUNT_FIELDS)
+    assert manifest["recordCounts"]["profile"] == 0
+    assert manifest["recordCounts"]["notificationPrefs"] == 0
+    assert manifest["recordCounts"]["smartMemoryItems"] == 251
+    assert manifest["recordCounts"]["knownPatternControls"] == 501
+    assert len(payload["smartMemoryItems"]) == 251
+    assert len(payload["knownPatternControls"]) == 501
     get_user_export_data.assert_called_once_with("user-1")
 
 

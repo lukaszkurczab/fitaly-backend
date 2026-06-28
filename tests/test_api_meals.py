@@ -1,12 +1,24 @@
 from fastapi.testclient import TestClient
+import pytest
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
 from app.main import app
-from app.services.meal_service import MealMutationDedupeConflictError
+from app.services.meal_service import (
+    MealMutationDedupeConflictError,
+    MealPlanningSourceConflictError,
+)
 from tests.types import AuthHeaders
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_planned_meals_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.meals.settings.PLANNED_MEALS_ENABLED",
+        True,
+    )
 
 
 def test_get_meals_history_returns_backend_payload(
@@ -348,6 +360,7 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
                 "warnings": ["partial_totals"],
             },
             "imageRef": None,
+            "planningSource": None,
             "imageId": None,
             "photoUrl": None,
             "notes": None,
@@ -358,6 +371,173 @@ def test_post_meal_upsert_accepts_and_returns_input_method_and_ai_meta(
             "clientMutationId": "mutation-api-upsert-ai",
         },
     )
+
+
+def test_post_meal_upsert_accepts_and_returns_planning_source(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    planning_source: dict[str, object] = {
+        "plannedMealId": "planned-1",
+        "plannedMealVersion": 2,
+        "sourceType": "manual",
+        "sourceRef": None,
+        "nutritionEstimateState": "unknown",
+        "missingNutritionFields": ["fat"],
+    }
+    upsert_meal = mocker.patch(
+        "app.api.routes.meals.meal_service.upsert_meal",
+        return_value={
+            "id": "meal-1",
+            "loggedAt": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "name": "Chicken",
+            "ingredients": [],
+            "createdAt": "2026-03-03T12:00:00.000Z",
+            "updatedAt": "2026-03-03T12:00:00.000Z",
+            "syncState": "synced",
+            "source": "manual",
+            "planningSource": planning_source,
+            "imageId": None,
+            "photoUrl": None,
+            "notes": None,
+            "tags": [],
+            "deleted": False,
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+        },
+    )
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-api-upsert-planned",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            "planningSource": planning_source,
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meal"]["planningSource"] == planning_source
+    upsert_meal.assert_called_once()
+
+
+def test_post_meal_upsert_rejects_planning_source_when_planning_disabled_without_service_work(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: AuthHeaders,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.routes.meals.settings.PLANNED_MEALS_ENABLED",
+        False,
+    )
+    upsert_meal = mocker.patch("app.api.routes.meals.meal_service.upsert_meal")
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-api-upsert-planned-disabled",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+            "planningSource": {
+                "plannedMealId": "planned-1",
+                "plannedMealVersion": 2,
+                "sourceType": "manual",
+                "sourceRef": None,
+                "nutritionEstimateState": "known",
+                "missingNutritionFields": [],
+            },
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "planned_meals_disabled",
+            "message": "Planned Meals are temporarily disabled.",
+        }
+    }
+    upsert_meal.assert_not_called()
+
+
+def test_post_meal_upsert_rejects_unknown_planned_source_without_nutrition(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_meal = mocker.patch("app.api.routes.meals.meal_service.upsert_meal")
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-api-upsert-planned-empty",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+            "planningSource": {
+                "plannedMealId": "planned-1",
+                "plannedMealVersion": 2,
+                "sourceType": "manual",
+                "sourceRef": None,
+                "nutritionEstimateState": "unknown",
+                "missingNutritionFields": ["kcal", "protein", "fat", "carbs"],
+            },
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert (
+        "Planned meal source requires positive nutrition evidence"
+        in response.text
+    )
+    upsert_meal.assert_not_called()
+
+
+def test_post_meal_upsert_rejects_partial_planned_source_without_nutrition(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    upsert_meal = mocker.patch("app.api.routes.meals.meal_service.upsert_meal")
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-api-upsert-planned-partial-empty",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+            "planningSource": {
+                "plannedMealId": "planned-1",
+                "plannedMealVersion": 2,
+                "sourceType": "manual",
+                "sourceRef": None,
+                "nutritionEstimateState": "partial",
+                "missingNutritionFields": ["kcal", "protein", "fat", "carbs"],
+            },
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+    assert (
+        "Planned meal source requires positive nutrition evidence"
+        in response.text
+    )
+    upsert_meal.assert_not_called()
 
 
 def test_post_meal_upsert_rejects_missing_client_mutation_id(
@@ -406,6 +586,41 @@ def test_post_meal_upsert_returns_409_for_client_mutation_conflict(
 
     assert response.status_code == 409
     assert response.json() == {"detail": "clientMutationId conflict"}
+
+
+def test_post_meal_upsert_returns_409_for_planned_meal_conflict(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.meals.meal_service.upsert_meal",
+        side_effect=MealPlanningSourceConflictError("Planned meal version conflict"),
+    )
+
+    response = client.post(
+        "/api/v1/users/me/meals",
+        json={
+            "clientMutationId": "mutation-planned-conflict",
+            "mealId": "meal-1",
+            "timestamp": "2026-03-03T12:00:00.000Z",
+            "dayKey": "2026-03-03",
+            "type": "lunch",
+            "ingredients": [],
+            "totals": {"kcal": 200, "protein": 30, "carbs": 0, "fat": 5},
+            "planningSource": {
+                "plannedMealId": "planned-1",
+                "plannedMealVersion": 2,
+                "sourceType": "manual",
+                "sourceRef": None,
+                "nutritionEstimateState": "known",
+                "missingNutritionFields": [],
+            },
+        },
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Planned meal version conflict"}
 
 
 def test_post_meal_upsert_rejects_missing_day_key(

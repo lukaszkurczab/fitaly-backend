@@ -25,6 +25,10 @@ service cloud.firestore {
              );
     }
 
+    function hasBackendManagedMealSideEffectFields() {
+      return request.resource.data.keys().hasAny(['planningSource']);
+    }
+
     match /usernames/{username} {
       // Public read for username availability checks.
       allow get: if true;
@@ -51,7 +55,10 @@ service cloud.firestore {
     }
 
     match /users/{userId}/meals/{mealId} {
-      allow create, read, update, delete: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+                            && !hasBackendManagedMealSideEffectFields();
+      allow delete: if false;
     }
 
     match /users/{userId}/mealTemplates/{mealId} {
@@ -96,6 +103,32 @@ service cloud.firestore {
     match /users/{userId}/feedback/{feedbackId} {
       allow create, read: if isOwner(userId);
       allow update, delete: if false;
+    }
+
+    // Backend-owned Smart Memory source of truth. Mobile must use API v2.
+    match /users/{userId}/smartMemory/{memoryItemId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryCandidates/{candidateId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemorySettings/{settingsId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryTombstones/{tombstoneId} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/smartMemoryMutationDedupe/{mutationId} {
+      allow read, write: if false;
+    }
+
+    // Backend-owned Product/Ingredient user records. Mobile must use API v2.
+    match /users/{userId}/ingredientProducts/{ingredientProductId} {
+      allow read, write: if false;
     }
 
     // Backend-owned reminder state; not exposed to client SDK.
@@ -152,6 +185,11 @@ service cloud.firestore {
     }
 
     match /rate_limits/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Backend-owned Product/Ingredient global catalog.
+    match /ingredientProducts/{document=**} {
       allow read, write: if false;
     }
 

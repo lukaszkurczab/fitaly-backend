@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, cast, get_args
@@ -41,12 +42,36 @@ from app.schemas.food_library import (
     FOOD_LIBRARY_LOGGED_MEAL_OWNER,
     FOOD_LIBRARY_LOGGED_MEAL_SCHEMA,
     FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS,
+    INGREDIENT_PRODUCT_ALLERGEN_FLAGS,
+    INGREDIENT_PRODUCT_BARCODE_MINIMAL_IDENTITY_FIELDS,
+    INGREDIENT_PRODUCT_BARCODE_OPTIONAL_FIELDS,
+    INGREDIENT_PRODUCT_CONFIDENCE_FIELDS,
+    INGREDIENT_PRODUCT_CONFIDENCE_LEVELS,
+    INGREDIENT_PRODUCT_DIETARY_FLAGS,
+    INGREDIENT_PRODUCT_KINDS,
+    INGREDIENT_PRODUCT_LIFECYCLE_STATES,
+    INGREDIENT_PRODUCT_NUTRITION_BASES,
+    INGREDIENT_PRODUCT_NUTRITION_OPTIONAL_FIELDS,
+    INGREDIENT_PRODUCT_NUTRITION_REQUIRED_FIELDS,
+    INGREDIENT_PRODUCT_OPTIONAL_FIELDS,
+    INGREDIENT_PRODUCT_PROFILE_COMPATIBILITY_STATUSES,
+    INGREDIENT_PRODUCT_RECORD_SCOPES,
+    INGREDIENT_PRODUCT_REQUIRED_FIELDS,
+    INGREDIENT_PRODUCT_SERVING_REQUIRED_FIELDS,
+    INGREDIENT_PRODUCT_SERVING_SIZE_FIELDS,
+    INGREDIENT_PRODUCT_SERVING_UNITS,
+    INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_OPTIONAL_FIELDS,
+    INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_REQUIRED_FIELDS,
+    INGREDIENT_PRODUCT_SOURCE_TYPES,
     FoodLibraryDomainsContract,
 )
 from app.schemas.meal import (
     MealDocument,
     MealInputMethod,
     MealItem,
+    MealPlanningNutritionEstimateState,
+    MealPlanningNutritionField,
+    MealPlanningSourceType,
     MealSource,
     MealSyncState,
     MealType,
@@ -64,6 +89,22 @@ from app.schemas.media_asset import (
     MediaAssetLifecycleContract,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
+from app.schemas.smart_memory import (
+    SMART_MEMORY_CANDIDATE_STATES,
+    SMART_MEMORY_CENTER_STATES,
+    SMART_MEMORY_CONFIDENCE_REASON_CODES,
+    SMART_MEMORY_CONTRACT_NAME,
+    SMART_MEMORY_PROJECTION_STATES,
+    SMART_MEMORY_REVIEW_STATES,
+    SMART_MEMORY_SCHEMA_VERSION,
+    SMART_MEMORY_STATE_REASON_CODES,
+    SMART_MEMORY_STATES,
+    SMART_MEMORY_TYPES,
+    SMART_MEMORY_USER_CONTROL_OPERATIONS,
+    SMART_MEMORY_USER_VALUE_REASON_CODES,
+    SmartMemoryCoreContract,
+    SmartMemoryItemPatchRequest,
+)
 from app.schemas.reminders import (
     NOOP_REASON_CODES,
     SEND_REASON_CODES,
@@ -75,6 +116,7 @@ from app.schemas.reminders import (
 )
 from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
+    ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES,
     ALLOWED_TELEMETRY_EVENT_PROPS,
 )
 from app.schemas.weekly_reports import (
@@ -93,6 +135,12 @@ from app.services.coach_rule_engine import evaluate_coach_insights, select_top_i
 from app.services.coach_service import get_coach_response
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
+MOBILE_REPO_DIR = os.environ.get("MOBILE_REPO")
+MOBILE_FIXTURES_DIR = (
+    Path(MOBILE_REPO_DIR) / "src" / "__contract_fixtures__"
+    if MOBILE_REPO_DIR
+    else Path(__file__).resolve().parents[2] / "fitaly" / "src" / "__contract_fixtures__"
+)
 JSONDict = dict[str, Any]
 StringListDict = dict[str, list[str]]
 MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN = {
@@ -106,6 +154,21 @@ MEDIA_ASSET_DOMAIN_OWNED_URL_FIELDS_FORBIDDEN = {
 
 def _load_fixture(name: str) -> JSONDict:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+
+
+def _collect_object_keys(value: object, keys: set[str] | None = None) -> set[str]:
+    collected: set[str] = set() if keys is None else keys
+    if isinstance(value, dict):
+        raw = cast(dict[object, object], value)
+        for key, item in raw.items():
+            if isinstance(key, str):
+                collected.add(key)
+            _collect_object_keys(item, collected)
+    elif isinstance(value, list):
+        raw_items = cast(list[object], value)
+        for item in raw_items:
+            _collect_object_keys(item, collected)
+    return collected
 
 
 def _load_nutrition_state_fixture_model() -> NutritionStateResponse:
@@ -158,6 +221,11 @@ class TestMealItemContract:
         assert item.tzOffsetMin == 60
         assert item.imageRef is not None
         assert item.imageRef.imageId == "img-001"
+        assert item.planningSource is not None
+        assert item.planningSource.plannedMealId == "planned-contract-1"
+        assert item.planningSource.plannedMealVersion == 2
+        assert item.planningSource.nutritionEstimateState == "partial"
+        assert item.planningSource.missingNutritionFields == ["fat"]
         assert item.deleted is False
 
     def test_meal_upsert_request_parses(self, fixture: JSONDict) -> None:
@@ -168,6 +236,9 @@ class TestMealItemContract:
         assert req.type == "lunch"
         assert req.totals is not None
         assert req.totals.protein == 62.0
+        assert req.planningSource is not None
+        assert req.planningSource.plannedMealId == "planned-contract-1"
+        assert req.planningSource.nutritionEstimateState == "partial"
 
     def test_meal_day_key_rejects_non_canonical_format(self, fixture: JSONDict) -> None:
         payload = dict(fixture)
@@ -635,6 +706,436 @@ class TestSmartReminderTelemetryContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: autocomplete_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestAutocompleteTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("autocomplete_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "autocomplete_search_outcome",
+            "autocomplete_result_selected",
+            "ingredient_product_create_outcome",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "autocomplete_search_outcome": {
+                "surface",
+                "outcome",
+                "queryLengthBucket",
+                "resultCountBucket",
+                "sourceClass",
+                "latencyBucket",
+                "warningReason",
+            },
+            "autocomplete_result_selected": {
+                "surface",
+                "resultCountBucket",
+                "sourceClass",
+                "rankBucket",
+                "selectionState",
+                "warningReason",
+            },
+            "ingredient_product_create_outcome": {
+                "surface",
+                "outcome",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+    def test_disallowed_props_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        allowed_props: set[str] = set()
+        for prop_names in ALLOWED_TELEMETRY_EVENT_PROPS.values():
+            allowed_props.update(prop_names)
+        for prop_name in fixture["disallowedPropNames"]:
+            assert prop_name not in allowed_props
+
+
+# ---------------------------------------------------------------------------
+# Fixture: home_next_action_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestHomeNextActionTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("home_next_action_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown",
+            "home_next_action_started",
+            "home_next_action_dismissed",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown": {
+                "actionType",
+                "state",
+                "reasonCode",
+                "sourceDomain",
+            },
+            "home_next_action_started": {
+                "actionType",
+                "ownerFlow",
+                "state",
+            },
+            "home_next_action_dismissed": {
+                "actionType",
+                "reasonCode",
+                "cooldownBucket",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_enum_values_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "home_next_action_shown": {
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
+                "state": {"eligible"},
+                "reasonCode": {
+                    "review_draft_available",
+                    "planned_item_due",
+                    "known_pattern_available",
+                },
+                "sourceDomain": {
+                    "review_draft",
+                    "planned_meal",
+                    "known_pattern_candidate",
+                },
+            },
+            "home_next_action_started": {
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
+                "ownerFlow": {"ReviewMeal", "Planning", "MealAddMethod"},
+                "state": {"eligible"},
+            },
+            "home_next_action_dismissed": {
+                "actionType": {
+                    "continue_review",
+                    "continue_planned_item",
+                    "confirm_known_pattern",
+                },
+                "reasonCode": {
+                    "review_draft_available",
+                    "planned_item_due",
+                    "known_pattern_available",
+                },
+                "cooldownBucket": {"24h"},
+            },
+        }
+
+        raw_enum_values = cast(JSONDict, fixture["enumValuesByEvent"])
+        assert set(raw_enum_values.keys()) == set(expected.keys())
+        for event_name, prop_values in expected.items():
+            event_values = cast(dict[str, list[str]], raw_enum_values[event_name])
+            assert set(event_values.keys()) == set(prop_values.keys())
+            for prop_name, values in prop_values.items():
+                assert set(event_values[prop_name]) == values
+                assert ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES[event_name][
+                    prop_name
+                ] == frozenset(values)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+    def test_disallowed_props_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        allowed_props: set[str] = set()
+        for prop_names in ALLOWED_TELEMETRY_EVENT_PROPS.values():
+            allowed_props.update(prop_names)
+        for prop_name in fixture["disallowedPropNames"]:
+            assert prop_name not in allowed_props
+
+
+# ---------------------------------------------------------------------------
+# Fixture: c5_new_domain_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestC5NewDomainTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("c5_new_domain_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "memory_candidate_created",
+            "memory_candidate_confirmed",
+            "memory_candidate_dismissed",
+            "memory_used",
+            "memory_muted",
+            "memory_deleted",
+            "planned_meal_created",
+            "planned_meal_confirmed",
+            "planned_meal_changed",
+            "planned_meal_skipped",
+            "known_pattern_candidate_shown",
+            "known_pattern_review_started",
+            "known_pattern_candidate_dismissed",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "memory_candidate_created": {
+                "memoryType",
+                "surface",
+                "confidenceBucket",
+                "featureState",
+            },
+            "memory_candidate_confirmed": {
+                "memoryType",
+                "surface",
+                "confidenceBucket",
+                "actionResult",
+                "featureState",
+            },
+            "memory_candidate_dismissed": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_used": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_muted": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "memory_deleted": {
+                "memoryType",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_created": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "featureState",
+            },
+            "planned_meal_confirmed": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_changed": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "planned_meal_skipped": {
+                "sourceType",
+                "estimateState",
+                "surface",
+                "actionResult",
+                "featureState",
+            },
+            "known_pattern_candidate_shown": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "featureState",
+            },
+            "known_pattern_review_started": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "actionResult",
+                "featureState",
+            },
+            "known_pattern_candidate_dismissed": {
+                "surface",
+                "confidenceBucket",
+                "sourceCountBucket",
+                "actionResult",
+                "featureState",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_enum_values_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        memory_types = {
+            "ingredient_product_selection",
+            "review_correction",
+            "typical_portion",
+        }
+        surfaces = {
+            "home_next_action",
+            "memory_center",
+            "planning",
+            "review",
+            "settings",
+        }
+        confidence_buckets = {"high", "low", "medium"}
+        action_results = {"blocked", "failed", "queued", "succeeded"}
+        feature_states = {"disabled", "enabled", "shadow"}
+        source_types = {"ingredient_product_draft", "manual", "recipe", "saved_meal"}
+        estimate_states = {"known", "partial", "unknown"}
+        known_pattern_surfaces = {"meal_add_method"}
+        known_pattern_confidence_buckets = {"high", "medium"}
+        known_pattern_count_buckets = {"3_4", "5_plus"}
+        expected = {
+            "memory_candidate_created": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "confidenceBucket": confidence_buckets,
+                "featureState": feature_states,
+            },
+            "memory_candidate_confirmed": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "confidenceBucket": confidence_buckets,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_candidate_dismissed": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_used": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_muted": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "memory_deleted": {
+                "memoryType": memory_types,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_created": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "featureState": feature_states,
+            },
+            "planned_meal_confirmed": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_changed": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "planned_meal_skipped": {
+                "sourceType": source_types,
+                "estimateState": estimate_states,
+                "surface": surfaces,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "known_pattern_candidate_shown": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
+                "featureState": feature_states,
+            },
+            "known_pattern_review_started": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+            "known_pattern_candidate_dismissed": {
+                "surface": known_pattern_surfaces,
+                "confidenceBucket": known_pattern_confidence_buckets,
+                "sourceCountBucket": known_pattern_count_buckets,
+                "actionResult": action_results,
+                "featureState": feature_states,
+            },
+        }
+
+        raw_enum_values = cast(JSONDict, fixture["enumValuesByEvent"])
+        assert set(raw_enum_values.keys()) == set(expected.keys())
+        for event_name, prop_values in expected.items():
+            event_values = cast(dict[str, list[str]], raw_enum_values[event_name])
+            assert set(event_values.keys()) == set(prop_values.keys())
+            for prop_name, values in prop_values.items():
+                assert set(event_values[prop_name]) == values
+                assert ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES[event_name][
+                    prop_name
+                ] == frozenset(values)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+    def test_disallowed_props_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        allowed_props_by_event = {
+            event_name: set(prop_names)
+            for event_name, prop_names in ALLOWED_TELEMETRY_EVENT_PROPS.items()
+            if event_name in fixture["eventNames"]
+        }
+        for event_name, prop_names in allowed_props_by_event.items():
+            for prop_name in fixture["disallowedPropNames"]:
+                assert prop_name not in prop_names, event_name
+
+    def test_mobile_fixture_is_byte_identical(self) -> None:
+        assert (FIXTURES_DIR / "c5_new_domain_telemetry.json").read_bytes() == (
+            MOBILE_FIXTURES_DIR / "c5_new_domain_telemetry.json"
+        ).read_bytes()
+
+
+# ---------------------------------------------------------------------------
 # Fixture: gateway_reject.json
 # ---------------------------------------------------------------------------
 
@@ -839,6 +1340,23 @@ class TestEnumParity:
                 source_values.extend(value for value in inner if isinstance(value, str))
         assert sorted(enums["MealSource"]) == sorted(source_values)
 
+    def test_meal_planning_source_type_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["MealPlanningSourceType"]) == sorted(
+            get_args(MealPlanningSourceType)
+        )
+
+    def test_meal_planning_nutrition_estimate_state_parity(
+        self, enums: StringListDict
+    ) -> None:
+        assert sorted(enums["MealPlanningNutritionEstimateState"]) == sorted(
+            get_args(MealPlanningNutritionEstimateState)
+        )
+
+    def test_meal_planning_nutrition_field_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["MealPlanningNutritionField"]) == sorted(
+            get_args(MealPlanningNutritionField)
+        )
+
     def test_gateway_reject_reasons_parity(self, enums: StringListDict) -> None:
         backend_reasons = {REJECT_REASON_OFF_TOPIC, REJECT_REASON_TOO_SHORT}
         assert sorted(enums["GatewayRejectReasons"]) == sorted(backend_reasons)
@@ -878,6 +1396,75 @@ class TestFoodLibraryDomainsContract:
     def fixture(self) -> JSONDict:
         return _load_fixture("food_library_domains_v1.json")
 
+    def test_fixture_uses_exact_product_contract_keys(self, fixture: JSONDict) -> None:
+        assert set(fixture.keys()) == {
+            "contract",
+            "libraryDomains",
+            "domainContracts",
+            "ingredientProductRecordContract",
+            "loggedMealBoundary",
+            "currentSavedMealsBoundary",
+            "barcodeBoundary",
+        }
+
+        record_contract = cast(
+            dict[str, object],
+            fixture["ingredientProductRecordContract"],
+        )
+        assert set(record_contract.keys()) == {
+            "recordKinds",
+            "recordScopes",
+            "lifecycleStates",
+            "verifiedMeaning",
+            "requiredFields",
+            "optionalFields",
+            "kindSpecificRequiredFields",
+            "ownership",
+            "sourceAttribution",
+            "confidence",
+            "nutritionPer100",
+            "serving",
+            "profileFlags",
+            "barcodeIdentities",
+            "localCacheBoundary",
+        }
+        assert set(cast(dict[str, object], record_contract["ownership"])) == {
+            "scopeField",
+            "ownerField",
+            "userScopedScope",
+            "userScopedRequiresOwnerUserId",
+            "globalScopesMustNotUseOwnerUserId",
+            "globalRecordsAreUserAccountData",
+        }
+        assert set(cast(dict[str, object], record_contract["sourceAttribution"])) == {
+            "requiredFields",
+            "optionalFields",
+            "sourceTypes",
+            "candidateOnlySourceTypes",
+            "durableTruthRequiresNonAiSource",
+        }
+        assert set(cast(dict[str, object], record_contract["confidence"])) == {
+            "requiredFields",
+            "levels",
+            "unknownMeansNotSafeToAssume",
+        }
+        assert set(cast(dict[str, object], record_contract["nutritionPer100"])) == {
+            "requiredFields",
+            "optionalFields",
+            "allowedBases",
+            "missingNutritionPolicy",
+            "runtimeAiMayBecomeDurableNutritionTruth",
+        }
+        assert set(cast(dict[str, object], record_contract["profileFlags"])) == {
+            "requiredFields",
+            "allowedDietaryFlags",
+            "allowedAllergenFlags",
+            "compatibilityStatuses",
+            "missingProfilePolicy",
+            "verifiedIsMedicalOrDietarySafetyClaim",
+            "runtimeAiMayBecomeDurableProfileTruth",
+        }
+
     def test_contract_parses_and_declares_exact_library_domains(
         self,
         fixture: JSONDict,
@@ -907,6 +1494,144 @@ class TestFoodLibraryDomainsContract:
             assert domain_contract.owner == expected_owner
             assert tuple(domain_contract.identityFields) == expected_identity_fields
             assert tuple(domain_contract.ownedFields) == expected_owned_fields
+
+    def test_ingredient_product_contract_defines_exact_foundation_fields(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = FoodLibraryDomainsContract.model_validate(fixture)
+        product_contract = contract.ingredientProductRecordContract
+
+        assert tuple(product_contract.recordKinds) == INGREDIENT_PRODUCT_KINDS
+        assert tuple(product_contract.recordScopes) == INGREDIENT_PRODUCT_RECORD_SCOPES
+        assert tuple(product_contract.lifecycleStates) == (
+            INGREDIENT_PRODUCT_LIFECYCLE_STATES
+        )
+        assert product_contract.verifiedMeaning == (
+            "verified_for_fitaly_catalog_use_not_medical_or_dietary_safety_claim"
+        )
+        assert tuple(product_contract.requiredFields) == (
+            INGREDIENT_PRODUCT_REQUIRED_FIELDS
+        )
+        assert tuple(product_contract.optionalFields) == (
+            INGREDIENT_PRODUCT_OPTIONAL_FIELDS
+        )
+        assert product_contract.kindSpecificRequiredFields.generic_ingredient == [
+            "ingredientName"
+        ]
+        assert product_contract.kindSpecificRequiredFields.branded_product == [
+            "brandName"
+        ]
+        assert product_contract.ownership.scopeField == "recordScope"
+        assert product_contract.ownership.ownerField == "ownerUserId"
+        assert product_contract.ownership.userScopedScope == "user_scoped"
+        assert product_contract.ownership.userScopedRequiresOwnerUserId is True
+        assert product_contract.ownership.globalScopesMustNotUseOwnerUserId == [
+            "global_seed",
+            "global_internal",
+        ]
+        assert product_contract.ownership.globalRecordsAreUserAccountData is False
+
+    def test_ingredient_product_contract_enforces_source_confidence_and_no_guessing(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        product_contract = FoodLibraryDomainsContract.model_validate(
+            fixture
+        ).ingredientProductRecordContract
+
+        assert tuple(product_contract.sourceAttribution.sourceTypes) == (
+            INGREDIENT_PRODUCT_SOURCE_TYPES
+        )
+        assert product_contract.sourceAttribution.requiredFields == [
+            *INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_REQUIRED_FIELDS,
+        ]
+        assert product_contract.sourceAttribution.optionalFields == [
+            *INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_OPTIONAL_FIELDS,
+        ]
+        assert product_contract.sourceAttribution.candidateOnlySourceTypes == [
+            "barcode_identity",
+            "runtime_ai_candidate",
+        ]
+        assert (
+            product_contract.sourceAttribution.durableTruthRequiresNonAiSource
+            is True
+        )
+        assert tuple(product_contract.confidence.levels) == (
+            INGREDIENT_PRODUCT_CONFIDENCE_LEVELS
+        )
+        assert product_contract.confidence.requiredFields == [
+            *INGREDIENT_PRODUCT_CONFIDENCE_FIELDS,
+        ]
+        assert product_contract.confidence.unknownMeansNotSafeToAssume is True
+        assert product_contract.nutritionPer100.missingNutritionPolicy == (
+            "unknown_not_guessed"
+        )
+        assert (
+            product_contract.nutritionPer100.runtimeAiMayBecomeDurableNutritionTruth
+            is False
+        )
+        assert product_contract.profileFlags.missingProfilePolicy == (
+            "unknown_not_guessed"
+        )
+        assert (
+            product_contract.profileFlags.runtimeAiMayBecomeDurableProfileTruth
+            is False
+        )
+
+    def test_ingredient_product_contract_enforces_data_boundaries(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        product_contract = FoodLibraryDomainsContract.model_validate(
+            fixture
+        ).ingredientProductRecordContract
+
+        assert tuple(product_contract.nutritionPer100.allowedBases) == (
+            INGREDIENT_PRODUCT_NUTRITION_BASES
+        )
+        assert product_contract.nutritionPer100.requiredFields == [
+            *INGREDIENT_PRODUCT_NUTRITION_REQUIRED_FIELDS,
+        ]
+        assert product_contract.nutritionPer100.optionalFields == [
+            *INGREDIENT_PRODUCT_NUTRITION_OPTIONAL_FIELDS,
+        ]
+        assert tuple(product_contract.serving.allowedUnits) == (
+            INGREDIENT_PRODUCT_SERVING_UNITS
+        )
+        assert product_contract.serving.requiredFields == [
+            *INGREDIENT_PRODUCT_SERVING_REQUIRED_FIELDS,
+        ]
+        assert product_contract.serving.servingSizeFields == [
+            *INGREDIENT_PRODUCT_SERVING_SIZE_FIELDS,
+        ]
+        assert tuple(product_contract.profileFlags.allowedDietaryFlags) == (
+            INGREDIENT_PRODUCT_DIETARY_FLAGS
+        )
+        assert tuple(product_contract.profileFlags.allowedAllergenFlags) == (
+            INGREDIENT_PRODUCT_ALLERGEN_FLAGS
+        )
+        assert tuple(product_contract.profileFlags.compatibilityStatuses) == (
+            INGREDIENT_PRODUCT_PROFILE_COMPATIBILITY_STATUSES
+        )
+        assert (
+            product_contract.profileFlags.verifiedIsMedicalOrDietarySafetyClaim
+            is False
+        )
+        assert product_contract.barcodeIdentities.minimalIdentityFields == [
+            *INGREDIENT_PRODUCT_BARCODE_MINIMAL_IDENTITY_FIELDS,
+        ]
+        assert product_contract.barcodeIdentities.optionalFields == [
+            *INGREDIENT_PRODUCT_BARCODE_OPTIONAL_FIELDS,
+        ]
+        assert product_contract.barcodeIdentities.noCatalogWriteInThisSlice is True
+        assert product_contract.barcodeIdentities.noTopLevelAddMealBarcodePath is True
+        assert product_contract.localCacheBoundary.representedAs == "projection_only"
+        assert product_contract.localCacheBoundary.localCacheIsTruth is False
+        assert (
+            product_contract.localCacheBoundary.mayPromoteToGlobalWithoutReview
+            is False
+        )
 
     def test_meal_template_contract_excludes_logged_meal_only_fields(
         self,
@@ -1025,6 +1750,224 @@ class TestFoodLibraryDomainsContract:
 
         with pytest.raises(ValidationError):
             FoodLibraryDomainsContract.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Fixture: smart_memory_core_v1.json
+# ---------------------------------------------------------------------------
+
+
+class TestSmartMemoryCoreContract:
+    """Smart Memory backend/mobile contract must lock states before UI ships."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("smart_memory_core_v1.json")
+
+    def test_fixture_uses_exact_contract_keys(self, fixture: JSONDict) -> None:
+        assert set(fixture.keys()) == {
+            "contract",
+            "schemaVersion",
+            "memoryTypes",
+            "memoryStates",
+            "candidateStates",
+            "reasonCodes",
+            "userControlOperations",
+            "offlineProjectionStates",
+            "apiEndpoints",
+            "apiResponseExamples",
+            "stateTransitionExamples",
+            "memoryCenter",
+            "review",
+            "privacyBoundary",
+        }
+        assert set(cast(dict[str, object], fixture["reasonCodes"])) == {
+            "stateReasonCodes",
+            "confidenceReasonCodes",
+            "userValueReasonCodes",
+        }
+        assert set(cast(dict[str, object], fixture["apiResponseExamples"])) == {
+            "emptyItemsPage",
+            "itemsPage",
+            "candidateResponse",
+            "itemDeleteResponse",
+            "settingsEnabledResponse",
+            "settingsDisabledResponse",
+        }
+        for example in cast(list[dict[str, object]], fixture["stateTransitionExamples"]):
+            assert set(example) == {
+                "case",
+                "memoryType",
+                "backendState",
+                "projectionState",
+                "reviewState",
+                "memoryItemId",
+                "candidateId",
+                "queuedOperation",
+                "suggestionUse",
+            }
+
+    def test_contract_parses_and_matches_backend_constants(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = SmartMemoryCoreContract.model_validate(fixture)
+
+        assert contract.contract == SMART_MEMORY_CONTRACT_NAME
+        assert contract.schemaVersion == SMART_MEMORY_SCHEMA_VERSION
+        assert tuple(contract.memoryTypes) == SMART_MEMORY_TYPES
+        assert tuple(contract.memoryStates) == SMART_MEMORY_STATES
+        assert tuple(contract.candidateStates) == SMART_MEMORY_CANDIDATE_STATES
+        assert (
+            tuple(contract.reasonCodes.stateReasonCodes)
+            == SMART_MEMORY_STATE_REASON_CODES
+        )
+        assert (
+            tuple(contract.reasonCodes.confidenceReasonCodes)
+            == SMART_MEMORY_CONFIDENCE_REASON_CODES
+        )
+        assert (
+            tuple(contract.reasonCodes.userValueReasonCodes)
+            == SMART_MEMORY_USER_VALUE_REASON_CODES
+        )
+        assert tuple(contract.userControlOperations) == (
+            SMART_MEMORY_USER_CONTROL_OPERATIONS
+        )
+        assert tuple(contract.offlineProjectionStates) == (
+            SMART_MEMORY_PROJECTION_STATES
+        )
+        assert tuple(contract.memoryCenter.states) == SMART_MEMORY_CENTER_STATES
+        assert tuple(contract.review.states) == SMART_MEMORY_REVIEW_STATES
+
+    def test_mobile_fixture_is_byte_identical(self) -> None:
+        backend_fixture = (FIXTURES_DIR / "smart_memory_core_v1.json").read_bytes()
+        mobile_fixture = (MOBILE_FIXTURES_DIR / "smart_memory_core_v1.json").read_bytes()
+
+        assert mobile_fixture == backend_fixture
+
+    def test_state_examples_cover_required_release_states(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = SmartMemoryCoreContract.model_validate(fixture)
+        cases = {example.case for example in contract.stateTransitionExamples}
+
+        assert cases == set(SMART_MEMORY_PROJECTION_STATES)
+        blocked_cases = {
+            "no_signal",
+            "activated",
+            "muted",
+            "deleted_suppressed",
+            "disabled",
+            "source_deleted",
+            "sync_failed",
+            "conflicted",
+            "queued_edit",
+            "queued_mute",
+            "queued_delete",
+            "queued_disable",
+        }
+        for example in contract.stateTransitionExamples:
+            if example.case in blocked_cases:
+                assert example.suggestionUse == "blocked"
+                assert example.reviewState != "used"
+            if example.suggestionUse == "allowed":
+                assert example.reviewState == "used"
+            if example.case.startswith("queued_") or example.case in {
+                "pending_offline_candidate",
+                "sync_failed",
+                "conflicted",
+            }:
+                assert example.queuedOperation is not None
+
+    def test_backend_schemas_reject_unknown_reason_codes(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        mutated = cast(JSONDict, json.loads(json.dumps(fixture)))
+        response_examples = cast(JSONDict, mutated["apiResponseExamples"])
+        items_page = cast(JSONDict, response_examples["itemsPage"])
+        items = cast(list[JSONDict], items_page["items"])
+        items[0]["stateReason"] = "unknown_reason"
+        with pytest.raises(ValidationError):
+            SmartMemoryCoreContract.model_validate(mutated)
+
+        mutated = cast(JSONDict, json.loads(json.dumps(fixture)))
+        response_examples = cast(JSONDict, mutated["apiResponseExamples"])
+        items_page = cast(JSONDict, response_examples["itemsPage"])
+        items = cast(list[JSONDict], items_page["items"])
+        items[0]["confidenceReasonCodes"] = ["unknown_reason"]
+        with pytest.raises(ValidationError):
+            SmartMemoryCoreContract.model_validate(mutated)
+
+        mutated = cast(JSONDict, json.loads(json.dumps(fixture)))
+        response_examples = cast(JSONDict, mutated["apiResponseExamples"])
+        items_page = cast(JSONDict, response_examples["itemsPage"])
+        items = cast(list[JSONDict], items_page["items"])
+        user_value = cast(JSONDict, items[0]["userValue"])
+        user_value["reasonCode"] = "unknown_reason"
+        with pytest.raises(ValidationError):
+            SmartMemoryCoreContract.model_validate(mutated)
+
+        with pytest.raises(ValidationError):
+            SmartMemoryItemPatchRequest.model_validate(
+                {
+                    "clientMutationId": "contract-mutation-bad-reason",
+                    "userValue": {
+                        "amount": 60,
+                        "unit": "g",
+                        "reasonCode": "unknown_reason",
+                    },
+                }
+            )
+
+    def test_api_examples_parse_through_backend_response_models(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        contract = SmartMemoryCoreContract.model_validate(fixture)
+
+        assert contract.apiResponseExamples.emptyItemsPage.items == []
+        assert {item.state for item in contract.apiResponseExamples.itemsPage.items} == {
+            "active",
+            "muted",
+        }
+        assert contract.apiResponseExamples.candidateResponse.candidate.state == (
+            "candidate"
+        )
+        assert contract.apiResponseExamples.itemDeleteResponse.item.state == (
+            "deleted_suppressed"
+        )
+        assert contract.apiResponseExamples.itemDeleteResponse.item.subject == {}
+        assert contract.apiResponseExamples.itemDeleteResponse.item.sourceRefs == []
+        assert contract.apiResponseExamples.settingsEnabledResponse.settings.enabled is True
+        assert contract.apiResponseExamples.settingsDisabledResponse.settings.enabled is (
+            False
+        )
+
+    def test_fixture_keeps_private_and_provider_payloads_out(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        forbidden_keys = {
+            "rawPrompt",
+            "rawResponse",
+            "providerMessages",
+            "fullPayload",
+            "openaiPayload",
+            "providerPayload",
+            "telemetryPayload",
+            "rawReviewDiff",
+            "rawDiff",
+            "mealSnapshot",
+        }
+        assert _collect_object_keys(fixture).isdisjoint(forbidden_keys)
+        contract = SmartMemoryCoreContract.model_validate(fixture)
+        assert contract.privacyBoundary.excludesMealNarrativeText is True
+        assert contract.privacyBoundary.excludesReviewDiffs is True
+        assert contract.privacyBoundary.excludesProviderPayloads is True
+        assert contract.privacyBoundary.excludesTelemetryPrivateIdentifiers is True
+        assert contract.privacyBoundary.usesHashedSubjectAndSourceRefs is True
 
 
 # ---------------------------------------------------------------------------

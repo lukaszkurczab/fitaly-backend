@@ -1,11 +1,16 @@
 from fastapi import APIRouter
 
 from app.api.v2.endpoints.ai_chat import router as ai_chat_router
+from app.api.v2.endpoints.known_patterns import router as known_patterns_router
+from app.api.v2.endpoints.planned_meals import router as planned_meals_router
+from app.api.v2.endpoints.recipe_catalog import router as recipe_catalog_router
 from app.api.routes.chat_threads import router as chat_threads_router
 from app.api.routes.coach import router as coach_router
+from app.api.routes.food_library import router as food_library_router
 from app.api.routes.habits import router as habits_router
 from app.api.routes.nutrition_state import router as nutrition_state_router
 from app.api.routes.reminders import router as reminders_router
+from app.api.routes.smart_memory import router as smart_memory_router
 from app.api.routes.telemetry import router as telemetry_router
 from app.api.routes.weekly_reports import router as weekly_reports_router
 
@@ -18,5 +23,10 @@ router.include_router(nutrition_state_router, tags=["nutrition-state"], prefix="
 router.include_router(coach_router, tags=["coach"], prefix="")
 router.include_router(reminders_router, tags=["reminders"], prefix="")
 router.include_router(weekly_reports_router, tags=["weekly-reports"], prefix="")
+router.include_router(smart_memory_router, prefix="")
+router.include_router(food_library_router, tags=["food-library"], prefix="")
 router.include_router(ai_chat_router, prefix="")
+router.include_router(known_patterns_router, prefix="")
+router.include_router(planned_meals_router, prefix="")
+router.include_router(recipe_catalog_router, prefix="")
 router.include_router(chat_threads_router, tags=["ai-chat"], prefix="")
