@@ -49,6 +49,7 @@ class FakeCollectionRef:
     def __init__(self, documents: dict[str, FakeDocumentRef]) -> None:
         self.documents = documents
         self.limit_calls: list[int] = []
+        self.order_by_calls: list[tuple[str, object | None]] = []
         self.where_calls: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.query_refs: list["FakeCollectionRef"] = []
 
@@ -66,6 +67,21 @@ class FakeCollectionRef:
     def limit(self, count: int) -> "FakeCollectionRef":
         self.limit_calls.append(count)
         return FakeCollectionRef(dict(list(self.documents.items())[:count]))
+
+    def order_by(self, field: str, direction: object | None = None) -> "FakeCollectionRef":
+        self.order_by_calls.append((field, direction))
+        reverse = direction == firestore.Query.DESCENDING
+        ordered = dict(
+            sorted(
+                self.documents.items(),
+                key=lambda item: str(item[1].snapshot.to_dict().get(field) or ""),
+                reverse=reverse,
+            )
+        )
+        query_ref = FakeCollectionRef(ordered)
+        query_ref.limit_calls = self.limit_calls
+        self.query_refs.append(query_ref)
+        return query_ref
 
     def where(self, *, filter: Any) -> "FakeCollectionRef":
         field_path = filter.field_path
@@ -1339,6 +1355,9 @@ def test_list_items_uses_bounded_collection_query(monkeypatch: pytest.MonkeyPatc
 
     assert result[0]["memoryItemId"] == item["memoryItemId"]
     assert items_collection.limit_calls == [7]
+    assert items_collection.order_by_calls == [
+        ("updatedAt", firestore.Query.DESCENDING)
+    ]
 
 
 def test_list_candidates_uses_bounded_collection_query(
@@ -1374,6 +1393,9 @@ def test_list_candidates_uses_bounded_collection_query(
 
     assert result[0]["candidateId"] == candidate["candidateId"]
     assert candidates_collection.limit_calls == [9]
+    assert candidates_collection.order_by_calls == [
+        ("updatedAt", firestore.Query.DESCENDING)
+    ]
 
 
 def test_item_patch_rejects_unsupported_user_value_field() -> None:

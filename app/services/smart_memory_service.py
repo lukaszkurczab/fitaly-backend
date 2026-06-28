@@ -498,10 +498,11 @@ async def list_items(user_id: str, *, limit_count: int = 100) -> list[dict[str, 
     limit = min(max(limit_count, 1), MAX_LIST_LIMIT)
     client = get_firestore()
     collection_ref = _user_ref(client, user_id).collection(SMART_MEMORY_SUBCOLLECTION)
+    query = collection_ref.order_by("updatedAt", direction=firestore.Query.DESCENDING)
     try:
         documents = [
             _snapshot_document(snapshot, document_id_field="memoryItemId")
-            for snapshot in _stream_bounded_collection(collection_ref, limit_count=limit)
+            for snapshot in _stream_bounded_collection(query, limit_count=limit)
         ]
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception("Failed to list Smart Memory items.", extra={"user_id": user_id})
@@ -511,7 +512,6 @@ async def list_items(user_id: str, *, limit_count: int = 100) -> list[dict[str, 
         for document in documents
         if document.get("state") not in {"deleted_suppressed"}
     ]
-    documents.sort(key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
     return documents[:limit]
 
 
@@ -534,16 +534,16 @@ async def list_candidates(user_id: str, *, limit_count: int = 100) -> list[dict[
     collection_ref = _user_ref(client, user_id).collection(
         SMART_MEMORY_CANDIDATES_SUBCOLLECTION
     )
+    query = collection_ref.order_by("updatedAt", direction=firestore.Query.DESCENDING)
     try:
         documents = [
             _snapshot_document(snapshot, document_id_field="candidateId")
-            for snapshot in _stream_bounded_collection(collection_ref, limit_count=limit)
+            for snapshot in _stream_bounded_collection(query, limit_count=limit)
         ]
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception("Failed to list Smart Memory candidates.", extra={"user_id": user_id})
         raise FirestoreServiceError("Failed to list Smart Memory candidates.") from exc
     documents = [document for document in documents if document.get("state") == "candidate"]
-    documents.sort(key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
     return documents[:limit]
 
 

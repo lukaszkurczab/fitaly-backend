@@ -780,89 +780,106 @@ async def create_user_ingredient_product(
     )
     if request.kind == "branded_product" and not request.brandName:
         raise ValueError("brandName is required for branded Ingredient/Product records.")
+    client = get_firestore()
     collection_ref = (
-        get_firestore()
-        .collection(USERS_COLLECTION)
+        client.collection(USERS_COLLECTION)
         .document(user_id)
         .collection(INGREDIENT_PRODUCTS_SUBCOLLECTION)
     )
     document_ref = collection_ref.document(product_id)
 
-    try:
-        existing_snapshot = document_ref.get()
-        if existing_snapshot.exists:
-            existing_payload = _snapshot_payload(existing_snapshot)
-            if existing_payload.get("creationClientMutationId") == request.clientMutationId:
-                return _to_search_row(
-                    existing_payload,
-                    normalized_query=normalize_search_query(request.displayName),
-                ), False
-            raise IngredientProductMutationConflictError(
-                "Ingredient/Product record already exists for a different mutation."
-            )
-
-        nutrition_confidence: IngredientProductConfidenceLevel = (
-            "low" if request.nutritionPer100 is not None else "unknown"
-        )
-        payload: dict[str, Any] = {
-            "ingredientProductId": product_id,
-            "recordScope": "user_scoped",
-            "lifecycleState": "candidate",
-            "ownerUserId": user_id,
-            "kind": request.kind,
-            "displayName": request.displayName,
-            "defaultServing": request.defaultServing.model_dump(mode="json"),
-            "nutritionPer100": (
-                request.nutritionPer100.model_dump(mode="json")
-                if request.nutritionPer100 is not None
-                else None
-            ),
-            "confidence": {
-                "identity": "low",
-                "nutrition": nutrition_confidence,
-                "profile": "unknown",
-            },
-            "sourceAttribution": {
-                "sourceType": "user_created",
-                "sourceId": request.clientMutationId,
-                "sourceName": "manual_entry",
-                "observedAt": now,
-            },
-            "profileFlags": {
-                "compatibilityStatus": "unknown",
-                "dietaryFlags": request.dietaryFlags,
-                "allergenFlags": request.allergenFlags,
-            },
-            "servingSizes": [
-                serving.model_dump(mode="json") for serving in request.servingSizes
-            ],
+    nutrition_confidence: IngredientProductConfidenceLevel = (
+        "low" if request.nutritionPer100 is not None else "unknown"
+    )
+    payload: dict[str, Any] = {
+        "ingredientProductId": product_id,
+        "recordScope": "user_scoped",
+        "lifecycleState": "candidate",
+        "ownerUserId": user_id,
+        "kind": request.kind,
+        "displayName": request.displayName,
+        "defaultServing": request.defaultServing.model_dump(mode="json"),
+        "nutritionPer100": (
+            request.nutritionPer100.model_dump(mode="json")
+            if request.nutritionPer100 is not None
+            else None
+        ),
+        "confidence": {
+            "identity": "low",
+            "nutrition": nutrition_confidence,
+            "profile": "unknown",
+        },
+        "sourceAttribution": {
+            "sourceType": "user_created",
+            "sourceId": request.clientMutationId,
+            "sourceName": "manual_entry",
+            "observedAt": now,
+        },
+        "profileFlags": {
+            "compatibilityStatus": "unknown",
             "dietaryFlags": request.dietaryFlags,
             "allergenFlags": request.allergenFlags,
-            "searchPrefixes": _search_prefixes(
-                request.displayName,
-                request.ingredientName,
-                request.brandName,
-                request.packageName,
-                request.category,
-            ),
-            "creationClientMutationId": request.clientMutationId,
-            "createdAt": now,
-            "updatedAt": now,
-        }
-        for field_name in ("brandName", "packageName", "category"):
-            value = getattr(request, field_name)
-            if value:
-                payload[field_name] = value
-        if derived_ingredient_name:
-            payload["ingredientName"] = derived_ingredient_name
+        },
+        "servingSizes": [
+            serving.model_dump(mode="json") for serving in request.servingSizes
+        ],
+        "dietaryFlags": request.dietaryFlags,
+        "allergenFlags": request.allergenFlags,
+        "searchPrefixes": _search_prefixes(
+            request.displayName,
+            request.ingredientName,
+            request.brandName,
+            request.packageName,
+            request.category,
+        ),
+        "creationClientMutationId": request.clientMutationId,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    for field_name in ("brandName", "packageName", "category"):
+        value = getattr(request, field_name)
+        if value:
+            payload[field_name] = value
+    if derived_ingredient_name:
+        payload["ingredientName"] = derived_ingredient_name
 
-        document_ref.set(payload)
+    try:
+        return _create_user_ingredient_product_transaction(
+            client.transaction(),
+            document_ref=document_ref,
+            payload=payload,
+            normalized_query=normalize_search_query(request.displayName),
+            client_mutation_id=request.clientMutationId,
+        )
     except IngredientProductMutationConflictError:
         raise
     except (GoogleAPICallError, RetryError, FirebaseError, ValueError) as exc:
         raise FirestoreServiceError("Failed to create Ingredient/Product record.") from exc
 
-    return _to_search_row(payload, normalized_query=normalize_search_query(request.displayName)), True
+
+@firestore.transactional
+def _create_user_ingredient_product_transaction(
+    transaction: firestore.Transaction,
+    *,
+    document_ref: firestore.DocumentReference,
+    payload: dict[str, Any],
+    normalized_query: str,
+    client_mutation_id: str,
+) -> tuple[IngredientProductSearchRow, bool]:
+    existing_snapshot = document_ref.get(transaction=transaction)
+    if existing_snapshot.exists:
+        existing_payload = _snapshot_payload(existing_snapshot)
+        if existing_payload.get("creationClientMutationId") == client_mutation_id:
+            return _to_search_row(
+                existing_payload,
+                normalized_query=normalized_query,
+            ), False
+        raise IngredientProductMutationConflictError(
+            "Ingredient/Product record already exists for a different mutation."
+        )
+
+    transaction.set(document_ref, payload, merge=False)
+    return _to_search_row(payload, normalized_query=normalized_query), True
 
 
 @firestore.transactional

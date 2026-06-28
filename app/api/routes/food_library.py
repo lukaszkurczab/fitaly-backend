@@ -109,6 +109,11 @@ async def create_ingredient_product_me(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise_bad_request(exc)
+    except FirestoreServiceError as exc:
+        raise_service_unavailable(
+            exc,
+            detail="Ingredient/Product create is temporarily unavailable",
+        )
 
     return IngredientProductCreateResponse(item=item, updated=updated)
 

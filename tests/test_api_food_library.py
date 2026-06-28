@@ -378,6 +378,27 @@ def test_create_ingredient_product_conflict_returns_409(
     assert response.json() == {"detail": "conflict"}
 
 
+def test_create_ingredient_product_firestore_failure_returns_503(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    mocker.patch(
+        "app.api.routes.food_library.food_library_service.create_user_ingredient_product",
+        side_effect=FirestoreServiceError("db unavailable"),
+    )
+
+    response = client.post(
+        "/api/v2/users/me/ingredient-products",
+        json=_create_payload(),
+        headers=auth_headers("route-user-1"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Ingredient/Product create is temporarily unavailable"
+    }
+
+
 def test_update_ingredient_product_requires_authentication() -> None:
     response = client.post(
         "/api/v2/users/me/ingredient-products/user-oats-1/update",

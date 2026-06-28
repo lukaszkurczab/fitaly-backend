@@ -308,6 +308,7 @@ def test_create_user_ingredient_product_enforces_user_scope_and_candidate(
     mocker: MockerFixture,
 ) -> None:
     client = mocker.Mock()
+    transaction = FakeTransaction()
     users_collection_ref = mocker.Mock()
     user_ref = mocker.Mock()
     ingredient_products_collection_ref = mocker.Mock()
@@ -320,6 +321,7 @@ def test_create_user_ingredient_product_enforces_user_scope_and_candidate(
         pytest.fail(f"Unexpected {name}")
 
     client.collection.side_effect = collection_side_effect
+    client.transaction.return_value = transaction
     users_collection_ref.document.return_value = user_ref
     user_ref.collection.return_value = ingredient_products_collection_ref
     ingredient_products_collection_ref.document.return_value = document_ref
@@ -339,8 +341,10 @@ def test_create_user_ingredient_product_enforces_user_scope_and_candidate(
     users_collection_ref.document.assert_called_once_with("user-1")
     user_ref.collection.assert_called_once_with("ingredientProducts")
     ingredient_products_collection_ref.document.assert_called_once_with("user-oats-1")
-    document_ref.set.assert_called_once()
-    payload = document_ref.set.call_args.args[0]
+    assert len(transaction.set_calls) == 1
+    assert transaction.set_calls[0][0] == document_ref
+    assert transaction.set_calls[0][2] is False
+    payload = transaction.set_calls[0][1]
     assert payload["recordScope"] == "user_scoped"
     assert payload["lifecycleState"] == "candidate"
     assert payload["ownerUserId"] == "user-1"
@@ -364,6 +368,7 @@ def test_create_user_ingredient_product_is_idempotent_for_same_mutation(
     mocker: MockerFixture,
 ) -> None:
     client = mocker.Mock()
+    transaction = FakeTransaction()
     users_collection_ref = mocker.Mock()
     user_ref = mocker.Mock()
     ingredient_products_collection_ref = mocker.Mock()
@@ -395,6 +400,7 @@ def test_create_user_ingredient_product_is_idempotent_for_same_mutation(
     document_ref.get.return_value = existing_snapshot
 
     client.collection.return_value = users_collection_ref
+    client.transaction.return_value = transaction
     users_collection_ref.document.return_value = user_ref
     user_ref.collection.return_value = ingredient_products_collection_ref
     ingredient_products_collection_ref.document.return_value = document_ref
@@ -410,6 +416,7 @@ def test_create_user_ingredient_product_is_idempotent_for_same_mutation(
     assert updated is False
     assert row.ingredientProductId == "user-oats-1"
     document_ref.set.assert_not_called()
+    assert transaction.set_calls == []
 
 
 def test_create_user_ingredient_product_rejects_existing_different_mutation(

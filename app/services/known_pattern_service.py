@@ -1070,6 +1070,23 @@ def _mutate_control_transaction(
         if control_snapshot.exists
         else {}
     )
+    if existing.get("state") == "declined" and state != "declined":
+        transaction.set(
+            mutation_ref,
+            _mutation_record(
+                user_id=user_id,
+                client_mutation_id=client_mutation_id,
+                kind=kind,
+                target_id=candidate.candidateId,
+                payload_hash=payload_hash,
+                result_document=existing,
+                applied=False,
+                result_draft=result_draft,
+            ),
+            merge=False,
+        )
+        return {"document": existing, "applied": False}
+
     document = _control_document(
         user_id=user_id,
         candidate=candidate,

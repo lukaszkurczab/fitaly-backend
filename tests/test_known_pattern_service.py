@@ -940,6 +940,47 @@ def test_mark_control_replays_when_candidate_is_no_longer_derivable(
     assert replay["document"] == result["document"]
 
 
+def test_open_review_draft_preserves_existing_declined_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meals, candidate_id, subject_key_hash, rule_version = _candidate_payload()
+    user_ref = _patch_known_pattern_storage(monkeypatch, meals)
+
+    declined = asyncio.run(
+        known_pattern_service.mark_known_pattern_candidate_control_for_user(
+            "user-1",
+            candidate_id,
+            KnownPatternCandidateControlRequest(
+                clientMutationId="mutation-decline-1",
+                subjectKeyHash=subject_key_hash,
+                createdByRuleVersion=rule_version,
+                action="declined",
+            ),
+        )
+    )
+
+    result = asyncio.run(
+        known_pattern_service.open_known_pattern_review_draft_for_user(
+            "user-1",
+            candidate_id,
+            KnownPatternReviewDraftRequest(
+                clientMutationId="mutation-review-after-decline-1",
+                subjectKeyHash=subject_key_hash,
+                createdByRuleVersion=rule_version,
+            ),
+        )
+    )
+
+    assert result["applied"] is False
+    assert result["control"] == declined["document"]
+    assert result["control"]["state"] == "declined"
+    controls_collection = user_ref.collections["knownPatternControls"]
+    assert len(controls_collection.documents) == 1
+    assert next(iter(controls_collection.documents.values())).snapshot.to_dict()[
+        "state"
+    ] == "declined"
+
+
 def test_open_review_draft_marks_shown_and_returns_explicit_draft_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

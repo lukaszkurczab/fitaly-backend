@@ -9,6 +9,7 @@ from typing import Any, TypedDict, cast
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import (
@@ -524,7 +525,13 @@ async def list_planned_meals_for_user(
     try:
         client: firestore.Client = get_firestore()
         collection = _user_ref(client, user_id).collection(PLANNED_MEALS_SUBCOLLECTION)
-        snapshots = collection.stream()
+        end = start + timedelta(days=days)
+        query = (
+            collection.where(filter=FieldFilter("dateBucket", ">=", start.isoformat()))
+            .where(filter=FieldFilter("dateBucket", "<", end.isoformat()))
+            .order_by("dateBucket")
+        )
+        snapshots = query.stream()
         documents = [
             _snapshot_document(snapshot, document_id_field="plannedMealId")
             for snapshot in snapshots

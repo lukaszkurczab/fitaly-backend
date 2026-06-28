@@ -51,9 +51,11 @@ class FakeDocumentRef:
 
 
 class FakeCollectionRef:
-    def __init__(self) -> None:
-        self.documents: dict[str, FakeDocumentRef] = {}
+    def __init__(self, documents: dict[str, FakeDocumentRef] | None = None) -> None:
+        self.documents: dict[str, FakeDocumentRef] = documents or {}
         self.limit_calls: list[int] = []
+        self.where_calls: list[tuple[str, str, object]] = []
+        self.order_by_calls: list[str] = []
 
     def document(self, document_id: str) -> FakeDocumentRef:
         if document_id not in self.documents:
@@ -63,6 +65,36 @@ class FakeCollectionRef:
     def limit(self, count: int) -> "FakeCollectionRef":
         self.limit_calls.append(count)
         return self
+
+    def where(self, *, filter: Any) -> "FakeCollectionRef":
+        field_path = str(filter.field_path)
+        op_string = str(filter.op_string)
+        value = filter.value
+        self.where_calls.append((field_path, op_string, value))
+        matching: dict[str, FakeDocumentRef] = {}
+        for document_id, document in self.documents.items():
+            document_value = document.snapshot.to_dict().get(field_path)
+            if op_string == ">=" and document_value >= value:
+                matching[document_id] = document
+            elif op_string == "<" and document_value < value:
+                matching[document_id] = document
+        query = FakeCollectionRef(matching)
+        query.where_calls = self.where_calls
+        query.order_by_calls = self.order_by_calls
+        return query
+
+    def order_by(self, field: str) -> "FakeCollectionRef":
+        self.order_by_calls.append(field)
+        ordered = dict(
+            sorted(
+                self.documents.items(),
+                key=lambda item: str(item[1].snapshot.to_dict().get(field) or ""),
+            )
+        )
+        query = FakeCollectionRef(ordered)
+        query.where_calls = self.where_calls
+        query.order_by_calls = self.order_by_calls
+        return query
 
     def stream(self) -> list[FakeSnapshot]:
         return [document.snapshot for document in self.documents.values()]
@@ -222,6 +254,12 @@ def test_create_list_update_delete_planned_meal_without_meal_history_write(
     )
     assert listed.queryEcho.returnedItems == 1
     assert listed.items[0].plannedMealId == "planned-1"
+    planned_collection = user_ref.collections["plannedMeals"]
+    assert planned_collection.where_calls == [
+        ("dateBucket", ">=", "2026-06-18"),
+        ("dateBucket", "<", "2026-06-21"),
+    ]
+    assert planned_collection.order_by_calls == ["dateBucket"]
 
     updated = asyncio.run(
         planned_meal_service.update_planned_meal_for_user(

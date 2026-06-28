@@ -25,6 +25,10 @@ service cloud.firestore {
              );
     }
 
+    function hasBackendManagedMealSideEffectFields() {
+      return request.resource.data.keys().hasAny(['planningSource']);
+    }
+
     match /usernames/{username} {
       // Public read for username availability checks.
       allow get: if true;
@@ -51,7 +55,10 @@ service cloud.firestore {
     }
 
     match /users/{userId}/meals/{mealId} {
-      allow create, read, update, delete: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+                            && !hasBackendManagedMealSideEffectFields();
+      allow delete: if false;
     }
 
     match /users/{userId}/mealTemplates/{mealId} {
