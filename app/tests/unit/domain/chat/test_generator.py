@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from app.core.exceptions import OpenAIServiceError
-from app.domain.chat.generator import ChatGenerator
+from app.domain.chat.generator import ChatGenerator, _StructuredAnalyticalAnswerDto
 
 
 class _FakeOpenAIClient:
@@ -69,6 +69,21 @@ def _developer_contract(
         "grounding": grounding,
     }
     return {"role": "developer", "content": json.dumps(payload, ensure_ascii=False)}
+
+
+def test_structured_analytical_answer_schema_forbids_extra_fields_and_uses_aliases() -> None:
+    schema = _StructuredAnalyticalAnswerDto.model_json_schema()
+
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {
+        "verdict",
+        "coverageStatement",
+        "keyObservations",
+        "practicalNextStep",
+        "followUpQuestion",
+    }
+    assert "coverage_statement" not in schema["properties"]
+    assert "key_observations" not in schema["properties"]
 
 
 async def test_generator_maps_usage_from_openai_client_response_plain_mode() -> None:

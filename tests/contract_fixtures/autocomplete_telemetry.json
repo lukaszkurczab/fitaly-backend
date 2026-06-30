@@ -1,0 +1,53 @@
+{
+  "eventNames": [
+    "autocomplete_search_outcome",
+    "autocomplete_result_selected",
+    "ingredient_product_create_outcome"
+  ],
+  "propsByEvent": {
+    "autocomplete_search_outcome": [
+      "surface",
+      "outcome",
+      "queryLengthBucket",
+      "resultCountBucket",
+      "sourceClass",
+      "latencyBucket",
+      "warningReason"
+    ],
+    "autocomplete_result_selected": [
+      "surface",
+      "resultCountBucket",
+      "sourceClass",
+      "rankBucket",
+      "selectionState",
+      "warningReason"
+    ],
+    "ingredient_product_create_outcome": [
+      "surface",
+      "outcome"
+    ]
+  },
+  "disallowedEventNames": [
+    "autocomplete_query_submitted",
+    "autocomplete_product_viewed",
+    "manual_product_created"
+  ],
+  "disallowedPropNames": [
+    "query",
+    "rawQuery",
+    "normalizedQuery",
+    "displayName",
+    "ingredientName",
+    "productName",
+    "ingredientProductId",
+    "productId",
+    "barcode",
+    "nutritionPer100",
+    "kcal",
+    "protein",
+    "carbs",
+    "fat",
+    "sourceRef",
+    "memoryId"
+  ]
+}

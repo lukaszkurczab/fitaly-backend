@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 FoodLibraryDomain = Literal[
@@ -37,13 +37,25 @@ FoodLibraryDomainField = Literal[
     "prepTimeMin",
     "cookTimeMin",
     "ingredientProductId",
+    "recordScope",
+    "lifecycleState",
     "kind",
     "brandName",
     "ingredientName",
+    "packageName",
+    "category",
     "barcodeIdentities",
+    "externalSourceIds",
     "servingSizes",
-    "nutritionPerServing",
+    "nutritionPer100",
+    "defaultServing",
     "sourceAttribution",
+    "confidence",
+    "profileFlags",
+    "dietaryFlags",
+    "allergenFlags",
+    "createdAt",
+    "updatedAt",
     "listId",
     "items",
     "itemRefs",
@@ -77,6 +89,129 @@ CurrentSavedMealLegacyMarker = Literal[
     "savedMealRefId",
 ]
 BarcodeResultOwner = Literal["backend_provider_adapter", "add_meal_draft_source"]
+IngredientProductKind = Literal["generic_ingredient", "branded_product"]
+IngredientProductRecordScope = Literal[
+    "global_seed",
+    "global_internal",
+    "user_scoped",
+]
+IngredientProductLifecycleState = Literal["candidate", "verified", "rejected"]
+IngredientProductSourceType = Literal[
+    "internal_seed",
+    "internal_review",
+    "user_created",
+    "external_provider",
+    "barcode_identity",
+    "runtime_ai_candidate",
+]
+IngredientProductConfidenceLevel = Literal[
+    "unknown",
+    "low",
+    "medium",
+    "high",
+    "verified",
+]
+IngredientProductNutritionBasis = Literal["per_100g", "per_100ml"]
+IngredientProductServingUnit = Literal["g", "ml", "piece", "serving"]
+IngredientProductProfileCompatibilityStatus = Literal[
+    "unknown",
+    "compatible",
+    "incompatible",
+    "warning",
+]
+IngredientProductWarningReasonCode = Literal[
+    "profile_unknown",
+    "profile_warning",
+    "profile_incompatible",
+    "nutrition_low_confidence",
+    "nutrition_missing",
+    "source_candidate_only",
+    "cache_stale",
+    "offline_cache",
+    "pending_user_record",
+    "query_too_short",
+    "backend_degraded",
+]
+IngredientProductRankingSignal = Literal[
+    "exact_user",
+    "exact_match",
+    "user_scoped",
+    "verified_seed",
+    "verified_global",
+    "profile_warning",
+    "nutrition_warning",
+    "pending_user_record",
+]
+IngredientProductCacheState = Literal[
+    "fresh",
+    "stale",
+    "offline",
+    "pending_local",
+]
+IngredientProductDietaryFlag = Literal[
+    "vegan",
+    "vegetarian",
+    "gluten_free",
+    "lactose_free",
+    "halal",
+    "kosher",
+]
+IngredientProductAllergenFlag = Literal[
+    "milk",
+    "eggs",
+    "fish",
+    "shellfish",
+    "tree_nuts",
+    "peanuts",
+    "wheat",
+    "soy",
+    "sesame",
+]
+IngredientProductSourceAttributionRequiredField = Literal[
+    "sourceType",
+    "sourceId",
+    "sourceName",
+]
+IngredientProductSourceAttributionOptionalField = Literal[
+    "provider",
+    "license",
+    "observedAt",
+    "reviewedAt",
+    "reviewedBy",
+]
+IngredientProductConfidenceField = Literal["identity", "nutrition", "profile"]
+IngredientProductNutritionRequiredField = Literal[
+    "basis",
+    "unit",
+    "kcal",
+    "protein",
+    "fat",
+    "carbs",
+]
+IngredientProductNutritionOptionalField = Literal[
+    "fiber",
+    "sugar",
+    "salt",
+    "saturatedFat",
+]
+IngredientProductServingRequiredField = Literal["defaultServing", "servingSizes"]
+IngredientProductServingSizeField = Literal[
+    "servingSizeId",
+    "label",
+    "quantity",
+    "unit",
+]
+IngredientProductBarcodeMinimalIdentityField = Literal[
+    "barcode",
+    "format",
+    "sourceType",
+]
+IngredientProductBarcodeOptionalField = Literal[
+    "normalizedBarcode",
+    "country",
+    "sourceId",
+    "observedAt",
+]
 
 FOOD_LIBRARY_DOMAINS: tuple[FoodLibraryDomain, ...] = (
     "MealTemplate",
@@ -125,6 +260,167 @@ FOOD_LIBRARY_BARCODE_RESULT_OWNERS: tuple[BarcodeResultOwner, ...] = (
     "backend_provider_adapter",
     "add_meal_draft_source",
 )
+INGREDIENT_PRODUCT_KINDS: tuple[IngredientProductKind, ...] = (
+    "generic_ingredient",
+    "branded_product",
+)
+INGREDIENT_PRODUCT_RECORD_SCOPES: tuple[IngredientProductRecordScope, ...] = (
+    "global_seed",
+    "global_internal",
+    "user_scoped",
+)
+INGREDIENT_PRODUCT_LIFECYCLE_STATES: tuple[IngredientProductLifecycleState, ...] = (
+    "candidate",
+    "verified",
+    "rejected",
+)
+INGREDIENT_PRODUCT_SOURCE_TYPES: tuple[IngredientProductSourceType, ...] = (
+    "internal_seed",
+    "internal_review",
+    "user_created",
+    "external_provider",
+    "barcode_identity",
+    "runtime_ai_candidate",
+)
+INGREDIENT_PRODUCT_CONFIDENCE_LEVELS: tuple[IngredientProductConfidenceLevel, ...] = (
+    "unknown",
+    "low",
+    "medium",
+    "high",
+    "verified",
+)
+INGREDIENT_PRODUCT_NUTRITION_BASES: tuple[IngredientProductNutritionBasis, ...] = (
+    "per_100g",
+    "per_100ml",
+)
+INGREDIENT_PRODUCT_SERVING_UNITS: tuple[IngredientProductServingUnit, ...] = (
+    "g",
+    "ml",
+    "piece",
+    "serving",
+)
+INGREDIENT_PRODUCT_PROFILE_COMPATIBILITY_STATUSES: tuple[
+    IngredientProductProfileCompatibilityStatus,
+    ...,
+] = (
+    "unknown",
+    "compatible",
+    "incompatible",
+    "warning",
+)
+INGREDIENT_PRODUCT_WARNING_REASON_CODES: tuple[
+    IngredientProductWarningReasonCode,
+    ...,
+] = (
+    "profile_unknown",
+    "profile_warning",
+    "profile_incompatible",
+    "nutrition_low_confidence",
+    "nutrition_missing",
+    "source_candidate_only",
+    "cache_stale",
+    "offline_cache",
+    "pending_user_record",
+    "query_too_short",
+    "backend_degraded",
+)
+INGREDIENT_PRODUCT_RANKING_SIGNALS: tuple[IngredientProductRankingSignal, ...] = (
+    "exact_user",
+    "exact_match",
+    "user_scoped",
+    "verified_seed",
+    "verified_global",
+    "profile_warning",
+    "nutrition_warning",
+    "pending_user_record",
+)
+INGREDIENT_PRODUCT_CACHE_STATES: tuple[IngredientProductCacheState, ...] = (
+    "fresh",
+    "stale",
+    "offline",
+    "pending_local",
+)
+INGREDIENT_PRODUCT_DIETARY_FLAGS: tuple[IngredientProductDietaryFlag, ...] = (
+    "vegan",
+    "vegetarian",
+    "gluten_free",
+    "lactose_free",
+    "halal",
+    "kosher",
+)
+INGREDIENT_PRODUCT_ALLERGEN_FLAGS: tuple[IngredientProductAllergenFlag, ...] = (
+    "milk",
+    "eggs",
+    "fish",
+    "shellfish",
+    "tree_nuts",
+    "peanuts",
+    "wheat",
+    "soy",
+    "sesame",
+)
+INGREDIENT_PRODUCT_REQUIRED_FIELDS: tuple[FoodLibraryDomainField, ...] = (
+    "ingredientProductId",
+    "recordScope",
+    "lifecycleState",
+    "kind",
+    "displayName",
+    "sourceAttribution",
+    "confidence",
+    "nutritionPer100",
+    "defaultServing",
+    "servingSizes",
+    "profileFlags",
+    "createdAt",
+    "updatedAt",
+)
+INGREDIENT_PRODUCT_OPTIONAL_FIELDS: tuple[FoodLibraryDomainField, ...] = (
+    "ownerUserId",
+    "brandName",
+    "ingredientName",
+    "packageName",
+    "category",
+    "barcodeIdentities",
+    "externalSourceIds",
+    "dietaryFlags",
+    "allergenFlags",
+)
+INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_REQUIRED_FIELDS: tuple[
+    IngredientProductSourceAttributionRequiredField,
+    ...,
+] = ("sourceType", "sourceId", "sourceName")
+INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_OPTIONAL_FIELDS: tuple[
+    IngredientProductSourceAttributionOptionalField,
+    ...,
+] = ("provider", "license", "observedAt", "reviewedAt", "reviewedBy")
+INGREDIENT_PRODUCT_CONFIDENCE_FIELDS: tuple[
+    IngredientProductConfidenceField,
+    ...,
+] = ("identity", "nutrition", "profile")
+INGREDIENT_PRODUCT_NUTRITION_REQUIRED_FIELDS: tuple[
+    IngredientProductNutritionRequiredField,
+    ...,
+] = ("basis", "unit", "kcal", "protein", "fat", "carbs")
+INGREDIENT_PRODUCT_NUTRITION_OPTIONAL_FIELDS: tuple[
+    IngredientProductNutritionOptionalField,
+    ...,
+] = ("fiber", "sugar", "salt", "saturatedFat")
+INGREDIENT_PRODUCT_SERVING_REQUIRED_FIELDS: tuple[
+    IngredientProductServingRequiredField,
+    ...,
+] = ("defaultServing", "servingSizes")
+INGREDIENT_PRODUCT_SERVING_SIZE_FIELDS: tuple[
+    IngredientProductServingSizeField,
+    ...,
+] = ("servingSizeId", "label", "quantity", "unit")
+INGREDIENT_PRODUCT_BARCODE_MINIMAL_IDENTITY_FIELDS: tuple[
+    IngredientProductBarcodeMinimalIdentityField,
+    ...,
+] = ("barcode", "format", "sourceType")
+INGREDIENT_PRODUCT_BARCODE_OPTIONAL_FIELDS: tuple[
+    IngredientProductBarcodeOptionalField,
+    ...,
+] = ("normalizedBarcode", "country", "sourceId", "observedAt")
 FOOD_LIBRARY_MEAL_TEMPLATE_FORBIDDEN_LOGGED_MEAL_FIELDS = {
     "loggedAt",
     "dayKey",
@@ -175,16 +471,28 @@ FOOD_LIBRARY_DOMAIN_CONTRACTS: dict[
     ),
     "Ingredient/Product": (
         "ingredient_product_library",
-        ("ingredientProductId", "ownerUserId"),
+        ("ingredientProductId", "recordScope"),
         (
             "displayName",
             "kind",
+            "lifecycleState",
+            "ownerUserId",
             "brandName",
             "ingredientName",
+            "packageName",
+            "category",
             "barcodeIdentities",
+            "externalSourceIds",
             "servingSizes",
-            "nutritionPerServing",
+            "nutritionPer100",
+            "defaultServing",
             "sourceAttribution",
+            "confidence",
+            "profileFlags",
+            "dietaryFlags",
+            "allergenFlags",
+            "createdAt",
+            "updatedAt",
         ),
     ),
     "ShoppingList": (
@@ -228,6 +536,286 @@ class BarcodeBoundary(BaseModel):
     rationale: str = Field(min_length=1)
 
 
+class IngredientProductSourceAttribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sourceType: IngredientProductSourceType
+    sourceId: str = Field(min_length=1)
+    sourceName: str = Field(min_length=1)
+    provider: str | None = None
+    license: str | None = None
+    observedAt: str | None = None
+    reviewedAt: str | None = None
+    reviewedBy: str | None = None
+
+
+class IngredientProductConfidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    identity: IngredientProductConfidenceLevel
+    nutrition: IngredientProductConfidenceLevel
+    profile: IngredientProductConfidenceLevel
+
+
+class IngredientProductNutritionPer100(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    basis: IngredientProductNutritionBasis
+    unit: IngredientProductServingUnit
+    kcal: float = Field(ge=0)
+    protein: float = Field(ge=0)
+    fat: float = Field(ge=0)
+    carbs: float = Field(ge=0)
+    fiber: float | None = Field(default=None, ge=0)
+    sugar: float | None = Field(default=None, ge=0)
+    salt: float | None = Field(default=None, ge=0)
+    saturatedFat: float | None = Field(default=None, ge=0)
+
+
+class IngredientProductServing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: float = Field(gt=0)
+    unit: IngredientProductServingUnit
+
+
+class IngredientProductServingSize(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    servingSizeId: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    quantity: float = Field(gt=0)
+    unit: IngredientProductServingUnit
+
+
+class IngredientProductProfileCompatibility(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: IngredientProductProfileCompatibilityStatus
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+
+
+class IngredientProductSearchRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    recordScope: IngredientProductRecordScope
+    lifecycleState: IngredientProductLifecycleState
+    displayName: str = Field(min_length=1)
+    kind: IngredientProductKind
+    defaultServing: IngredientProductServing
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    confidence: IngredientProductConfidence
+    sourceAttribution: IngredientProductSourceAttribution
+    profileCompatibility: IngredientProductProfileCompatibility
+    warningReasonCodes: list[IngredientProductWarningReasonCode] = Field(
+        default_factory=list
+    )
+    rankingSignals: list[IngredientProductRankingSignal] = Field(default_factory=list)
+    brandName: str | None = None
+    ingredientName: str | None = None
+    packageName: str | None = None
+    category: str | None = None
+    servingSizes: list[IngredientProductServingSize] = Field(default_factory=list)
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+    cacheState: IngredientProductCacheState | None = None
+    ownerUserId: str | None = None
+
+
+class IngredientProductSearchQueryEcho(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    normalizedQuery: str = Field(min_length=1)
+    queryLength: int = Field(ge=1)
+    limit: int = Field(ge=1, le=12)
+    includeUserScoped: bool
+    includeGlobal: bool
+    locale: str | None = None
+
+
+class IngredientProductSearchCachePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cacheGeneration: Literal["ingredient_product_search_v1"]
+    maxAgeSeconds: int = Field(ge=0)
+
+
+class IngredientProductSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[IngredientProductSearchRow] = Field(default_factory=list)
+    queryEcho: IngredientProductSearchQueryEcho
+    cachePolicy: IngredientProductSearchCachePolicy | None = None
+    warnings: list[IngredientProductWarningReasonCode] = Field(default_factory=list)
+
+
+class IngredientProductCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+    ingredientProductId: str = Field(min_length=1, max_length=128)
+    displayName: str = Field(min_length=1, max_length=160)
+    kind: IngredientProductKind = "generic_ingredient"
+    defaultServing: IngredientProductServing
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    brandName: str | None = Field(default=None, max_length=120)
+    ingredientName: str | None = Field(default=None, max_length=160)
+    packageName: str | None = Field(default=None, max_length=120)
+    category: str | None = Field(default=None, max_length=80)
+    servingSizes: list[IngredientProductServingSize] = Field(default_factory=list)
+    dietaryFlags: list[IngredientProductDietaryFlag] = Field(default_factory=list)
+    allergenFlags: list[IngredientProductAllergenFlag] = Field(default_factory=list)
+
+    @field_validator(
+        "clientMutationId",
+        "ingredientProductId",
+        "displayName",
+        "brandName",
+        "ingredientName",
+        "packageName",
+        "category",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("ingredientProductId")
+    @classmethod
+    def _validate_document_id(cls, value: str) -> str:
+        if "/" in value:
+            raise ValueError("ingredientProductId must be a document id, not a path.")
+        return value
+
+
+class IngredientProductCreateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updated: bool
+
+
+class IngredientProductUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+    displayName: str | None = Field(default=None, min_length=1, max_length=160)
+    kind: IngredientProductKind | None = None
+    defaultServing: IngredientProductServing | None = None
+    nutritionPer100: IngredientProductNutritionPer100 | None = None
+    brandName: str | None = Field(default=None, max_length=120)
+    ingredientName: str | None = Field(default=None, max_length=160)
+    packageName: str | None = Field(default=None, max_length=120)
+    category: str | None = Field(default=None, max_length=80)
+    servingSizes: list[IngredientProductServingSize] | None = None
+    dietaryFlags: list[IngredientProductDietaryFlag] | None = None
+    allergenFlags: list[IngredientProductAllergenFlag] | None = None
+
+    @field_validator(
+        "clientMutationId",
+        "displayName",
+        "brandName",
+        "ingredientName",
+        "packageName",
+        "category",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @model_validator(mode="after")
+    def _require_update_field(self) -> "IngredientProductUpdateRequest":
+        for field_name in (
+            "displayName",
+            "kind",
+            "defaultServing",
+            "nutritionPer100",
+            "brandName",
+            "ingredientName",
+            "packageName",
+            "category",
+            "servingSizes",
+            "dietaryFlags",
+            "allergenFlags",
+        ):
+            if field_name in self.model_fields_set:
+                return self
+        raise ValueError("At least one editable Ingredient/Product field is required.")
+
+    @model_validator(mode="after")
+    def _prevent_required_field_clear(self) -> "IngredientProductUpdateRequest":
+        for field_name in ("displayName", "kind", "defaultServing"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be cleared.")
+        return self
+
+
+class IngredientProductUpdateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updated: bool
+
+
+class IngredientProductDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clientMutationId: str = Field(min_length=1, max_length=256)
+
+    @field_validator("clientMutationId", mode="before")
+    @classmethod
+    def _strip_client_mutation_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class IngredientProductDeleteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    updatedAt: str = Field(min_length=1)
+    updated: bool
+
+
+class IngredientProductPulledRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item: IngredientProductSearchRow
+    updatedAt: str = Field(min_length=1)
+    creationClientMutationId: str | None = None
+
+
+class IngredientProductRemovedRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredientProductId: str = Field(min_length=1)
+    updatedAt: str = Field(min_length=1)
+    removalReason: Literal["rejected"]
+
+    @field_validator("ingredientProductId")
+    @classmethod
+    def _validate_document_id(cls, value: str) -> str:
+        if "/" in value:
+            raise ValueError("ingredientProductId must be a document id, not a path.")
+        return value
+
+
+class IngredientProductPullResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[IngredientProductPulledRecord] = Field(default_factory=list)
+    removedRecords: list[IngredientProductRemovedRecord] = Field(default_factory=list)
+    nextUpdatedAfter: str | None = None
+
+
 class FoodLibraryDomainContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -236,12 +824,124 @@ class FoodLibraryDomainContract(BaseModel):
     ownedFields: list[FoodLibraryDomainField] = Field(min_length=1)
 
 
+class KindSpecificRequiredFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generic_ingredient: list[FoodLibraryDomainField]
+    branded_product: list[FoodLibraryDomainField]
+
+
+class IngredientProductOwnershipContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scopeField: Literal["recordScope"]
+    ownerField: Literal["ownerUserId"]
+    userScopedScope: Literal["user_scoped"]
+    userScopedRequiresOwnerUserId: Literal[True]
+    globalScopesMustNotUseOwnerUserId: list[
+        Literal["global_seed", "global_internal"]
+    ] = Field(min_length=1)
+    globalRecordsAreUserAccountData: Literal[False]
+
+
+class IngredientProductSourceAttributionContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requiredFields: list[IngredientProductSourceAttributionRequiredField] = Field(
+        min_length=1
+    )
+    optionalFields: list[IngredientProductSourceAttributionOptionalField]
+    sourceTypes: list[IngredientProductSourceType] = Field(min_length=1)
+    candidateOnlySourceTypes: list[IngredientProductSourceType]
+    durableTruthRequiresNonAiSource: Literal[True]
+
+
+class IngredientProductConfidenceContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requiredFields: list[IngredientProductConfidenceField] = Field(min_length=1)
+    levels: list[IngredientProductConfidenceLevel] = Field(min_length=1)
+    unknownMeansNotSafeToAssume: Literal[True]
+
+
+class IngredientProductNutritionPer100Contract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requiredFields: list[IngredientProductNutritionRequiredField] = Field(min_length=1)
+    optionalFields: list[IngredientProductNutritionOptionalField]
+    allowedBases: list[IngredientProductNutritionBasis] = Field(min_length=1)
+    missingNutritionPolicy: Literal["unknown_not_guessed"]
+    runtimeAiMayBecomeDurableNutritionTruth: Literal[False]
+
+
+class IngredientProductServingContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requiredFields: list[IngredientProductServingRequiredField] = Field(min_length=1)
+    servingSizeFields: list[IngredientProductServingSizeField] = Field(min_length=1)
+    allowedUnits: list[IngredientProductServingUnit] = Field(min_length=1)
+
+
+class IngredientProductProfileContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requiredFields: list[str] = Field(min_length=1)
+    allowedDietaryFlags: list[IngredientProductDietaryFlag]
+    allowedAllergenFlags: list[IngredientProductAllergenFlag]
+    compatibilityStatuses: list[IngredientProductProfileCompatibilityStatus]
+    missingProfilePolicy: Literal["unknown_not_guessed"]
+    verifiedIsMedicalOrDietarySafetyClaim: Literal[False]
+    runtimeAiMayBecomeDurableProfileTruth: Literal[False]
+
+
+class IngredientProductBarcodeIdentityContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    minimalIdentityFields: list[IngredientProductBarcodeMinimalIdentityField] = Field(
+        min_length=1
+    )
+    optionalFields: list[IngredientProductBarcodeOptionalField]
+    noCatalogWriteInThisSlice: Literal[True]
+    noTopLevelAddMealBarcodePath: Literal[True]
+
+
+class IngredientProductLocalCacheBoundary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    representedAs: Literal["projection_only"]
+    localCacheIsTruth: Literal[False]
+    mayPromoteToGlobalWithoutReview: Literal[False]
+
+
+class IngredientProductRecordContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recordKinds: list[IngredientProductKind] = Field(min_length=1)
+    recordScopes: list[IngredientProductRecordScope] = Field(min_length=1)
+    lifecycleStates: list[IngredientProductLifecycleState] = Field(min_length=1)
+    verifiedMeaning: Literal[
+        "verified_for_fitaly_catalog_use_not_medical_or_dietary_safety_claim"
+    ]
+    requiredFields: list[FoodLibraryDomainField] = Field(min_length=1)
+    optionalFields: list[FoodLibraryDomainField]
+    kindSpecificRequiredFields: KindSpecificRequiredFields
+    ownership: IngredientProductOwnershipContract
+    sourceAttribution: IngredientProductSourceAttributionContract
+    confidence: IngredientProductConfidenceContract
+    nutritionPer100: IngredientProductNutritionPer100Contract
+    serving: IngredientProductServingContract
+    profileFlags: IngredientProductProfileContract
+    barcodeIdentities: IngredientProductBarcodeIdentityContract
+    localCacheBoundary: IngredientProductLocalCacheBoundary
+
+
 class FoodLibraryDomainsContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract: Literal["food_library_domains_v1"]
     libraryDomains: list[FoodLibraryDomain]
     domainContracts: dict[FoodLibraryDomain, FoodLibraryDomainContract]
+    ingredientProductRecordContract: IngredientProductRecordContract
     loggedMealBoundary: LoggedMealBoundary
     currentSavedMealsBoundary: CurrentSavedMealsBoundary
     barcodeBoundary: BarcodeBoundary
@@ -261,6 +961,135 @@ class FoodLibraryDomainsContract(BaseModel):
                 raise ValueError(f"{domain} identityFields drifted from CH-06 contract")
             if tuple(domain_contract.ownedFields) != expected_owned_fields:
                 raise ValueError(f"{domain} ownedFields drifted from CH-06 contract")
+        ingredient_product_contract = self.ingredientProductRecordContract
+        if tuple(ingredient_product_contract.recordKinds) != INGREDIENT_PRODUCT_KINDS:
+            raise ValueError("Ingredient/Product kinds drifted from 02-FD-002 contract")
+        if (
+            tuple(ingredient_product_contract.recordScopes)
+            != INGREDIENT_PRODUCT_RECORD_SCOPES
+        ):
+            raise ValueError("Ingredient/Product scopes drifted from 02-FD-002 contract")
+        if (
+            tuple(ingredient_product_contract.lifecycleStates)
+            != INGREDIENT_PRODUCT_LIFECYCLE_STATES
+        ):
+            raise ValueError(
+                "Ingredient/Product lifecycle states drifted from 02-FD-002 contract"
+            )
+        if (
+            tuple(ingredient_product_contract.requiredFields)
+            != INGREDIENT_PRODUCT_REQUIRED_FIELDS
+        ):
+            raise ValueError(
+                "Ingredient/Product required fields drifted from 02-FD-002 contract"
+            )
+        if (
+            tuple(ingredient_product_contract.optionalFields)
+            != INGREDIENT_PRODUCT_OPTIONAL_FIELDS
+        ):
+            raise ValueError(
+                "Ingredient/Product optional fields drifted from 02-FD-002 contract"
+            )
+        if ingredient_product_contract.kindSpecificRequiredFields.generic_ingredient != [
+            "ingredientName"
+        ]:
+            raise ValueError("generic ingredients must require ingredientName")
+        if ingredient_product_contract.kindSpecificRequiredFields.branded_product != [
+            "brandName"
+        ]:
+            raise ValueError("branded products must require brandName")
+        if ingredient_product_contract.ownership.globalScopesMustNotUseOwnerUserId != [
+            "global_seed",
+            "global_internal",
+        ]:
+            raise ValueError("global Product/Ingredient records must not be user-owned")
+        if tuple(ingredient_product_contract.sourceAttribution.sourceTypes) != (
+            INGREDIENT_PRODUCT_SOURCE_TYPES
+        ):
+            raise ValueError("Ingredient/Product source types drifted")
+        if (
+            tuple(ingredient_product_contract.sourceAttribution.requiredFields)
+            != INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_REQUIRED_FIELDS
+        ):
+            raise ValueError("Ingredient/Product source required fields drifted")
+        if (
+            tuple(ingredient_product_contract.sourceAttribution.optionalFields)
+            != INGREDIENT_PRODUCT_SOURCE_ATTRIBUTION_OPTIONAL_FIELDS
+        ):
+            raise ValueError("Ingredient/Product source optional fields drifted")
+        if ingredient_product_contract.sourceAttribution.candidateOnlySourceTypes != [
+            "barcode_identity",
+            "runtime_ai_candidate",
+        ]:
+            raise ValueError("barcode and runtime AI sources must stay candidate-only")
+        if (
+            tuple(ingredient_product_contract.confidence.requiredFields)
+            != INGREDIENT_PRODUCT_CONFIDENCE_FIELDS
+        ):
+            raise ValueError("Ingredient/Product confidence fields drifted")
+        if tuple(ingredient_product_contract.confidence.levels) != (
+            INGREDIENT_PRODUCT_CONFIDENCE_LEVELS
+        ):
+            raise ValueError("Ingredient/Product confidence levels drifted")
+        if (
+            tuple(ingredient_product_contract.nutritionPer100.requiredFields)
+            != INGREDIENT_PRODUCT_NUTRITION_REQUIRED_FIELDS
+        ):
+            raise ValueError("Ingredient/Product nutrition required fields drifted")
+        if (
+            tuple(ingredient_product_contract.nutritionPer100.optionalFields)
+            != INGREDIENT_PRODUCT_NUTRITION_OPTIONAL_FIELDS
+        ):
+            raise ValueError("Ingredient/Product nutrition optional fields drifted")
+        if tuple(ingredient_product_contract.nutritionPer100.allowedBases) != (
+            INGREDIENT_PRODUCT_NUTRITION_BASES
+        ):
+            raise ValueError("Ingredient/Product nutrition bases drifted")
+        if (
+            tuple(ingredient_product_contract.serving.requiredFields)
+            != INGREDIENT_PRODUCT_SERVING_REQUIRED_FIELDS
+        ):
+            raise ValueError("Ingredient/Product serving required fields drifted")
+        if (
+            tuple(ingredient_product_contract.serving.servingSizeFields)
+            != INGREDIENT_PRODUCT_SERVING_SIZE_FIELDS
+        ):
+            raise ValueError("Ingredient/Product serving size fields drifted")
+        if tuple(ingredient_product_contract.serving.allowedUnits) != (
+            INGREDIENT_PRODUCT_SERVING_UNITS
+        ):
+            raise ValueError("Ingredient/Product serving units drifted")
+        if tuple(ingredient_product_contract.profileFlags.allowedDietaryFlags) != (
+            INGREDIENT_PRODUCT_DIETARY_FLAGS
+        ):
+            raise ValueError("Ingredient/Product dietary flags drifted")
+        if tuple(ingredient_product_contract.profileFlags.allowedAllergenFlags) != (
+            INGREDIENT_PRODUCT_ALLERGEN_FLAGS
+        ):
+            raise ValueError("Ingredient/Product allergen flags drifted")
+        if tuple(ingredient_product_contract.profileFlags.compatibilityStatuses) != (
+            INGREDIENT_PRODUCT_PROFILE_COMPATIBILITY_STATUSES
+        ):
+            raise ValueError("Ingredient/Product profile statuses drifted")
+        if (
+            tuple(ingredient_product_contract.barcodeIdentities.minimalIdentityFields)
+            != INGREDIENT_PRODUCT_BARCODE_MINIMAL_IDENTITY_FIELDS
+        ):
+            raise ValueError("barcode identity must stay minimal")
+        if (
+            tuple(ingredient_product_contract.barcodeIdentities.optionalFields)
+            != INGREDIENT_PRODUCT_BARCODE_OPTIONAL_FIELDS
+        ):
+            raise ValueError("barcode optional identity fields drifted")
+        if (
+            ingredient_product_contract.barcodeIdentities.noCatalogWriteInThisSlice
+            is not True
+        ):
+            raise ValueError(
+                "barcode identity must not write product catalog in this slice"
+            )
+        if ingredient_product_contract.localCacheBoundary.localCacheIsTruth is not False:
+            raise ValueError("local cache must not become Ingredient/Product truth")
         meal_template_fields = {
             *self.domainContracts["MealTemplate"].identityFields,
             *self.domainContracts["MealTemplate"].ownedFields,

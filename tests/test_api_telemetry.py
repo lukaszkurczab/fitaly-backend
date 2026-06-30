@@ -1159,6 +1159,967 @@ def test_telemetry_batch_rejects_invalid_enum_values(
     assert firestore_client.storage == {}
 
 
+def test_telemetry_batch_accepts_autocomplete_search_outcome(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=build_payload(
+            {
+                "name": "autocomplete_search_outcome",
+                "props": {
+                    "surface": "manual_ingredient_sheet",
+                    "outcome": "results",
+                    "queryLengthBucket": "4_8",
+                    "resultCountBucket": "4_6",
+                    "sourceClass": "remote",
+                    "latencyBucket": "250_750_ms",
+                    "warningReason": "profile_unknown",
+                },
+                "actor": {"userId": "user-123"},
+            }
+        ),
+    )
+
+    assert response.status_code == 202
+    assert len(firestore_client.storage) == 1
+
+
+def test_telemetry_batch_accepts_ingredient_product_create_outcomes(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id=f"evt-create-{outcome}",
+                actor={"userId": "user-123"},
+            ),
+            "name": "ingredient_product_create_outcome",
+            "props": {
+                "surface": "manual_ingredient_sheet",
+                "outcome": outcome,
+            },
+        }
+        for outcome in ("synced", "queued", "failed")
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 3
+    assert firestore_client.storage["evt-create-synced"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "synced",
+    }
+    assert firestore_client.storage["evt-create-queued"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "queued",
+    }
+    assert firestore_client.storage["evt-create-failed"]["props"] == {
+        "surface": "manual_ingredient_sheet",
+        "outcome": "failed",
+    }
+
+
+def test_telemetry_batch_accepts_home_next_action_events(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-shown",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "continue_review",
+                "state": "eligible",
+                "reasonCode": "review_draft_available",
+                "sourceDomain": "review_draft",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-started",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_review",
+                "ownerFlow": "ReviewMeal",
+                "state": "eligible",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-dismissed",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_review",
+                "reasonCode": "review_draft_available",
+                "cooldownBucket": "24h",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-shown",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "continue_planned_item",
+                "state": "eligible",
+                "reasonCode": "planned_item_due",
+                "sourceDomain": "planned_meal",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-started",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_planned_item",
+                "ownerFlow": "Planning",
+                "state": "eligible",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-planned-dismissed",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_planned_item",
+                "reasonCode": "planned_item_due",
+                "cooldownBucket": "24h",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-shown",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "state": "eligible",
+                "reasonCode": "known_pattern_available",
+                "sourceDomain": "known_pattern_candidate",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-started",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "ownerFlow": "MealAddMethod",
+                "state": "eligible",
+            },
+        },
+        {
+            **build_event_context(
+                event_id="evt-home-next-action-known-dismissed",
+                actor={"userId": "user-123"},
+            ),
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "reasonCode": "known_pattern_available",
+                "cooldownBucket": "24h",
+            },
+        },
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == 9
+    assert firestore_client.requested_collections == ["telemetry_events"]
+    assert firestore_client.storage["evt-home-next-action-shown"]["props"] == {
+        "actionType": "continue_review",
+        "state": "eligible",
+        "reasonCode": "review_draft_available",
+        "sourceDomain": "review_draft",
+    }
+    assert firestore_client.storage["evt-home-next-action-started"]["props"] == {
+        "actionType": "continue_review",
+        "ownerFlow": "ReviewMeal",
+        "state": "eligible",
+    }
+    assert firestore_client.storage["evt-home-next-action-dismissed"]["props"] == {
+        "actionType": "continue_review",
+        "reasonCode": "review_draft_available",
+        "cooldownBucket": "24h",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-shown"]["props"] == {
+        "actionType": "continue_planned_item",
+        "state": "eligible",
+        "reasonCode": "planned_item_due",
+        "sourceDomain": "planned_meal",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-started"]["props"] == {
+        "actionType": "continue_planned_item",
+        "ownerFlow": "Planning",
+        "state": "eligible",
+    }
+    assert firestore_client.storage["evt-home-next-action-planned-dismissed"]["props"] == {
+        "actionType": "continue_planned_item",
+        "reasonCode": "planned_item_due",
+        "cooldownBucket": "24h",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-shown"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "state": "eligible",
+        "reasonCode": "known_pattern_available",
+        "sourceDomain": "known_pattern_candidate",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-started"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "ownerFlow": "MealAddMethod",
+        "state": "eligible",
+    }
+    assert firestore_client.storage["evt-home-next-action-known-dismissed"]["props"] == {
+        "actionType": "confirm_known_pattern",
+        "reasonCode": "known_pattern_available",
+        "cooldownBucket": "24h",
+    }
+
+
+def test_telemetry_batch_accepts_c5_smart_memory_and_planning_events(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    events: tuple[tuple[str, dict[str, object]], ...] = (
+        (
+            "memory_candidate_created",
+            {
+                "memoryType": "typical_portion",
+                "surface": "review",
+                "confidenceBucket": "medium",
+                "featureState": "shadow",
+            },
+        ),
+        (
+            "memory_candidate_confirmed",
+            {
+                "memoryType": "review_correction",
+                "surface": "review",
+                "confidenceBucket": "high",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "memory_candidate_dismissed",
+            {
+                "memoryType": "ingredient_product_selection",
+                "surface": "memory_center",
+                "actionResult": "queued",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "memory_used",
+            {
+                "memoryType": "typical_portion",
+                "surface": "review",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "memory_muted",
+            {
+                "memoryType": "review_correction",
+                "surface": "settings",
+                "actionResult": "blocked",
+                "featureState": "disabled",
+            },
+        ),
+        (
+            "memory_deleted",
+            {
+                "memoryType": "ingredient_product_selection",
+                "surface": "memory_center",
+                "actionResult": "failed",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "planned_meal_created",
+            {
+                "sourceType": "manual",
+                "estimateState": "unknown",
+                "surface": "planning",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "planned_meal_confirmed",
+            {
+                "sourceType": "saved_meal",
+                "estimateState": "known",
+                "surface": "home_next_action",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "planned_meal_changed",
+            {
+                "sourceType": "recipe",
+                "estimateState": "partial",
+                "surface": "planning",
+                "actionResult": "queued",
+                "featureState": "shadow",
+            },
+        ),
+        (
+            "planned_meal_skipped",
+            {
+                "sourceType": "ingredient_product_draft",
+                "estimateState": "partial",
+                "surface": "planning",
+                "actionResult": "blocked",
+                "featureState": "disabled",
+            },
+        ),
+    )
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id=f"evt-c5-{event_name}",
+                actor={"userId": "user-123"},
+            ),
+            "name": event_name,
+            "props": props,
+        }
+        for event_name, props in events
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == len(events)
+    assert response.json()["rejectedCount"] == 0
+    for event_name, props in events:
+        assert firestore_client.storage[f"evt-c5-{event_name}"]["props"] == props
+
+
+def test_telemetry_batch_accepts_c5_known_pattern_events(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    events: tuple[tuple[str, dict[str, object]], ...] = (
+        (
+            "known_pattern_candidate_shown",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "known_pattern_review_started",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "high",
+                "sourceCountBucket": "5_plus",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        ),
+        (
+            "known_pattern_candidate_dismissed",
+            {
+                "surface": "meal_add_method",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "actionResult": "queued",
+                "featureState": "shadow",
+            },
+        ),
+    )
+    payload = build_payload({"actor": {"userId": "user-123"}})
+    payload["events"] = [
+        {
+            **build_event_context(
+                event_id=f"evt-c5-{event_name}",
+                actor={"userId": "user-123"},
+            ),
+            "name": event_name,
+            "props": props,
+        }
+        for event_name, props in events
+    ]
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["acceptedCount"] == len(events)
+    assert response.json()["rejectedCount"] == 0
+    for event_name, props in events:
+        assert firestore_client.storage[f"evt-c5-{event_name}"]["props"] == props
+
+
+def test_telemetry_batch_rejects_c5_unbounded_enums(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    invalid_events: tuple[dict[str, object], ...] = (
+        {
+            "eventId": "evt-c5-invalid-memory-type",
+            "name": "memory_candidate_created",
+            "props": {
+                "memoryType": "meal_name",
+                "surface": "review",
+                "confidenceBucket": "medium",
+                "featureState": "shadow",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-confidence",
+            "name": "memory_candidate_confirmed",
+            "props": {
+                "memoryType": "typical_portion",
+                "surface": "review",
+                "confidenceBucket": "0.734",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-action-result",
+            "name": "memory_used",
+            "props": {
+                "memoryType": "typical_portion",
+                "surface": "review",
+                "actionResult": "used oats memory",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-source-type",
+            "name": "planned_meal_created",
+            "props": {
+                "sourceType": "raw recipe name",
+                "estimateState": "known",
+                "surface": "planning",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-estimate",
+            "name": "planned_meal_changed",
+            "props": {
+                "sourceType": "recipe",
+                "estimateState": "523 calories",
+                "surface": "planning",
+                "actionResult": "queued",
+                "featureState": "shadow",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-feature-state",
+            "name": "planned_meal_skipped",
+            "props": {
+                "sourceType": "manual",
+                "estimateState": "unknown",
+                "surface": "planning",
+                "actionResult": "blocked",
+                "featureState": "private beta user",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-surface",
+            "name": "known_pattern_candidate_shown",
+            "props": {
+                "surface": "raw card name",
+                "confidenceBucket": "medium",
+                "sourceCountBucket": "3_4",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-count",
+            "name": "known_pattern_review_started",
+            "props": {
+                "surface": "meal_add_method",
+                "confidenceBucket": "high",
+                "sourceCountBucket": "4 exact meals",
+                "actionResult": "succeeded",
+                "featureState": "enabled",
+            },
+        },
+        {
+            "eventId": "evt-c5-invalid-known-pattern-confidence",
+            "name": "known_pattern_candidate_dismissed",
+            "props": {
+                "surface": "meal_add_method",
+                "confidenceBucket": "low",
+                "sourceCountBucket": "3_4",
+                "actionResult": "queued",
+                "featureState": "enabled",
+            },
+        },
+    )
+
+    for event in invalid_events:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload({**event, "actor": {"userId": "user-123"}}),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_c5_forbidden_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("mealName", "Oats breakfast"),
+        ("ingredientName", "Oats"),
+        ("notes", "private meal note"),
+        ("candidateId", "candidate-1"),
+        ("subjectKeyHash", "subject-hash-1"),
+        ("createdByRuleVersion", "known-pattern-v2-content-signature"),
+        ("sourceHash", "source-hash-1"),
+        ("memoryId", "memory-1"),
+        ("plannedMealId", "planned-1"),
+        ("sourceRef", "source-ref-1"),
+        ("sourceRefs", ["source-ref-1"]),
+        ("rawReason", "Skipped because the note said oats"),
+        ("rawPrompt", "provider prompt"),
+        ("rawResponse", "provider response"),
+        ("imageUrl", "https://example.invalid/meal.jpg"),
+        ("fullPayload", "full payload"),
+        ("calories", 389),
+        ("kcal", 389),
+        ("macros", "20/30/40"),
+        ("protein", 16.9),
+        ("carbs", 66.3),
+        ("fat", 6.9),
+    )
+    memory_props: dict[str, object] = {
+        "memoryType": "typical_portion",
+        "surface": "review",
+        "confidenceBucket": "medium",
+        "featureState": "shadow",
+    }
+    planning_props: dict[str, object] = {
+        "sourceType": "manual",
+        "estimateState": "unknown",
+        "surface": "planning",
+        "featureState": "disabled",
+    }
+    known_pattern_props: dict[str, object] = {
+        "surface": "meal_add_method",
+        "confidenceBucket": "medium",
+        "sourceCountBucket": "3_4",
+        "featureState": "enabled",
+    }
+
+    for index, (prop_key, prop_value) in enumerate(forbidden_props):
+        event_name = (
+            "memory_candidate_created"
+            if index % 3 == 0
+            else "planned_meal_created"
+            if index % 3 == 1
+            else "known_pattern_candidate_shown"
+        )
+        base_props = (
+            memory_props
+            if event_name == "memory_candidate_created"
+            else planning_props
+            if event_name == "planned_meal_created"
+            else known_pattern_props
+        )
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-c5-forbidden-{prop_key}",
+                    "name": event_name,
+                    "props": {**base_props, prop_key: prop_value},
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_home_next_action_unbounded_enums(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    invalid_events: tuple[dict[str, object], ...] = (
+        {
+            "eventId": "evt-home-invalid-action",
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "inspect_memory",
+                "state": "eligible",
+                "reasonCode": "review_draft_available",
+                "sourceDomain": "review_draft",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-state",
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_review",
+                "ownerFlow": "ReviewMeal",
+                "state": "pending",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-source-domain",
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "continue_planned_item",
+                "state": "eligible",
+                "reasonCode": "planned_item_due",
+                "sourceDomain": "planning_note",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-owner-flow",
+            "name": "home_next_action_started",
+            "props": {
+                "actionType": "continue_planned_item",
+                "ownerFlow": "PlanningDetail",
+                "state": "eligible",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-reason-code",
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_planned_item",
+                "reasonCode": "raw-user-reason",
+                "cooldownBucket": "24h",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-known-source",
+            "name": "home_next_action_shown",
+            "props": {
+                "actionType": "confirm_known_pattern",
+                "state": "eligible",
+                "reasonCode": "known_pattern_available",
+                "sourceDomain": "known_pattern_raw",
+            },
+        },
+        {
+            "eventId": "evt-home-invalid-cooldown",
+            "name": "home_next_action_dismissed",
+            "props": {
+                "actionType": "continue_review",
+                "reasonCode": "review_draft_available",
+                "cooldownBucket": "raw-unbounded",
+            },
+        },
+    )
+
+    for event in invalid_events:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload({**event, "actor": {"userId": "user-123"}}),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_disallowed_manual_product_created_event(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        headers=auth_headers("user-123"),
+        json=build_payload(
+            {
+                "eventId": "evt-disallowed-manual-product-created",
+                "name": "manual_product_created",
+                "props": {
+                    "surface": "manual_ingredient_sheet",
+                    "outcome": "synced",
+                },
+                "actor": {"userId": "user-123"},
+            }
+        ),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 0,
+        "duplicateCount": 0,
+        "rejectedCount": 1,
+        "rejectedEvents": [
+            {
+                "eventId": "evt-disallowed-manual-product-created",
+                "name": "manual_product_created",
+                "reason": "event_not_allowed",
+            }
+        ],
+    }
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_home_next_action_sensitive_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("suggestionText", "Finish oats review"),
+        ("rawSuggestionText", "Finish oats review"),
+        ("mealText", "oats and yogurt"),
+        ("recipeName", "Oats breakfast"),
+        ("productName", "Oats"),
+        ("ingredientName", "Oats"),
+        ("candidateId", "review-draft:local"),
+        ("mealId", "draft-1"),
+        ("userId", "user-123"),
+        ("anonymousId", "anon-1"),
+        ("barcode", "5901234123457"),
+        ("kcal", 389),
+        ("calories", 389),
+        ("macros", "20/30/40"),
+        ("protein", 16.9),
+        ("carbs", 66.3),
+        ("fat", 6.9),
+        ("sourceRef", "source-ref-1"),
+        ("memoryId", "memory-1"),
+        ("patternId", "pattern-1"),
+        ("profileHealth", "health free text"),
+        ("profileFreeText", "profile note"),
+        ("healthConditions", "health free text"),
+        ("rawPrompt", "provider prompt"),
+        ("rawResponse", "provider response"),
+        ("providerPayload", "provider payload"),
+        ("rawProviderPayload", "provider payload"),
+    )
+
+    for prop_key, prop_value in forbidden_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-home-forbidden-{prop_key}",
+                    "name": "home_next_action_shown",
+                    "props": {
+                        "actionType": "continue_review",
+                        "state": "eligible",
+                        "reasonCode": "review_draft_available",
+                        "sourceDomain": "review_draft",
+                        prop_key: prop_value,
+                    },
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_autocomplete_raw_food_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("query", "owies"),
+        ("displayName", "Owies lokalny"),
+        ("ingredientProductId", "ingredient-product-1"),
+        ("nutritionPer100", 100),
+        ("kcal", 389),
+        ("protein", 16.9),
+        ("barcode", "5901234123457"),
+    )
+
+    for prop_key, prop_value in forbidden_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-autocomplete-forbidden-{prop_key}",
+                    "name": "autocomplete_search_outcome",
+                    "props": {
+                        "surface": "manual_ingredient_sheet",
+                        "outcome": "results",
+                        "queryLengthBucket": "4_8",
+                        "resultCountBucket": "4_6",
+                        "sourceClass": "remote",
+                        "latencyBucket": "250_750_ms",
+                        prop_key: prop_value,
+                    },
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_ingredient_product_create_raw_food_props(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    forbidden_props: tuple[tuple[str, object], ...] = (
+        ("query", "owies"),
+        ("rawQuery", "owies"),
+        ("normalizedQuery", "owies"),
+        ("displayName", "Owies lokalny"),
+        ("ingredientName", "Owies"),
+        ("productName", "Owies lokalny"),
+        ("ingredientProductId", "ingredient-product-1"),
+        ("productId", "product-1"),
+        ("barcode", "5901234123457"),
+        ("nutritionPer100", {"kcal": 389}),
+        ("kcal", 389),
+        ("protein", 16.9),
+        ("carbs", 66.3),
+        ("fat", 6.9),
+        ("sourceRef", "source-ref-1"),
+        ("memoryId", "memory-1"),
+    )
+
+    for prop_key, prop_value in forbidden_props:
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            headers=auth_headers("user-123"),
+            json=build_payload(
+                {
+                    "eventId": f"evt-create-forbidden-{prop_key}",
+                    "name": "ingredient_product_create_outcome",
+                    "props": {
+                        "surface": "manual_ingredient_sheet",
+                        "outcome": "failed",
+                        prop_key: prop_value,
+                    },
+                    "actor": {"userId": "user-123"},
+                }
+            ),
+        )
+
+        assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_rejects_payload_or_batch_that_is_too_large(
     mocker: MockerFixture,
 ) -> None:
@@ -1290,6 +2251,96 @@ def test_telemetry_daily_summary_returns_grouped_counts(
                 {"name": "meal_logged", "count": 1},
                 {"name": "onboarding_completed", "count": 1},
             ],
+        },
+    ]
+
+
+def test_telemetry_daily_summary_allows_small_client_clock_skew(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    mocker.patch(
+        "app.services.telemetry_service.utc_now",
+        return_value=telemetry_service.datetime(2026, 3, 18, 12, 0, 0),
+    )
+    firestore_client = FakeFirestoreClient()
+    firestore_client.storage.update(
+        {
+            "evt-earlier-today": {
+                "eventId": "evt-earlier-today",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T11:00:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+            "evt-in-skew": {
+                "eventId": "evt-in-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T12:04:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+            "evt-outside-skew": {
+                "eventId": "evt-outside-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-18T12:06:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+        }
+    )
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.get(
+        "/api/v2/telemetry/events/summary/daily?days=1",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["buckets"] == [
+        {
+            "day": "2026-03-18",
+            "totalEvents": 2,
+            "eventCounts": [{"name": "home_next_action_started", "count": 2}],
+        },
+    ]
+
+
+def test_telemetry_daily_summary_clamps_future_skew_to_current_day(
+    mocker: MockerFixture,
+    auth_headers: AuthHeaders,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    mocker.patch(
+        "app.services.telemetry_service.utc_now",
+        return_value=telemetry_service.datetime(2026, 3, 18, 23, 59, 0),
+    )
+    firestore_client = FakeFirestoreClient()
+    firestore_client.storage.update(
+        {
+            "evt-future-skew": {
+                "eventId": "evt-future-skew",
+                "name": "home_next_action_started",
+                "ts": "2026-03-19T00:02:00Z",
+                "userHash": telemetry_service.build_user_hash("user-123"),
+            },
+        }
+    )
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.get(
+        "/api/v2/telemetry/events/summary/daily?days=1",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["buckets"] == [
+        {
+            "day": "2026-03-18",
+            "totalEvents": 1,
+            "eventCounts": [{"name": "home_next_action_started", "count": 1}],
         },
     ]
 

@@ -2,6 +2,29 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      mobile_contract_ref:
+        description: Optional fitaly ref for paired cross-repo contract PRs.
+        required: false
+        type: string
+        default: ""
+      require_exact_mobile_contract_ref:
+        description: Require mobile_contract_ref to be an exact 40-character commit SHA.
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      mobile_contract_ref:
+        description: Optional fitaly ref for paired cross-repo contract PRs.
+        required: false
+        type: string
+        default: ""
+      require_exact_mobile_contract_ref:
+        description: Require mobile_contract_ref to be an exact 40-character commit SHA.
+        required: false
+        type: boolean
+        default: false
   pull_request:
   push:
     branches:
@@ -19,6 +42,88 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Resolve mobile contract ref
+        id: mobile-contract-ref
+        run: |
+          trim() {
+            value="$1"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          validate_ref() {
+            ref="$1"
+            if [ -z "$ref" ]; then
+              echo "mobile_contract_ref must not be empty" >&2
+              exit 1
+            fi
+            if [ "${#ref}" -gt 255 ]; then
+              echo "mobile_contract_ref is too long" >&2
+              exit 1
+            fi
+            case "$ref" in
+              /*|*/|*'..'*|*'@{'*|*.lock|*.)
+                echo "mobile_contract_ref is not a safe git ref: $ref" >&2
+                exit 1
+                ;;
+            esac
+            if printf "%s" "$ref" | grep -Eq '[[:space:]\\~^:?*\[]'; then
+              echo "mobile_contract_ref contains a disallowed character: $ref" >&2
+              exit 1
+            fi
+            if ! printf "%s" "$ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+              echo "mobile_contract_ref contains a disallowed character: $ref" >&2
+              exit 1
+            fi
+          }
+
+          ref="${MOBILE_CONTRACT_REF_INPUT:-}"
+          marker_ref=""
+          marker_count=0
+          while IFS= read -r line; do
+            line="$(trim "$line")"
+            case "$line" in
+              Mobile-Contract-Ref:*)
+                marker_count=$((marker_count + 1))
+                if [ "$marker_count" -gt 1 ]; then
+                  echo "Multiple Mobile-Contract-Ref markers found" >&2
+                  exit 1
+                fi
+                marker_ref="$(trim "${line#Mobile-Contract-Ref:}")"
+                ;;
+            esac
+          done <<< "${PR_BODY:-}"
+          if [ -n "$ref" ] && [ -n "$marker_ref" ] && [ "$ref" != "$marker_ref" ]; then
+            echo "Conflicting mobile contract refs: workflow input '$ref' differs from PR marker '$marker_ref'" >&2
+            exit 1
+          fi
+          if [ -z "$ref" ] && [ -n "$marker_ref" ]; then
+            ref="$marker_ref"
+          fi
+          if [ -z "$ref" ]; then
+            ref="main"
+          fi
+          validate_ref "$ref"
+          if [ "${MOBILE_CONTRACT_REF_REQUIRE_EXACT_SHA:-false}" = "true" ]; then
+            if ! printf "%s" "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "mobile_contract_ref must be a 40-character commit SHA when exact mode is required" >&2
+              exit 1
+            fi
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        env:
+          MOBILE_CONTRACT_REF_INPUT: ${{ inputs.mobile_contract_ref }}
+          MOBILE_CONTRACT_REF_REQUIRE_EXACT_SHA: ${{ inputs.require_exact_mobile_contract_ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+
+      - name: Checkout mobile repo (canonical contract source)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/fitaly
+          path: _mobile
+          ref: ${{ steps.mobile-contract-ref.outputs.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -45,3 +150,5 @@ jobs:
 
       - name: Run tests
         run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=80
+        env:
+          MOBILE_REPO: _mobile

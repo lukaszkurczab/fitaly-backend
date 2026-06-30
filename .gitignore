@@ -32,6 +32,7 @@ ui-debug.log
 
 # Environment
 .env
+.env.prod
 
 # secrets and local credentials
 service-account.json

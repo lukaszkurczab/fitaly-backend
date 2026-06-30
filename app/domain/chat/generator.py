@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.exceptions import OpenAIServiceError
 
@@ -32,6 +32,8 @@ class _GenerationContract:
 
 
 class _StructuredAnalyticalAnswerDto(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     verdict: str
     coverage_statement: str = Field(alias="coverageStatement")
     key_observations: list[str] = Field(alias="keyObservations", min_length=1, max_length=3)

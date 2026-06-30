@@ -61,6 +61,25 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "smart_reminder_noop",
         "smart_reminder_decision_failed",
         "smart_reminder_schedule_failed",
+        "autocomplete_search_outcome",
+        "autocomplete_result_selected",
+        "ingredient_product_create_outcome",
+        "home_next_action_shown",
+        "home_next_action_started",
+        "home_next_action_dismissed",
+        "memory_candidate_created",
+        "memory_candidate_confirmed",
+        "memory_candidate_dismissed",
+        "memory_used",
+        "memory_muted",
+        "memory_deleted",
+        "planned_meal_created",
+        "planned_meal_confirmed",
+        "planned_meal_changed",
+        "planned_meal_skipped",
+        "known_pattern_candidate_shown",
+        "known_pattern_review_started",
+        "known_pattern_candidate_dismissed",
     }
 )
 
@@ -160,6 +179,76 @@ NOTIFICATION_TYPES = frozenset(
     }
 )
 NOTIFICATION_ACTION_IDENTIFIERS = frozenset({"default", "open_chat"})
+AUTOCOMPLETE_SURFACES = frozenset({"manual_ingredient_sheet"})
+AUTOCOMPLETE_SEARCH_OUTCOMES = frozenset(
+    {
+        "results",
+        "no_results",
+        "offline",
+        "warning",
+        "stale",
+        "backend_degraded",
+        "error",
+    }
+)
+AUTOCOMPLETE_QUERY_LENGTH_BUCKETS = frozenset({"2_3", "4_8", "9_16", "17_plus"})
+AUTOCOMPLETE_RESULT_COUNT_BUCKETS = frozenset(
+    {"0", "1", "2_3", "4_6", "7_12", "13_plus"}
+)
+AUTOCOMPLETE_LATENCY_BUCKETS = frozenset(
+    {"under_250_ms", "250_750_ms", "750_1500_ms", "1500_ms_plus"}
+)
+AUTOCOMPLETE_SOURCE_CLASSES = frozenset(
+    {"remote", "cache", "none", "global", "user_scoped"}
+)
+AUTOCOMPLETE_RANK_BUCKETS = frozenset({"1", "2_3", "4_6", "7_12", "13_plus"})
+AUTOCOMPLETE_SELECTION_STATES = frozenset({"selected"})
+INGREDIENT_PRODUCT_CREATE_OUTCOMES = frozenset({"synced", "queued", "failed"})
+AUTOCOMPLETE_WARNING_REASONS = frozenset(
+    {
+        "profile_unknown",
+        "profile_warning",
+        "profile_incompatible",
+        "nutrition_low_confidence",
+        "nutrition_missing",
+        "source_candidate_only",
+        "cache_stale",
+        "offline_cache",
+        "pending_user_record",
+        "query_too_short",
+        "backend_degraded",
+    }
+)
+HOME_NEXT_ACTION_TYPES = frozenset(
+    {"continue_review", "continue_planned_item", "confirm_known_pattern"}
+)
+HOME_NEXT_ACTION_STATES = frozenset({"eligible"})
+HOME_NEXT_ACTION_REASON_CODES = frozenset(
+    {"review_draft_available", "planned_item_due", "known_pattern_available"}
+)
+HOME_NEXT_ACTION_SOURCE_DOMAINS = frozenset(
+    {"review_draft", "planned_meal", "known_pattern_candidate"}
+)
+HOME_NEXT_ACTION_OWNER_FLOWS = frozenset(
+    {"ReviewMeal", "Planning", "MealAddMethod"}
+)
+HOME_NEXT_ACTION_COOLDOWN_BUCKETS = frozenset({"24h"})
+C5_MEMORY_TYPES = frozenset(
+    {"typical_portion", "review_correction", "ingredient_product_selection"}
+)
+C5_TELEMETRY_SURFACES = frozenset(
+    {"review", "memory_center", "settings", "planning", "home_next_action"}
+)
+C5_CONFIDENCE_BUCKETS = frozenset({"low", "medium", "high"})
+C5_ACTION_RESULTS = frozenset({"succeeded", "queued", "blocked", "failed"})
+C5_FEATURE_STATES = frozenset({"enabled", "disabled", "shadow"})
+C5_PLANNED_MEAL_SOURCE_TYPES = frozenset(
+    {"manual", "saved_meal", "recipe", "ingredient_product_draft"}
+)
+C5_PLANNED_MEAL_ESTIMATE_STATES = frozenset({"known", "partial", "unknown"})
+C5_KNOWN_PATTERN_SURFACES = frozenset({"meal_add_method"})
+C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS = frozenset({"medium", "high"})
+C5_KNOWN_PATTERN_COUNT_BUCKETS = frozenset({"3_4", "5_plus"})
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
     r"(message|content|email|name|phone)",
@@ -219,6 +308,92 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "smart_reminder_decision_failed": frozenset({"failureReason"}),
     "smart_reminder_schedule_failed": frozenset(
         {"reminderKind", "decision", "confidenceBucket", "failureReason"}
+    ),
+    "autocomplete_search_outcome": frozenset(
+        {
+            "surface",
+            "outcome",
+            "queryLengthBucket",
+            "resultCountBucket",
+            "sourceClass",
+            "latencyBucket",
+            "warningReason",
+        }
+    ),
+    "autocomplete_result_selected": frozenset(
+        {
+            "surface",
+            "resultCountBucket",
+            "sourceClass",
+            "rankBucket",
+            "selectionState",
+            "warningReason",
+        }
+    ),
+    "ingredient_product_create_outcome": frozenset({"surface", "outcome"}),
+    "home_next_action_shown": frozenset(
+        {"actionType", "state", "reasonCode", "sourceDomain"}
+    ),
+    "home_next_action_started": frozenset({"actionType", "ownerFlow", "state"}),
+    "home_next_action_dismissed": frozenset(
+        {"actionType", "reasonCode", "cooldownBucket"}
+    ),
+    "memory_candidate_created": frozenset(
+        {"memoryType", "surface", "confidenceBucket", "featureState"}
+    ),
+    "memory_candidate_confirmed": frozenset(
+        {
+            "memoryType",
+            "surface",
+            "confidenceBucket",
+            "actionResult",
+            "featureState",
+        }
+    ),
+    "memory_candidate_dismissed": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_used": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_muted": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "memory_deleted": frozenset(
+        {"memoryType", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_created": frozenset(
+        {"sourceType", "estimateState", "surface", "featureState"}
+    ),
+    "planned_meal_confirmed": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_changed": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "planned_meal_skipped": frozenset(
+        {"sourceType", "estimateState", "surface", "actionResult", "featureState"}
+    ),
+    "known_pattern_candidate_shown": frozenset(
+        {"surface", "confidenceBucket", "sourceCountBucket", "featureState"}
+    ),
+    "known_pattern_review_started": frozenset(
+        {
+            "surface",
+            "confidenceBucket",
+            "sourceCountBucket",
+            "actionResult",
+            "featureState",
+        }
+    ),
+    "known_pattern_candidate_dismissed": frozenset(
+        {
+            "surface",
+            "confidenceBucket",
+            "sourceCountBucket",
+            "actionResult",
+            "featureState",
+        }
     ),
 }
 
@@ -321,6 +496,127 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "insightType": COACH_INSIGHT_TYPES,
         "actionType": COACH_TAPPABLE_ACTION_TYPES,
         "freshness": COACH_INSIGHT_FRESHNESS,
+    },
+    "autocomplete_search_outcome": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "outcome": AUTOCOMPLETE_SEARCH_OUTCOMES,
+        "queryLengthBucket": AUTOCOMPLETE_QUERY_LENGTH_BUCKETS,
+        "resultCountBucket": AUTOCOMPLETE_RESULT_COUNT_BUCKETS,
+        "sourceClass": AUTOCOMPLETE_SOURCE_CLASSES,
+        "latencyBucket": AUTOCOMPLETE_LATENCY_BUCKETS,
+        "warningReason": AUTOCOMPLETE_WARNING_REASONS,
+    },
+    "autocomplete_result_selected": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "resultCountBucket": AUTOCOMPLETE_RESULT_COUNT_BUCKETS,
+        "sourceClass": AUTOCOMPLETE_SOURCE_CLASSES,
+        "rankBucket": AUTOCOMPLETE_RANK_BUCKETS,
+        "selectionState": AUTOCOMPLETE_SELECTION_STATES,
+        "warningReason": AUTOCOMPLETE_WARNING_REASONS,
+    },
+    "ingredient_product_create_outcome": {
+        "surface": AUTOCOMPLETE_SURFACES,
+        "outcome": INGREDIENT_PRODUCT_CREATE_OUTCOMES,
+    },
+    "home_next_action_shown": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "state": HOME_NEXT_ACTION_STATES,
+        "reasonCode": HOME_NEXT_ACTION_REASON_CODES,
+        "sourceDomain": HOME_NEXT_ACTION_SOURCE_DOMAINS,
+    },
+    "home_next_action_started": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "ownerFlow": HOME_NEXT_ACTION_OWNER_FLOWS,
+        "state": HOME_NEXT_ACTION_STATES,
+    },
+    "home_next_action_dismissed": {
+        "actionType": HOME_NEXT_ACTION_TYPES,
+        "reasonCode": HOME_NEXT_ACTION_REASON_CODES,
+        "cooldownBucket": HOME_NEXT_ACTION_COOLDOWN_BUCKETS,
+    },
+    "memory_candidate_created": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "confidenceBucket": C5_CONFIDENCE_BUCKETS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_candidate_confirmed": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "confidenceBucket": C5_CONFIDENCE_BUCKETS,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_candidate_dismissed": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_used": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_muted": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "memory_deleted": {
+        "memoryType": C5_MEMORY_TYPES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_created": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_confirmed": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_changed": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "planned_meal_skipped": {
+        "sourceType": C5_PLANNED_MEAL_SOURCE_TYPES,
+        "estimateState": C5_PLANNED_MEAL_ESTIMATE_STATES,
+        "surface": C5_TELEMETRY_SURFACES,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_candidate_shown": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_review_started": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
+    },
+    "known_pattern_candidate_dismissed": {
+        "surface": C5_KNOWN_PATTERN_SURFACES,
+        "confidenceBucket": C5_KNOWN_PATTERN_CONFIDENCE_BUCKETS,
+        "sourceCountBucket": C5_KNOWN_PATTERN_COUNT_BUCKETS,
+        "actionResult": C5_ACTION_RESULTS,
+        "featureState": C5_FEATURE_STATES,
     },
 }
 

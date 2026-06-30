@@ -1,0 +1,533 @@
+{
+  "contract": "smart_memory_core_v1",
+  "schemaVersion": 1,
+  "memoryTypes": [
+    "typical_portion",
+    "review_correction",
+    "ingredient_product_selection"
+  ],
+  "memoryStates": [
+    "candidate",
+    "active",
+    "muted",
+    "deleted_suppressed",
+    "disabled",
+    "source_deleted",
+    "sync_failed",
+    "conflicted"
+  ],
+  "candidateStates": [
+    "candidate",
+    "activated",
+    "deleted_suppressed",
+    "source_deleted"
+  ],
+  "reasonCodes": {
+    "stateReasonCodes": [
+      "threshold_met",
+      "user_muted",
+      "user_restored",
+      "user_deleted",
+      "account_disabled",
+      "source_deleted",
+      "sync_failed",
+      "conflict_remote_won",
+      "local_pending"
+    ],
+    "confidenceReasonCodes": [
+      "single_observation",
+      "distinct_days_met",
+      "consistent_user_review",
+      "ingredient_selection_repeated"
+    ],
+    "userValueReasonCodes": [
+      "user_corrected"
+    ]
+  },
+  "userControlOperations": [
+    "candidate_upsert",
+    "edit",
+    "mute",
+    "restore",
+    "delete",
+    "source_deleted",
+    "settings_disable",
+    "settings_enable"
+  ],
+  "offlineProjectionStates": [
+    "no_signal",
+    "backend_candidate",
+    "pending_offline_candidate",
+    "activated",
+    "active",
+    "muted",
+    "deleted_suppressed",
+    "disabled",
+    "source_deleted",
+    "sync_failed",
+    "conflicted",
+    "queued_edit",
+    "queued_mute",
+    "queued_delete",
+    "queued_disable"
+  ],
+  "apiEndpoints": [
+    {
+      "method": "GET",
+      "path": "/users/me/smart-memory/items",
+      "response": "SmartMemoryItemsPageResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/users/me/smart-memory/candidates",
+      "response": "SmartMemoryCandidatesPageResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/users/me/smart-memory/candidates",
+      "response": "SmartMemoryCandidateResponse"
+    },
+    {
+      "method": "PATCH",
+      "path": "/users/me/smart-memory/items/{memoryItemId}",
+      "response": "SmartMemoryItemMutationResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/users/me/smart-memory/items/{memoryItemId}/mute",
+      "response": "SmartMemoryItemMutationResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/users/me/smart-memory/items/{memoryItemId}/restore",
+      "response": "SmartMemoryItemMutationResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/users/me/smart-memory/items/{memoryItemId}/delete",
+      "response": "SmartMemoryItemMutationResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/users/me/smart-memory/items/{memoryItemId}/source-deleted",
+      "response": "SmartMemoryItemMutationResponse"
+    },
+    {
+      "method": "PATCH",
+      "path": "/users/me/smart-memory/settings",
+      "response": "SmartMemorySettingsResponse"
+    }
+  ],
+  "apiResponseExamples": {
+    "emptyItemsPage": {
+      "items": []
+    },
+    "itemsPage": {
+      "items": [
+        {
+          "memoryItemId": "memory-typical-portion-001",
+          "ownerUserId": "contract-user",
+          "schemaVersion": 1,
+          "memoryType": "typical_portion",
+          "state": "active",
+          "stateReason": "threshold_met",
+          "subject": {
+            "kind": "ingredient_alias",
+            "aliasHash": "alias_hash_001"
+          },
+          "userValue": {
+            "amount": 60,
+            "unit": "g"
+          },
+          "evidenceSummary": {
+            "observationCount": 3,
+            "distinctDayCount": 2
+          },
+          "sourceRefs": [
+            {
+              "kind": "meal_review",
+              "sourceHash": "source_hash_001"
+            }
+          ],
+          "threshold": {
+            "minObservations": 3
+          },
+          "confidence": {
+            "level": "medium"
+          },
+          "confidenceReasonCodes": [
+            "distinct_days_met"
+          ],
+          "control": {},
+          "createdAt": "2026-06-04T09:00:00.000Z",
+          "updatedAt": "2026-06-04T10:00:00.000Z",
+          "lastEvaluatedAt": "2026-06-04T10:00:00.000Z",
+          "mutedAt": null,
+          "deletedAt": null,
+          "editedAt": null,
+          "restoredAt": null,
+          "sourceDeletedAt": null,
+          "serverRevision": 3
+        },
+        {
+          "memoryItemId": "memory-product-selection-001",
+          "ownerUserId": "contract-user",
+          "schemaVersion": 1,
+          "memoryType": "ingredient_product_selection",
+          "state": "muted",
+          "stateReason": "user_muted",
+          "subject": {
+            "kind": "ingredient_alias",
+            "aliasHash": "alias_hash_002"
+          },
+          "userValue": {
+            "displayLabel": "Product variant",
+            "ingredientProductId": "ingredient-product-contract-001"
+          },
+          "evidenceSummary": {
+            "selectionCount": 2
+          },
+          "sourceRefs": [
+            {
+              "kind": "ingredient_product_selection",
+              "sourceHash": "source_hash_002"
+            }
+          ],
+          "threshold": {
+            "minSelections": 2
+          },
+          "confidence": {
+            "level": "medium"
+          },
+          "confidenceReasonCodes": [
+            "ingredient_selection_repeated"
+          ],
+          "control": {
+            "mutedBy": "user"
+          },
+          "createdAt": "2026-06-04T09:10:00.000Z",
+          "updatedAt": "2026-06-04T10:10:00.000Z",
+          "lastEvaluatedAt": "2026-06-04T10:10:00.000Z",
+          "mutedAt": "2026-06-04T10:10:00.000Z",
+          "deletedAt": null,
+          "editedAt": null,
+          "restoredAt": null,
+          "sourceDeletedAt": null,
+          "serverRevision": 2
+        }
+      ]
+    },
+    "candidateResponse": {
+      "candidate": {
+        "candidateId": "candidate-review-correction-001",
+        "ownerUserId": "contract-user",
+        "schemaVersion": 1,
+        "memoryType": "review_correction",
+        "state": "candidate",
+        "subject": {
+          "kind": "nutrient_adjustment",
+          "subjectHash": "subject_hash_001"
+        },
+        "evidenceSummary": {
+          "correctionCount": 1
+        },
+        "sourceRefs": [
+          {
+            "kind": "review_confirmation",
+            "sourceHash": "source_hash_003"
+          }
+        ],
+        "confidenceReasonCodes": [
+          "single_observation"
+        ],
+        "suppressionChecks": {
+          "deletedSuppressed": false,
+          "sourceDeleted": false,
+          "settingsEnabled": true
+        },
+        "createdAt": "2026-06-04T09:20:00.000Z",
+        "updatedAt": "2026-06-04T09:20:00.000Z",
+        "firstSeenAt": "2026-06-04T09:20:00.000Z",
+        "lastSeenAt": "2026-06-04T09:20:00.000Z",
+        "serverRevision": 1
+      },
+      "updated": true
+    },
+    "itemDeleteResponse": {
+      "item": {
+        "memoryItemId": "memory-deleted-001",
+        "ownerUserId": "contract-user",
+        "schemaVersion": 1,
+        "memoryType": "typical_portion",
+        "state": "deleted_suppressed",
+        "stateReason": "user_deleted",
+        "subject": {},
+        "userValue": {},
+        "evidenceSummary": {},
+        "sourceRefs": [],
+        "threshold": {},
+        "confidence": {},
+        "confidenceReasonCodes": [],
+        "control": {
+          "deletedBy": "user"
+        },
+        "createdAt": "2026-06-04T09:00:00.000Z",
+        "updatedAt": "2026-06-04T10:30:00.000Z",
+        "lastEvaluatedAt": null,
+        "mutedAt": null,
+        "deletedAt": "2026-06-04T10:30:00.000Z",
+        "editedAt": null,
+        "restoredAt": null,
+        "sourceDeletedAt": null,
+        "serverRevision": 4
+      },
+      "updated": true
+    },
+    "settingsEnabledResponse": {
+      "settings": {
+        "ownerUserId": "contract-user",
+        "enabled": true,
+        "disabledAt": null,
+        "updatedAt": "2026-06-04T10:00:00.000Z",
+        "serverRevision": 1,
+        "clientMutationId": "contract-mutation-enable"
+      },
+      "updated": true
+    },
+    "settingsDisabledResponse": {
+      "settings": {
+        "ownerUserId": "contract-user",
+        "enabled": false,
+        "disabledAt": "2026-06-04T11:00:00.000Z",
+        "updatedAt": "2026-06-04T11:00:00.000Z",
+        "serverRevision": 2,
+        "clientMutationId": "contract-mutation-disable"
+      },
+      "updated": true
+    }
+  },
+  "stateTransitionExamples": [
+    {
+      "case": "no_signal",
+      "memoryType": null,
+      "backendState": null,
+      "projectionState": "no_signal",
+      "reviewState": "new",
+      "memoryItemId": null,
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "backend_candidate",
+      "memoryType": "review_correction",
+      "backendState": "candidate",
+      "projectionState": "backend_candidate",
+      "reviewState": "new",
+      "memoryItemId": null,
+      "candidateId": "candidate-review-correction-001",
+      "queuedOperation": null,
+      "suggestionUse": "pending_only"
+    },
+    {
+      "case": "pending_offline_candidate",
+      "memoryType": "typical_portion",
+      "backendState": null,
+      "projectionState": "pending_offline_candidate",
+      "reviewState": "new",
+      "memoryItemId": null,
+      "candidateId": "local-candidate-001",
+      "queuedOperation": {
+        "operation": "candidate_upsert",
+        "status": "queued",
+        "clientMutationId": "contract-mutation-candidate"
+      },
+      "suggestionUse": "pending_only"
+    },
+    {
+      "case": "activated",
+      "memoryType": "typical_portion",
+      "backendState": null,
+      "projectionState": "activated",
+      "reviewState": "new",
+      "memoryItemId": null,
+      "candidateId": "candidate-activated-001",
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "active",
+      "memoryType": "typical_portion",
+      "backendState": "active",
+      "projectionState": "active",
+      "reviewState": "used",
+      "memoryItemId": "memory-typical-portion-001",
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "allowed"
+    },
+    {
+      "case": "muted",
+      "memoryType": "ingredient_product_selection",
+      "backendState": "muted",
+      "projectionState": "muted",
+      "reviewState": "new",
+      "memoryItemId": "memory-product-selection-001",
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "deleted_suppressed",
+      "memoryType": "typical_portion",
+      "backendState": "deleted_suppressed",
+      "projectionState": "deleted_suppressed",
+      "reviewState": "new",
+      "memoryItemId": "memory-deleted-001",
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "disabled",
+      "memoryType": null,
+      "backendState": "disabled",
+      "projectionState": "disabled",
+      "reviewState": "disabled",
+      "memoryItemId": null,
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "source_deleted",
+      "memoryType": "review_correction",
+      "backendState": "source_deleted",
+      "projectionState": "source_deleted",
+      "reviewState": "new",
+      "memoryItemId": "memory-source-deleted-001",
+      "candidateId": null,
+      "queuedOperation": null,
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "sync_failed",
+      "memoryType": "typical_portion",
+      "backendState": "active",
+      "projectionState": "sync_failed",
+      "reviewState": "new",
+      "memoryItemId": "memory-typical-portion-001",
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "edit",
+        "status": "sync_failed",
+        "clientMutationId": "contract-mutation-edit-failed"
+      },
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "conflicted",
+      "memoryType": "typical_portion",
+      "backendState": "conflicted",
+      "projectionState": "conflicted",
+      "reviewState": "new",
+      "memoryItemId": "memory-conflicted-001",
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "edit",
+        "status": "conflicted",
+        "clientMutationId": "contract-mutation-edit-conflict"
+      },
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "queued_edit",
+      "memoryType": "typical_portion",
+      "backendState": "active",
+      "projectionState": "queued_edit",
+      "reviewState": "new",
+      "memoryItemId": "memory-typical-portion-001",
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "edit",
+        "status": "queued",
+        "clientMutationId": "contract-mutation-edit"
+      },
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "queued_mute",
+      "memoryType": "ingredient_product_selection",
+      "backendState": "active",
+      "projectionState": "queued_mute",
+      "reviewState": "new",
+      "memoryItemId": "memory-product-selection-001",
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "mute",
+        "status": "queued",
+        "clientMutationId": "contract-mutation-mute"
+      },
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "queued_delete",
+      "memoryType": "typical_portion",
+      "backendState": "active",
+      "projectionState": "queued_delete",
+      "reviewState": "new",
+      "memoryItemId": "memory-typical-portion-001",
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "delete",
+        "status": "queued",
+        "clientMutationId": "contract-mutation-delete"
+      },
+      "suggestionUse": "blocked"
+    },
+    {
+      "case": "queued_disable",
+      "memoryType": null,
+      "backendState": "disabled",
+      "projectionState": "queued_disable",
+      "reviewState": "disabled",
+      "memoryItemId": null,
+      "candidateId": null,
+      "queuedOperation": {
+        "operation": "settings_disable",
+        "status": "queued",
+        "clientMutationId": "contract-mutation-disable"
+      },
+      "suggestionUse": "blocked"
+    }
+  ],
+  "memoryCenter": {
+    "states": [
+      "empty_enabled",
+      "empty_disabled",
+      "has_active",
+      "has_pending_controls",
+      "has_sync_failed"
+    ],
+    "emptyEnabledAllowsCandidates": true,
+    "disabledBlocksCandidateWrites": true,
+    "syncFailedRequiresVisibleRetryOrDiscard": true
+  },
+  "review": {
+    "states": [
+      "used",
+      "new",
+      "disabled"
+    ],
+    "usedCanReferenceBackendActiveMemory": true,
+    "newCannotDependOnPendingCandidate": true,
+    "disabledCannotWriteCandidate": true
+  },
+  "privacyBoundary": {
+    "excludesMealNarrativeText": true,
+    "excludesReviewDiffs": true,
+    "excludesProviderPayloads": true,
+    "excludesTelemetryPrivateIdentifiers": true,
+    "usesHashedSubjectAndSourceRefs": true
+  }
+}

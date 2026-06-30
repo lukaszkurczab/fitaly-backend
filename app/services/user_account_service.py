@@ -23,7 +23,7 @@ from app.db.firebase import (
     get_storage_bucket_name,
 )
 from app.services.meal_storage import _validate_upload
-from app.services import streak_service
+from app.services import smart_memory_service, streak_service
 from app.services.username_service import normalize_username
 
 from app.core.firestore_constants import (
@@ -36,15 +36,27 @@ from app.core.firestore_constants import (
     BILLING_SUBCOLLECTION,
     CHAT_THREADS_SUBCOLLECTION,
     FEEDBACK_SUBCOLLECTION,
+    INGREDIENT_PRODUCTS_SUBCOLLECTION,
+    KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
+    KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
+    MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
     MEAL_TEMPLATES_SUBCOLLECTION,
     MESSAGES_SUBCOLLECTION,
     MEMORY_SUBCOLLECTION,
+    PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
+    RATE_LIMITS_COLLECTION,
+    SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
+    SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
+    SMART_MEMORY_SETTINGS_SUBCOLLECTION,
+    SMART_MEMORY_SUBCOLLECTION,
+    SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     USERNAMES_COLLECTION,
     USERS_COLLECTION,
 )
 from app.services.meal_service import MEAL_MUTATION_DEDUPE_SUBCOLLECTION
-from app.services import telemetry_service
+from app.services import known_pattern_service, planned_meal_service, telemetry_service
 from app.services.reminder_decision_store import DAILY_STATS_SUBCOLLECTION
 
 logger = logging.getLogger(__name__)
@@ -59,6 +71,17 @@ DELETE_SUBCOLLECTIONS = (
     "notif_meta",
     "feedback",
     MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
+    MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
+    INGREDIENT_PRODUCTS_SUBCOLLECTION,
+    SMART_MEMORY_SUBCOLLECTION,
+    SMART_MEMORY_CANDIDATES_SUBCOLLECTION,
+    SMART_MEMORY_SETTINGS_SUBCOLLECTION,
+    SMART_MEMORY_TOMBSTONES_SUBCOLLECTION,
+    SMART_MEMORY_MUTATION_DEDUPE_SUBCOLLECTION,
+    KNOWN_PATTERN_CONTROLS_SUBCOLLECTION,
+    KNOWN_PATTERN_MUTATION_DEDUPE_SUBCOLLECTION,
+    PLANNED_MEALS_SUBCOLLECTION,
+    PLANNED_MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
     BADGES_SUBCOLLECTION,
     STREAK_SUBCOLLECTION,
     DAILY_STATS_SUBCOLLECTION,
@@ -1276,6 +1299,35 @@ def _delete_ai_runs(
         _delete_documents_in_batches(client, documents)
 
 
+def _delete_rate_limit_state(
+    client: firestore.Client,
+    user_id: str,
+) -> None:
+    client.collection(RATE_LIMITS_COLLECTION).document(user_id).delete()
+
+
+def _delete_username_reservations(
+    client: firestore.Client,
+    *,
+    user_id: str,
+    username: str = "",
+) -> None:
+    usernames_collection = client.collection(USERNAMES_COLLECTION)
+    documents_by_id: dict[str, firestore.DocumentSnapshot] = {}
+    for document in usernames_collection.where(
+        filter=FieldFilter("uid", "==", user_id)
+    ).stream():
+        documents_by_id[document.id] = document
+
+    if documents_by_id:
+        _delete_documents_in_batches(client, list(documents_by_id.values()))
+
+    if username:
+        username_ref = usernames_collection.document(username)
+        if username not in documents_by_id:
+            username_ref.delete()
+
+
 def _delete_storage_prefix(bucket: Any, prefix: str) -> None:
     for blob in bucket.list_blobs(prefix=prefix):
         blob.delete()
@@ -1312,6 +1364,7 @@ async def delete_account_data(user_id: str) -> None:
         _delete_user_storage_assets(user_id)
         _delete_billing_data(client, user_ref)
         _delete_ai_runs(client, user_id)
+        _delete_rate_limit_state(client, user_id)
 
         for subcollection_name in DELETE_SUBCOLLECTIONS:
             documents = (
@@ -1324,8 +1377,7 @@ async def delete_account_data(user_id: str) -> None:
 
         _delete_chat_threads(client, user_ref)
 
-        if username:
-            client.collection(USERNAMES_COLLECTION).document(username).delete()
+        _delete_username_reservations(client, user_id=user_id, username=username)
 
         user_ref.delete()
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
@@ -1339,24 +1391,35 @@ async def delete_account_data(user_id: str) -> None:
 async def get_user_export_data(
     user_id: str,
 ) -> tuple[
-    dict[str, Any] | None,
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    dict[str, Any],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
+    dict[str, Any] | None,  # profile
+    list[dict[str, Any]],  # meals
+    list[dict[str, Any]],  # my meals
+    list[dict[str, Any]],  # chat messages
+    list[dict[str, Any]],  # chat memory
+    list[dict[str, Any]],  # ai runs
+    list[dict[str, Any]],  # notifications
+    dict[str, Any],  # notification prefs
+    list[dict[str, Any]],  # feedback
+    list[dict[str, Any]],  # meal mutation dedupe
+    list[dict[str, Any]],  # meal effect outbox
+    list[dict[str, Any]],  # ingredient products
+    list[dict[str, Any]],  # smart memory items
+    list[dict[str, Any]],  # smart memory candidates
+    list[dict[str, Any]],  # smart memory settings
+    list[dict[str, Any]],  # smart memory tombstones
+    list[dict[str, Any]],  # smart memory mutation dedupe
+    list[dict[str, Any]],  # known pattern controls
+    list[dict[str, Any]],  # known pattern mutation dedupe
+    list[dict[str, Any]],  # planned meal items
+    list[dict[str, Any]],  # planned meal mutation dedupe
+    list[dict[str, Any]],  # billing
+    list[dict[str, Any]],  # ai credits
+    list[dict[str, Any]],  # ai credit transactions
+    list[dict[str, Any]],  # ai credit idempotency
+    list[dict[str, Any]],  # badges
+    list[dict[str, Any]],  # streak
+    list[dict[str, Any]],  # reminder daily stats
+    list[dict[str, Any]],  # telemetry events
 ]:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -1376,6 +1439,26 @@ async def get_user_export_data(
             user_ref,
             MEAL_MUTATION_DEDUPE_SUBCOLLECTION,
         )
+        meal_effect_outbox = _read_subcollection_documents(
+            user_ref,
+            MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
+        )
+        ingredient_products = _read_subcollection_documents(
+            user_ref,
+            INGREDIENT_PRODUCTS_SUBCOLLECTION,
+        )
+        smart_memory_export = smart_memory_service.read_export(user_ref)
+        smart_memory_items = smart_memory_export["items"]
+        smart_memory_candidates = smart_memory_export["candidates"]
+        smart_memory_settings = smart_memory_export["settings"]
+        smart_memory_tombstones = smart_memory_export["tombstones"]
+        smart_memory_mutation_dedupe = smart_memory_export["mutationDedupe"]
+        known_pattern_export = known_pattern_service.read_export(user_ref)
+        known_pattern_controls = known_pattern_export["controls"]
+        known_pattern_mutation_dedupe = known_pattern_export["mutationDedupe"]
+        planned_meal_export = planned_meal_service.read_export(user_ref)
+        planned_meal_items = planned_meal_export["items"]
+        planned_meal_mutation_dedupe = planned_meal_export["mutationDedupe"]
         (
             billing,
             ai_credits,
@@ -1413,6 +1496,17 @@ async def get_user_export_data(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        meal_effect_outbox,
+        ingredient_products,
+        smart_memory_items,
+        smart_memory_candidates,
+        smart_memory_settings,
+        smart_memory_tombstones,
+        smart_memory_mutation_dedupe,
+        known_pattern_controls,
+        known_pattern_mutation_dedupe,
+        planned_meal_items,
+        planned_meal_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,

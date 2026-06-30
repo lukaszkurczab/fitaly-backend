@@ -97,6 +97,24 @@ def _delete_feedback_document_with_admin_emulator(
     )
 
 
+def _delete_meal_document_with_admin_emulator(
+    *,
+    owner_uid: str,
+    meal_id: str,
+    run_id: str,
+) -> None:
+    if not owner_uid or not run_id or meal_id != f"meal-{run_id}":
+        return
+    (
+        _emulator_firestore_client()
+        .collection("users")
+        .document(owner_uid)
+        .collection("meals")
+        .document(meal_id)
+        .delete()
+    )
+
+
 def _firestore_document_path(document_path: str) -> str:
     quoted_segments = [
         parse.quote(segment, safe="")
@@ -117,6 +135,36 @@ def _feedback_payload(message: str) -> dict[str, Any]:
             "source": {"stringValue": "rules-emulator"},
         }
     }
+
+
+def _ingredient_product_payload(run_id: str) -> dict[str, Any]:
+    return {
+        "fields": {
+            "ingredientProductId": {"stringValue": f"ingredient-product-{run_id}"},
+            "recordScope": {"stringValue": "user_scoped"},
+            "displayName": {"stringValue": "Owsianka"},
+        }
+    }
+
+
+def _meal_payload(run_id: str, *, include_planning_source: bool = False) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "mealId": {"stringValue": f"meal-{run_id}"},
+        "name": {"stringValue": "Rules emulator meal"},
+        "updatedAt": {"stringValue": "2026-06-28T10:00:00.000Z"},
+    }
+    if include_planning_source:
+        fields["planningSource"] = {
+            "mapValue": {
+                "fields": {
+                    "plannedMealId": {"stringValue": f"planned-{run_id}"},
+                    "plannedMealVersion": {"integerValue": "1"},
+                    "sourceType": {"stringValue": "manual"},
+                    "nutritionEstimateState": {"stringValue": "known"},
+                }
+            }
+        }
+    return {"fields": fields}
 
 
 def _write_firestore_document(
@@ -264,3 +312,85 @@ def test_feedback_firestore_rules_enforce_canonical_owner_create_read_only() -> 
         for token in (owner_token, other_token):
             if token:
                 _delete_auth_emulator_user(token)
+
+
+def test_product_ingredient_firestore_rules_deny_client_sdk_access() -> None:
+    run_id = uuid4().hex
+    owner_email = f"product-ingredient-rules-owner-{run_id}@example.test"
+    other_email = f"product-ingredient-rules-other-{run_id}@example.test"
+    owner_uid = ""
+    owner_token = ""
+    other_token = ""
+
+    try:
+        owner_uid, owner_token = _sign_up_auth_emulator_user(owner_email)
+        _, other_token = _sign_up_auth_emulator_user(other_email)
+
+        paths = (
+            f"ingredientProducts/global-{run_id}",
+            f"users/{owner_uid}/ingredientProducts/user-{run_id}",
+        )
+        for document_path in paths:
+            for denied_token in (owner_token, other_token):
+                assert (
+                    _write_firestore_document(
+                        document_path,
+                        id_token=denied_token,
+                        payload=_ingredient_product_payload(run_id),
+                    )
+                    == 403
+                )
+                read_status, _ = _read_firestore_document(
+                    document_path,
+                    id_token=denied_token,
+                )
+                assert read_status == 403
+                assert _delete_firestore_document(
+                    document_path,
+                    id_token=denied_token,
+                ) == 403
+    finally:
+        for token in (owner_token, other_token):
+            if token:
+                _delete_auth_emulator_user(token)
+
+
+def test_meal_firestore_rules_block_backend_side_effect_writes() -> None:
+    run_id = uuid4().hex
+    owner_email = f"meal-side-effect-rules-owner-{run_id}@example.test"
+    owner_uid = ""
+    owner_token = ""
+    meal_id = f"meal-{run_id}"
+
+    try:
+        owner_uid, owner_token = _sign_up_auth_emulator_user(owner_email)
+        meal_path = f"users/{owner_uid}/meals/{meal_id}"
+
+        assert (
+            _write_firestore_document(
+                meal_path,
+                id_token=owner_token,
+                payload=_meal_payload(run_id),
+            )
+            == 200
+        )
+        assert (
+            _write_firestore_document(
+                meal_path,
+                id_token=owner_token,
+                payload=_meal_payload(run_id, include_planning_source=True),
+            )
+            == 403
+        )
+        assert _delete_firestore_document(meal_path, id_token=owner_token) == 403
+    finally:
+        try:
+            _delete_meal_document_with_admin_emulator(
+                owner_uid=owner_uid,
+                meal_id=meal_id,
+                run_id=run_id,
+            )
+        except Exception:
+            pass
+        if owner_token:
+            _delete_auth_emulator_user(owner_token)

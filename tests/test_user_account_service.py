@@ -11,6 +11,7 @@ from pytest_mock import MockerFixture
 from starlette.datastructures import Headers
 
 from app.core.exceptions import FirestoreServiceError
+from app.core.firestore_constants import RATE_LIMITS_COLLECTION
 from app.services.meal_storage import MAX_UPLOAD_BYTES
 from app.services import user_account_service
 from app.services import telemetry_service
@@ -174,6 +175,9 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     telemetry_doc = mocker.Mock()
     telemetry_doc_ref = mocker.Mock()
     telemetry_doc.reference = telemetry_doc_ref
+    rate_limits_collection_ref = mocker.Mock()
+    rate_limit_ref = mocker.Mock()
+    username_query = mocker.Mock()
     meals_collection_ref = mocker.Mock()
     my_meals_collection_ref = mocker.Mock()
     legacy_chat_collection_ref = mocker.Mock()
@@ -182,6 +186,17 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     meal_mutation_dedupe_collection_ref = mocker.Mock()
+    meal_effect_outbox_collection_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
+    smart_memory_collection_ref = mocker.Mock()
+    smart_memory_candidates_collection_ref = mocker.Mock()
+    smart_memory_settings_collection_ref = mocker.Mock()
+    smart_memory_tombstones_collection_ref = mocker.Mock()
+    smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
+    known_pattern_controls_collection_ref = mocker.Mock()
+    known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
+    planned_meals_collection_ref = mocker.Mock()
+    planned_meal_mutation_dedupe_collection_ref = mocker.Mock()
     badges_collection_ref = mocker.Mock()
     streak_collection_ref = mocker.Mock()
     reminder_daily_stats_collection_ref = mocker.Mock()
@@ -199,6 +214,17 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     feedback_doc = mocker.Mock()
     feedback_doc.to_dict.return_value = {}
     meal_mutation_dedupe_doc = mocker.Mock()
+    meal_effect_outbox_doc = mocker.Mock()
+    ingredient_product_doc = mocker.Mock()
+    smart_memory_doc = mocker.Mock()
+    smart_memory_candidate_doc = mocker.Mock()
+    smart_memory_settings_doc = mocker.Mock()
+    smart_memory_tombstone_doc = mocker.Mock()
+    smart_memory_mutation_dedupe_doc = mocker.Mock()
+    known_pattern_control_doc = mocker.Mock()
+    known_pattern_mutation_dedupe_doc = mocker.Mock()
+    planned_meal_doc = mocker.Mock()
+    planned_meal_mutation_dedupe_doc = mocker.Mock()
     badge_doc = mocker.Mock()
     streak_doc = mocker.Mock()
     reminder_daily_stats_doc = mocker.Mock()
@@ -228,11 +254,16 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return telemetry_collection_ref
         if name == "ai_runs":
             return ai_runs_collection_ref
+        if name == RATE_LIMITS_COLLECTION:
+            return rate_limits_collection_ref
         raise AssertionError(f"Unexpected collection {name}")
 
     client.collection.side_effect = top_level_collection_side_effect
     telemetry_collection_ref.where.return_value = telemetry_query
     telemetry_query.stream.return_value = [telemetry_doc]
+    rate_limits_collection_ref.document.return_value = rate_limit_ref
+    usernames_collection_ref.where.return_value = username_query
+    username_query.stream.return_value = []
 
     def collection_side_effect(name: str):
         if name == "meals":
@@ -251,6 +282,28 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
             return feedback_collection_ref
         if name == "mealMutationDedupe":
             return meal_mutation_dedupe_collection_ref
+        if name == "mealEffectOutbox":
+            return meal_effect_outbox_collection_ref
+        if name == "ingredientProducts":
+            return ingredient_products_collection_ref
+        if name == "smartMemory":
+            return smart_memory_collection_ref
+        if name == "smartMemoryCandidates":
+            return smart_memory_candidates_collection_ref
+        if name == "smartMemorySettings":
+            return smart_memory_settings_collection_ref
+        if name == "smartMemoryTombstones":
+            return smart_memory_tombstones_collection_ref
+        if name == "smartMemoryMutationDedupe":
+            return smart_memory_mutation_dedupe_collection_ref
+        if name == "knownPatternControls":
+            return known_pattern_controls_collection_ref
+        if name == "knownPatternMutationDedupe":
+            return known_pattern_mutation_dedupe_collection_ref
+        if name == "plannedMeals":
+            return planned_meals_collection_ref
+        if name == "plannedMealMutationDedupe":
+            return planned_meal_mutation_dedupe_collection_ref
         if name == "badges":
             return badges_collection_ref
         if name == "streak":
@@ -272,6 +325,23 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     notif_meta_collection_ref.stream.return_value = [notif_meta_doc]
     feedback_collection_ref.stream.return_value = [feedback_doc]
     meal_mutation_dedupe_collection_ref.stream.return_value = [meal_mutation_dedupe_doc]
+    meal_effect_outbox_collection_ref.stream.return_value = [meal_effect_outbox_doc]
+    ingredient_products_collection_ref.stream.return_value = [ingredient_product_doc]
+    smart_memory_collection_ref.stream.return_value = [smart_memory_doc]
+    smart_memory_candidates_collection_ref.stream.return_value = [smart_memory_candidate_doc]
+    smart_memory_settings_collection_ref.stream.return_value = [smart_memory_settings_doc]
+    smart_memory_tombstones_collection_ref.stream.return_value = [smart_memory_tombstone_doc]
+    smart_memory_mutation_dedupe_collection_ref.stream.return_value = [
+        smart_memory_mutation_dedupe_doc
+    ]
+    known_pattern_controls_collection_ref.stream.return_value = [known_pattern_control_doc]
+    known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
+        known_pattern_mutation_dedupe_doc
+    ]
+    planned_meals_collection_ref.stream.return_value = [planned_meal_doc]
+    planned_meal_mutation_dedupe_collection_ref.stream.return_value = [
+        planned_meal_mutation_dedupe_doc
+    ]
     badges_collection_ref.stream.return_value = [badge_doc]
     streak_collection_ref.stream.return_value = [streak_doc]
     reminder_daily_stats_collection_ref.stream.return_value = [reminder_daily_stats_doc]
@@ -343,6 +413,17 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert notif_meta_doc.reference in deleted_refs
     assert feedback_doc.reference in deleted_refs
     assert meal_mutation_dedupe_doc.reference in deleted_refs
+    assert meal_effect_outbox_doc.reference in deleted_refs
+    assert ingredient_product_doc.reference in deleted_refs
+    assert smart_memory_doc.reference in deleted_refs
+    assert smart_memory_candidate_doc.reference in deleted_refs
+    assert smart_memory_settings_doc.reference in deleted_refs
+    assert smart_memory_tombstone_doc.reference in deleted_refs
+    assert smart_memory_mutation_dedupe_doc.reference in deleted_refs
+    assert known_pattern_control_doc.reference in deleted_refs
+    assert known_pattern_mutation_dedupe_doc.reference in deleted_refs
+    assert planned_meal_doc.reference in deleted_refs
+    assert planned_meal_mutation_dedupe_doc.reference in deleted_refs
     assert badge_doc.reference in deleted_refs
     assert streak_doc.reference in deleted_refs
     assert reminder_daily_stats_doc.reference in deleted_refs
@@ -369,12 +450,172 @@ def test_delete_account_data_deletes_subcollections_username_and_user_doc(
     assert telemetry_filter.op_string == "=="
     assert telemetry_filter.value == telemetry_service.build_user_hash("user-1")
     assert telemetry_doc.reference in deleted_refs
+    rate_limits_collection_ref.document.assert_called_once_with("user-1")
+    rate_limit_ref.delete.assert_called_once_with()
+    usernames_collection_ref.where.assert_called_once_with(filter=ANY)
+    username_filter = usernames_collection_ref.where.call_args.kwargs["filter"]
+    assert username_filter.field_path == "uid"
+    assert username_filter.op_string == "=="
+    assert username_filter.value == "user-1"
     usernames_collection_ref.document.assert_called_once_with("neo")
     username_ref.delete.assert_called_once_with()
     user_ref.delete.assert_called_once_with()
     bucket.list_blobs.assert_any_call(prefix="avatars/user-1/")
     bucket.list_blobs.assert_any_call(prefix="meals/user-1/")
     bucket.list_blobs.assert_any_call(prefix="mealTemplates/user-1/")
+    avatar_blob.delete.assert_called_once_with()
+    meal_blob.delete.assert_called_once_with()
+    my_meal_blob.delete.assert_called_once_with()
+
+
+def test_delete_account_data_cleans_partial_state_when_user_doc_is_missing(
+    mocker: MockerFixture,
+) -> None:
+    client, users_collection_ref, usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    telemetry_collection_ref = mocker.Mock()
+    telemetry_query = mocker.Mock()
+    telemetry_doc = mocker.Mock()
+    telemetry_doc.reference = mocker.Mock()
+    ai_runs_collection_ref = mocker.Mock()
+    ai_runs_query = mocker.Mock()
+    ai_run_doc = mocker.Mock()
+    ai_run_doc.reference = mocker.Mock()
+    rate_limits_collection_ref = mocker.Mock()
+    rate_limit_ref = mocker.Mock()
+    username_query = mocker.Mock()
+    username_doc = mocker.Mock()
+    username_doc.reference = mocker.Mock()
+    main_billing_ref = mocker.Mock()
+    billing_child_collection_ref = mocker.Mock()
+    residual_meal_doc = mocker.Mock()
+    residual_meal_doc.reference = mocker.Mock()
+    residual_outbox_doc = mocker.Mock()
+    residual_outbox_doc.reference = mocker.Mock()
+    residual_memory_doc = mocker.Mock()
+    residual_memory_doc.reference = mocker.Mock()
+
+    def top_level_collection_side_effect(name: str):
+        if name == "users":
+            return users_collection_ref
+        if name == "usernames":
+            return usernames_collection_ref
+        if name == "telemetry_events":
+            return telemetry_collection_ref
+        if name == "ai_runs":
+            return ai_runs_collection_ref
+        if name == RATE_LIMITS_COLLECTION:
+            return rate_limits_collection_ref
+        raise AssertionError(f"Unexpected collection {name}")
+
+    collection_refs = {
+        name: mocker.Mock() for name in user_account_service.DELETE_SUBCOLLECTIONS
+    }
+    billing_collection_ref = mocker.Mock()
+    chat_threads_collection_ref = mocker.Mock()
+    collection_refs["meals"].stream.return_value = [residual_meal_doc]
+    collection_refs[user_account_service.MEAL_EFFECT_OUTBOX_SUBCOLLECTION].stream.return_value = [
+        residual_outbox_doc
+    ]
+    collection_refs[user_account_service.SMART_MEMORY_SUBCOLLECTION].stream.return_value = [
+        residual_memory_doc
+    ]
+    for name, collection_ref in collection_refs.items():
+        if name not in {
+            "meals",
+            user_account_service.MEAL_EFFECT_OUTBOX_SUBCOLLECTION,
+            user_account_service.SMART_MEMORY_SUBCOLLECTION,
+        }:
+            collection_ref.stream.return_value = []
+
+    def user_collection_side_effect(name: str):
+        if name in collection_refs:
+            return collection_refs[name]
+        if name == "billing":
+            return billing_collection_ref
+        if name == "chat_threads":
+            return chat_threads_collection_ref
+        raise AssertionError(f"Unexpected subcollection {name}")
+
+    def billing_child_collection_side_effect(name: str):
+        if name in {
+            "aiCredits",
+            "aiCreditTransactions",
+            "aiCreditIdempotency",
+        }:
+            return billing_child_collection_ref
+        raise AssertionError(f"Unexpected billing subcollection {name}")
+
+    client.collection.side_effect = top_level_collection_side_effect
+    user_ref.collection.side_effect = user_collection_side_effect
+    user_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    telemetry_collection_ref.where.return_value = telemetry_query
+    telemetry_query.stream.return_value = [telemetry_doc]
+    ai_runs_collection_ref.where.return_value = ai_runs_query
+    ai_runs_query.stream.return_value = [ai_run_doc]
+    rate_limits_collection_ref.document.return_value = rate_limit_ref
+    usernames_collection_ref.where.return_value = username_query
+    username_query.stream.return_value = [username_doc]
+    billing_collection_ref.document.return_value = main_billing_ref
+    billing_collection_ref.stream.return_value = []
+    main_billing_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    main_billing_ref.collection.side_effect = billing_child_collection_side_effect
+    billing_child_collection_ref.stream.return_value = []
+    chat_threads_collection_ref.stream.return_value = []
+    batches: list[FakeBatch] = []
+
+    def batch_factory() -> FakeBatch:
+        batch = FakeBatch()
+        batches.append(batch)
+        return batch
+
+    client.batch.side_effect = batch_factory
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    bucket = mocker.Mock()
+    avatar_blob = mocker.Mock()
+    meal_blob = mocker.Mock()
+    my_meal_blob = mocker.Mock()
+    bucket.list_blobs.side_effect = [
+        [avatar_blob],
+        [meal_blob],
+        [my_meal_blob],
+    ]
+    mocker.patch("app.services.user_account_service.get_storage_bucket", return_value=bucket)
+
+    asyncio.run(user_account_service.delete_account_data("user-1"))
+
+    deleted_refs = [ref for batch in batches for ref in batch.deleted_refs]
+    assert residual_meal_doc.reference in deleted_refs
+    assert residual_outbox_doc.reference in deleted_refs
+    assert residual_memory_doc.reference in deleted_refs
+    assert telemetry_doc.reference in deleted_refs
+    assert ai_run_doc.reference in deleted_refs
+    assert username_doc.reference in deleted_refs
+    rate_limits_collection_ref.document.assert_called_once_with("user-1")
+    rate_limit_ref.delete.assert_called_once_with()
+    usernames_collection_ref.where.assert_called_once_with(filter=ANY)
+    username_filter = usernames_collection_ref.where.call_args.kwargs["filter"]
+    assert username_filter.field_path == "uid"
+    assert username_filter.op_string == "=="
+    assert username_filter.value == "user-1"
+    usernames_collection_ref.document.assert_not_called()
+    main_billing_ref.delete.assert_not_called()
+    user_ref.delete.assert_called_once_with()
+    bucket.list_blobs.assert_any_call(prefix="avatars/user-1/")
+    bucket.list_blobs.assert_any_call(prefix="meals/user-1/")
+    bucket.list_blobs.assert_any_call(prefix="mealTemplates/user-1/")
+    bucket.list_blobs.assert_has_calls(
+        [
+            mocker.call(prefix="avatars/user-1/"),
+            mocker.call(prefix="meals/user-1/"),
+            mocker.call(prefix="mealTemplates/user-1/"),
+        ]
+    )
+    assert not any(
+        call.kwargs.get("prefix") == "avatars/other-user/"
+        for call in bucket.list_blobs.call_args_list
+    )
     avatar_blob.delete.assert_called_once_with()
     meal_blob.delete.assert_called_once_with()
     my_meal_blob.delete.assert_called_once_with()
@@ -1973,6 +2214,17 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     prefs_collection_ref = mocker.Mock()
     feedback_collection_ref = mocker.Mock()
     meal_mutation_dedupe_collection_ref = mocker.Mock()
+    meal_effect_outbox_collection_ref = mocker.Mock()
+    ingredient_products_collection_ref = mocker.Mock()
+    smart_memory_collection_ref = mocker.Mock()
+    smart_memory_candidates_collection_ref = mocker.Mock()
+    smart_memory_settings_collection_ref = mocker.Mock()
+    smart_memory_tombstones_collection_ref = mocker.Mock()
+    smart_memory_mutation_dedupe_collection_ref = mocker.Mock()
+    known_pattern_controls_collection_ref = mocker.Mock()
+    known_pattern_mutation_dedupe_collection_ref = mocker.Mock()
+    planned_meals_collection_ref = mocker.Mock()
+    planned_meal_mutation_dedupe_collection_ref = mocker.Mock()
     billing_collection_ref = mocker.Mock()
     main_billing_ref = mocker.Mock()
     annual_billing_ref = mocker.Mock()
@@ -2010,6 +2262,69 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     meal_mutation_dedupe_document.to_dict.return_value = {
         "clientMutationId": "profile-mutation-1",
         "kind": "profile_update",
+    }
+    meal_effect_outbox_document = mocker.Mock()
+    meal_effect_outbox_document.id = "meal-effect-1"
+    meal_effect_outbox_document.to_dict.return_value = {
+        "eventId": "meal-effect-1",
+        "kind": "meal_saved.streak_sync",
+        "status": "pending",
+    }
+    ingredient_product_document = mocker.Mock()
+    ingredient_product_document.id = "ingredient-product-1"
+    ingredient_product_document.to_dict.return_value = {
+        "ingredientProductId": "ingredient-product-1",
+        "recordScope": "user_scoped",
+    }
+    smart_memory_document = mocker.Mock()
+    smart_memory_document.id = "memory-item-1"
+    smart_memory_document.to_dict.return_value = {
+        "memoryItemId": "memory-item-1",
+        "state": "active",
+    }
+    smart_memory_candidate_document = mocker.Mock()
+    smart_memory_candidate_document.id = "candidate-1"
+    smart_memory_candidate_document.to_dict.return_value = {
+        "candidateId": "candidate-1",
+        "state": "candidate",
+    }
+    smart_memory_settings_document = mocker.Mock()
+    smart_memory_settings_document.id = "default"
+    smart_memory_settings_document.to_dict.return_value = {"enabled": True}
+    smart_memory_tombstone_document = mocker.Mock()
+    smart_memory_tombstone_document.id = "tombstone-1"
+    smart_memory_tombstone_document.to_dict.return_value = {
+        "subjectKey": "typical_portion:hash"
+    }
+    smart_memory_mutation_dedupe_document = mocker.Mock()
+    smart_memory_mutation_dedupe_document.id = "memory-mutation-1"
+    smart_memory_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "memory-mutation-1",
+        "kind": "item_delete",
+    }
+    known_pattern_control_document = mocker.Mock()
+    known_pattern_control_document.id = "known-pattern-control-1"
+    known_pattern_control_document.to_dict.return_value = {
+        "controlId": "known-pattern-control-1",
+        "state": "declined",
+    }
+    known_pattern_mutation_dedupe_document = mocker.Mock()
+    known_pattern_mutation_dedupe_document.id = "known-pattern-mutation-1"
+    known_pattern_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "known-pattern-mutation-1",
+        "kind": "known_pattern_control",
+    }
+    planned_meal_document = mocker.Mock()
+    planned_meal_document.id = "planned-meal-1"
+    planned_meal_document.to_dict.return_value = {
+        "plannedMealId": "planned-meal-1",
+        "status": "planned",
+    }
+    planned_meal_mutation_dedupe_document = mocker.Mock()
+    planned_meal_mutation_dedupe_document.id = "planned-meal-mutation-1"
+    planned_meal_mutation_dedupe_document.to_dict.return_value = {
+        "clientMutationId": "planned-meal-mutation-1",
+        "kind": "planned_meal_create",
     }
     main_billing_document = mocker.Mock()
     main_billing_document.id = "main"
@@ -2099,6 +2414,28 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             return feedback_collection_ref
         if name == "mealMutationDedupe":
             return meal_mutation_dedupe_collection_ref
+        if name == "mealEffectOutbox":
+            return meal_effect_outbox_collection_ref
+        if name == "ingredientProducts":
+            return ingredient_products_collection_ref
+        if name == "smartMemory":
+            return smart_memory_collection_ref
+        if name == "smartMemoryCandidates":
+            return smart_memory_candidates_collection_ref
+        if name == "smartMemorySettings":
+            return smart_memory_settings_collection_ref
+        if name == "smartMemoryTombstones":
+            return smart_memory_tombstones_collection_ref
+        if name == "smartMemoryMutationDedupe":
+            return smart_memory_mutation_dedupe_collection_ref
+        if name == "knownPatternControls":
+            return known_pattern_controls_collection_ref
+        if name == "knownPatternMutationDedupe":
+            return known_pattern_mutation_dedupe_collection_ref
+        if name == "plannedMeals":
+            return planned_meals_collection_ref
+        if name == "plannedMealMutationDedupe":
+            return planned_meal_mutation_dedupe_collection_ref
         if name == "billing":
             return billing_collection_ref
         if name == "badges":
@@ -2120,6 +2457,47 @@ def test_get_user_export_data_returns_profile_and_subcollections(
     meal_mutation_dedupe_collection_ref.stream.return_value = [
         meal_mutation_dedupe_document
     ]
+    meal_effect_outbox_collection_ref.stream.return_value = [
+        meal_effect_outbox_document
+    ]
+    ingredient_products_collection_ref.stream.return_value = [ingredient_product_document]
+    smart_memory_collection_ref.stream.return_value = [smart_memory_document]
+    smart_memory_candidates_collection_ref.stream.return_value = [
+        smart_memory_candidate_document
+    ]
+    smart_memory_settings_collection_ref.stream.return_value = [
+        smart_memory_settings_document
+    ]
+    smart_memory_tombstones_collection_ref.stream.return_value = [
+        smart_memory_tombstone_document
+    ]
+    smart_memory_mutation_dedupe_collection_ref.stream.return_value = [
+        smart_memory_mutation_dedupe_document
+    ]
+    known_pattern_controls_collection_ref.stream.return_value = [
+        known_pattern_control_document
+    ]
+    known_pattern_mutation_dedupe_collection_ref.stream.return_value = [
+        known_pattern_mutation_dedupe_document
+    ]
+    planned_meals_collection_ref.stream.return_value = [
+        planned_meal_document
+    ]
+    planned_meal_mutation_dedupe_collection_ref.stream.return_value = [
+        planned_meal_mutation_dedupe_document
+    ]
+    for collection_ref in (
+        smart_memory_collection_ref,
+        smart_memory_candidates_collection_ref,
+        smart_memory_settings_collection_ref,
+        smart_memory_tombstones_collection_ref,
+        smart_memory_mutation_dedupe_collection_ref,
+        known_pattern_controls_collection_ref,
+        known_pattern_mutation_dedupe_collection_ref,
+        planned_meals_collection_ref,
+        planned_meal_mutation_dedupe_collection_ref,
+    ):
+        collection_ref.limit.return_value = collection_ref
     billing_collection_ref.stream.return_value = [
         main_billing_document,
         annual_billing_document,
@@ -2206,6 +2584,17 @@ def test_get_user_export_data_returns_profile_and_subcollections(
         notification_prefs,
         feedback,
         meal_mutation_dedupe,
+        meal_effect_outbox,
+        ingredient_products,
+        smart_memory_items,
+        smart_memory_candidates,
+        smart_memory_settings,
+        smart_memory_tombstones,
+        smart_memory_mutation_dedupe,
+        known_pattern_controls,
+        known_pattern_mutation_dedupe,
+        planned_meal_items,
+        planned_meal_mutation_dedupe,
         billing,
         ai_credits,
         ai_credit_transactions,
@@ -2244,6 +2633,64 @@ def test_get_user_export_data_returns_profile_and_subcollections(
             "clientMutationId": "profile-mutation-1",
             "kind": "profile_update",
             "id": "profile-mutation-1",
+        }
+    ]
+    assert meal_effect_outbox == [
+        {
+            "eventId": "meal-effect-1",
+            "kind": "meal_saved.streak_sync",
+            "status": "pending",
+            "id": "meal-effect-1",
+        }
+    ]
+    assert ingredient_products == [
+        {
+            "ingredientProductId": "ingredient-product-1",
+            "recordScope": "user_scoped",
+            "id": "ingredient-product-1",
+        }
+    ]
+    assert smart_memory_items == [
+        {"memoryItemId": "memory-item-1", "state": "active", "id": "memory-item-1"}
+    ]
+    assert smart_memory_candidates == [
+        {"candidateId": "candidate-1", "state": "candidate", "id": "candidate-1"}
+    ]
+    assert smart_memory_settings == [{"enabled": True, "id": "default"}]
+    assert smart_memory_tombstones == [
+        {"subjectKey": "typical_portion:hash", "id": "tombstone-1"}
+    ]
+    assert smart_memory_mutation_dedupe == [
+        {
+            "clientMutationId": "memory-mutation-1",
+            "kind": "item_delete",
+            "id": "memory-mutation-1",
+        }
+    ]
+    assert known_pattern_controls == [
+        {
+            "controlId": "known-pattern-control-1",
+            "state": "declined",
+        }
+    ]
+    assert known_pattern_mutation_dedupe == [
+        {
+            "clientMutationId": "known-pattern-mutation-1",
+            "kind": "known_pattern_control",
+            "id": "known-pattern-mutation-1",
+        }
+    ]
+    assert planned_meal_items == [
+        {
+            "plannedMealId": "planned-meal-1",
+            "status": "planned",
+        }
+    ]
+    assert planned_meal_mutation_dedupe == [
+        {
+            "clientMutationId": "planned-meal-mutation-1",
+            "kind": "planned_meal_create",
+            "id": "planned-meal-mutation-1",
         }
     ]
     assert billing == [

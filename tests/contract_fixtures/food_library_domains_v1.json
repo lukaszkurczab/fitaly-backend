@@ -49,17 +49,29 @@
       "owner": "ingredient_product_library",
       "identityFields": [
         "ingredientProductId",
-        "ownerUserId"
+        "recordScope"
       ],
       "ownedFields": [
         "displayName",
         "kind",
+        "lifecycleState",
+        "ownerUserId",
         "brandName",
         "ingredientName",
+        "packageName",
+        "category",
         "barcodeIdentities",
+        "externalSourceIds",
         "servingSizes",
-        "nutritionPerServing",
-        "sourceAttribution"
+        "nutritionPer100",
+        "defaultServing",
+        "sourceAttribution",
+        "confidence",
+        "profileFlags",
+        "dietaryFlags",
+        "allergenFlags",
+        "createdAt",
+        "updatedAt"
       ]
     },
     "ShoppingList": {
@@ -76,6 +88,205 @@
         "sortOrder",
         "notes"
       ]
+    }
+  },
+  "ingredientProductRecordContract": {
+    "recordKinds": [
+      "generic_ingredient",
+      "branded_product"
+    ],
+    "recordScopes": [
+      "global_seed",
+      "global_internal",
+      "user_scoped"
+    ],
+    "lifecycleStates": [
+      "candidate",
+      "verified",
+      "rejected"
+    ],
+    "verifiedMeaning": "verified_for_fitaly_catalog_use_not_medical_or_dietary_safety_claim",
+    "requiredFields": [
+      "ingredientProductId",
+      "recordScope",
+      "lifecycleState",
+      "kind",
+      "displayName",
+      "sourceAttribution",
+      "confidence",
+      "nutritionPer100",
+      "defaultServing",
+      "servingSizes",
+      "profileFlags",
+      "createdAt",
+      "updatedAt"
+    ],
+    "optionalFields": [
+      "ownerUserId",
+      "brandName",
+      "ingredientName",
+      "packageName",
+      "category",
+      "barcodeIdentities",
+      "externalSourceIds",
+      "dietaryFlags",
+      "allergenFlags"
+    ],
+    "kindSpecificRequiredFields": {
+      "generic_ingredient": [
+        "ingredientName"
+      ],
+      "branded_product": [
+        "brandName"
+      ]
+    },
+    "ownership": {
+      "scopeField": "recordScope",
+      "ownerField": "ownerUserId",
+      "userScopedScope": "user_scoped",
+      "userScopedRequiresOwnerUserId": true,
+      "globalScopesMustNotUseOwnerUserId": [
+        "global_seed",
+        "global_internal"
+      ],
+      "globalRecordsAreUserAccountData": false
+    },
+    "sourceAttribution": {
+      "requiredFields": [
+        "sourceType",
+        "sourceId",
+        "sourceName"
+      ],
+      "optionalFields": [
+        "provider",
+        "license",
+        "observedAt",
+        "reviewedAt",
+        "reviewedBy"
+      ],
+      "sourceTypes": [
+        "internal_seed",
+        "internal_review",
+        "user_created",
+        "external_provider",
+        "barcode_identity",
+        "runtime_ai_candidate"
+      ],
+      "candidateOnlySourceTypes": [
+        "barcode_identity",
+        "runtime_ai_candidate"
+      ],
+      "durableTruthRequiresNonAiSource": true
+    },
+    "confidence": {
+      "requiredFields": [
+        "identity",
+        "nutrition",
+        "profile"
+      ],
+      "levels": [
+        "unknown",
+        "low",
+        "medium",
+        "high",
+        "verified"
+      ],
+      "unknownMeansNotSafeToAssume": true
+    },
+    "nutritionPer100": {
+      "requiredFields": [
+        "basis",
+        "unit",
+        "kcal",
+        "protein",
+        "fat",
+        "carbs"
+      ],
+      "optionalFields": [
+        "fiber",
+        "sugar",
+        "salt",
+        "saturatedFat"
+      ],
+      "allowedBases": [
+        "per_100g",
+        "per_100ml"
+      ],
+      "missingNutritionPolicy": "unknown_not_guessed",
+      "runtimeAiMayBecomeDurableNutritionTruth": false
+    },
+    "serving": {
+      "requiredFields": [
+        "defaultServing",
+        "servingSizes"
+      ],
+      "servingSizeFields": [
+        "servingSizeId",
+        "label",
+        "quantity",
+        "unit"
+      ],
+      "allowedUnits": [
+        "g",
+        "ml",
+        "piece",
+        "serving"
+      ]
+    },
+    "profileFlags": {
+      "requiredFields": [
+        "dietaryFlags",
+        "allergenFlags",
+        "profileCompatibilityStatus"
+      ],
+      "allowedDietaryFlags": [
+        "vegan",
+        "vegetarian",
+        "gluten_free",
+        "lactose_free",
+        "halal",
+        "kosher"
+      ],
+      "allowedAllergenFlags": [
+        "milk",
+        "eggs",
+        "fish",
+        "shellfish",
+        "tree_nuts",
+        "peanuts",
+        "wheat",
+        "soy",
+        "sesame"
+      ],
+      "compatibilityStatuses": [
+        "unknown",
+        "compatible",
+        "incompatible",
+        "warning"
+      ],
+      "missingProfilePolicy": "unknown_not_guessed",
+      "verifiedIsMedicalOrDietarySafetyClaim": false,
+      "runtimeAiMayBecomeDurableProfileTruth": false
+    },
+    "barcodeIdentities": {
+      "minimalIdentityFields": [
+        "barcode",
+        "format",
+        "sourceType"
+      ],
+      "optionalFields": [
+        "normalizedBarcode",
+        "country",
+        "sourceId",
+        "observedAt"
+      ],
+      "noCatalogWriteInThisSlice": true,
+      "noTopLevelAddMealBarcodePath": true
+    },
+    "localCacheBoundary": {
+      "representedAs": "projection_only",
+      "localCacheIsTruth": false,
+      "mayPromoteToGlobalWithoutReview": false
     }
   },
   "loggedMealBoundary": {
