@@ -7,7 +7,8 @@ from typing import Any
 import pytest
 
 from app.core.exceptions import OpenAIServiceError
-from app.core.openai_client import OpenAIClient
+from app.core.openai_client import OpenAIClient, _normalize_openai_json_schema
+from app.domain.chat.generator import _StructuredAnalyticalAnswerDto
 from app.schemas.ai_chat.planner import PlannerResultDto
 
 
@@ -56,19 +57,29 @@ class _FakeCompletions:
         if self.mode == "strict_error_only":
             raise _BadRequest("Invalid request payload.")
 
-        payload: dict[str, Any] = {
-            "taskType": "out_of_scope_refusal",
-            "queryUnderstanding": {
-                "requiresUserData": False,
-                "requestedScopeLabel": None,
-                "mixedRequest": False,
-                "topics": ["scope"],
-            },
-            "capabilities": [],
-            "responseMode": "refusal_redirect",
-            "needsFollowUp": False,
-            "followUpQuestion": None,
-        }
+        schema_name = str(kwargs["response_format"]["json_schema"]["name"])
+        if schema_name == "_structuredanalyticalanswerdto":
+            payload: dict[str, Any] = {
+                "verdict": "Ok.",
+                "coverageStatement": "Coverage is medium.",
+                "keyObservations": ["Observation."],
+                "practicalNextStep": "Do next.",
+                "followUpQuestion": None,
+            }
+        else:
+            payload = {
+                "taskType": "out_of_scope_refusal",
+                "queryUnderstanding": {
+                    "requiresUserData": False,
+                    "requestedScopeLabel": None,
+                    "mixedRequest": False,
+                    "topics": ["scope"],
+                },
+                "capabilities": [],
+                "responseMode": "refusal_redirect",
+                "needsFollowUp": False,
+                "followUpQuestion": None,
+            }
         return _Response(
             choices=[_Choice(message=_Message(content=json.dumps(payload)))],
             usage=_Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
@@ -83,6 +94,80 @@ class _FakeChat:
 class _FakeClient:
     def __init__(self, calls: list[dict[str, Any]], *, mode: str) -> None:
         self.chat = _FakeChat(calls, mode=mode)
+
+
+def test_normalize_openai_json_schema_adds_additional_properties_recursively() -> None:
+    raw_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "nested": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"name": {"type": "string"}},
+                        },
+                    }
+                },
+            },
+            "dynamicArgs": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+            },
+        },
+        "$defs": {
+            "Choice": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+            }
+        },
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            }
+        ],
+    }
+
+    normalized = _normalize_openai_json_schema(raw_schema)
+
+    assert "additionalProperties" not in raw_schema
+    assert normalized["additionalProperties"] is False
+    assert normalized["properties"]["nested"]["additionalProperties"] is False
+    nested_items = normalized["properties"]["nested"]["properties"]["items"]["items"]
+    assert nested_items["additionalProperties"] is False
+    assert normalized["$defs"]["Choice"]["additionalProperties"] is False
+    assert normalized["anyOf"][0]["additionalProperties"] is False
+    assert normalized["properties"]["dynamicArgs"]["additionalProperties"] == {
+        "type": "string"
+    }
+
+
+async def test_openai_client_sends_normalized_structured_schema_with_aliases() -> None:
+    calls: list[dict[str, Any]] = []
+    client = OpenAIClient(client=_FakeClient(calls, mode="success"))
+
+    result = await client.responses_json_with_usage(
+        model="gpt-4o-mini",
+        messages=[{"role": "system", "content": "x"}],
+        schema=_StructuredAnalyticalAnswerDto,
+        temperature=0.0,
+    )
+
+    assert result["data"]["coverageStatement"] == "Coverage is medium."
+    assert len(calls) == 1
+    schema = calls[0]["response_format"]["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {
+        "verdict",
+        "coverageStatement",
+        "keyObservations",
+        "practicalNextStep",
+        "followUpQuestion",
+    }
+    assert "coverage_statement" not in schema["properties"]
 
 
 async def test_openai_client_falls_back_to_non_strict_json_schema_on_schema_reject() -> None:

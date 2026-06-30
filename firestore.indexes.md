@@ -39,6 +39,28 @@ This document maps `firestore.indexes.json` to active backend query shapes after
 13. `ai_runs` (`COLLECTION`) — `userId ASC`, `createdAt DESC`, `__name__ DESC`
 - Used by: `app/infra/firestore/repositories/ai_run_repository.py` (`list_recent_for_user`).
 
+## Deployment verification
+
+Production Firestore must have the checked-in indexes deployed. Merging
+`firestore.indexes.json` is not enough for production query readiness.
+
+Deploy indexes with the Firebase project selected for the target environment:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+For Launch 1.0 Sentry issue `FITALY-1D`, verify that production includes these
+user-owned `meals` collection indexes before changing NutritionState logic:
+
+- `deleted ASC`, `dayKey ASC`, `__name__ ASC`
+- `deleted ASC`, `loggedAt ASC`, `__name__ ASC`
+
+Those shapes are used by `nutrition_state_service._load_bounded_meals` and
+`habit_signal_service._load_recent_meals`. Missing production deployment of
+either index can surface through NutritionState consumers such as coach insights
+and smart reminder decisions.
+
 ## Query shapes that do not need new composites
 
 - `users/{uid}/billing/main/aiCredits/current`: direct document read/write by id (no composite index).

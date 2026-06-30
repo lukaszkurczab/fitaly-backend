@@ -41,6 +41,32 @@ def _schema_json(schema: object) -> dict[str, Any]:
     return adapter.json_schema()
 
 
+def _normalize_openai_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return an OpenAI structured-output compatible copy of a JSON Schema."""
+
+    def normalize_node(node: object) -> object:
+        if isinstance(node, list):
+            return [normalize_node(item) for item in cast(list[object], node)]
+        if not isinstance(node, dict):
+            return node
+
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_value in cast(dict[object, object], node).items():
+            if not isinstance(raw_key, str):
+                continue
+            normalized[raw_key] = normalize_node(raw_value)
+
+        if normalized.get("type") == "object" and "additionalProperties" not in normalized:
+            normalized["additionalProperties"] = False
+
+        return normalized
+
+    result = normalize_node(schema)
+    if not isinstance(result, dict):
+        return {}
+    return cast(dict[str, Any], result)
+
+
 def _validate_against_schema(schema: object, payload: object) -> Any:
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         model = schema.model_validate(payload)
@@ -158,7 +184,7 @@ class OpenAIClient:
         temperature: float = 0.0,
     ) -> dict[str, Any]:
         schema_name = _schema_name(schema)
-        schema_payload = _schema_json(schema)
+        schema_payload = _normalize_openai_json_schema(_schema_json(schema))
 
         async def _request_structured(strict: bool) -> Any:
             return await self._client.chat.completions.create(
