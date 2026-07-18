@@ -88,6 +88,16 @@ If a gate fails: fix and re-run (max 3 attempts). If still failing: stop and rep
 - Do not introduce new dependencies unless explicitly requested.
 - Reuse existing helpers for config, error handling, and Firestore access before adding new abstractions.
 
+## Canonical Replacement Policy
+
+For an explicitly approved change, update the canonical implementation in place and update every direct callsite, test, and fixture in the same change-set. Remove the replaced path in that same change-set.
+
+- Do not add legacy fallbacks, compatibility adapters, translators, aliases, dual reads/writes, shadow writes, or bridge models.
+- Do not maintain parallel `V2`, `V3`, `new`, `legacy`, or `compat` implementations.
+- A kill switch must return an explicit unavailable state; it must not run the old path.
+- A required data migration is a separately approved, one-time cut-over. Runtime translators are prohibited.
+- Existing code or tests that protect old behavior are not automatically product requirements.
+
 ## Python / FastAPI Rules
 
 - Prefer typed function signatures and Pydantic models for request/response payloads.
