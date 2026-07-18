@@ -15,6 +15,7 @@ from app.schemas.telemetry import (
     SmartReminderRolloutSummaryResponse,
     TelemetryBatchIngestResponse,
     TelemetryBatchRequest,
+    TelemetryDisabledResponse,
     TelemetryDailySummaryResponse,
 )
 from app.services.telemetry_service import (
@@ -31,6 +32,9 @@ router = APIRouter()
     "/telemetry/events/batch",
     response_model=TelemetryBatchIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": TelemetryDisabledResponse},
+    },
     summary="Ingest telemetry batch events",
     description=(
         "Accepts a batch of mobile or backend telemetry events under the v2 "
@@ -55,7 +59,7 @@ def ingest_telemetry_batch(
     except TelemetryDisabledError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telemetry ingestion is disabled",
+            detail=TelemetryDisabledResponse().model_dump(),
         ) from exc
     except TelemetryPayloadTooLargeError as exc:
         raise HTTPException(

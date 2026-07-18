@@ -263,12 +263,7 @@ def ingest_batch(
                 "request_id": context.request_id,
             },
         )
-        return TelemetryBatchIngestResponse(
-            acceptedCount=0,
-            duplicateCount=0,
-            rejectedCount=0,
-            rejectedEvents=[],
-        )
+        raise TelemetryDisabledError("Telemetry ingestion is disabled")
 
     _check_rate_limit(build_bucket_key(context))
     _validate_payload_size(request)

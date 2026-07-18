@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -24,6 +24,7 @@ MAX_PROP_STRING_LENGTH = 200
 MAX_PROPS_JSON_LENGTH = 2_048
 MAX_BATCH_SIZE = 50
 CURRENT_TELEMETRY_SCHEMA_VERSION = 2
+TELEMETRY_DISABLED_CODE = "TELEMETRY_DISABLED"
 TELEMETRY_REJECTION_EVENT_NOT_ALLOWED = "event_not_allowed"
 TELEMETRY_REJECTION_ACTOR_AUTH_MISMATCH = "actor_auth_mismatch"
 TELEMETRY_REJECTION_UNAUTHENTICATED_USER_ACTOR = "unauthenticated_user_actor"
@@ -876,6 +877,15 @@ class TelemetryBatchIngestResponse(BaseModel):
         if self.rejectedCount != len(self.rejectedEvents):
             raise ValueError("Rejected event count does not match rejected event list")
         return self
+
+
+class TelemetryDisabledResponse(BaseModel):
+    """Explicit response returned when telemetry ingestion is disabled."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Literal["TELEMETRY_DISABLED"] = TELEMETRY_DISABLED_CODE
+    message: Literal["Telemetry ingestion is disabled"] = "Telemetry ingestion is disabled"
 
 
 class TelemetrySummaryEventCount(BaseModel):
