@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import inspect
 import json
 from typing import Any, cast
@@ -807,10 +807,20 @@ def test_known_pattern_candidates_do_not_return_expired_current_suggestions() ->
 
 
 def _three_day_meals() -> list[dict[str, object]]:
+    now = datetime.now(timezone.utc)
+
+    def meal_on(day_offset: int, meal_id: str, minute_offset: int) -> dict[str, object]:
+        logged_at = now - timedelta(days=day_offset, minutes=minute_offset)
+        return _meal(
+            meal_id,
+            day_key=logged_at.date().isoformat(),
+            logged_at=logged_at.isoformat().replace("+00:00", "Z"),
+        )
+
     return [
-        _meal("meal-1", day_key="2026-06-15", logged_at="2026-06-15T07:30:00Z"),
-        _meal("meal-2", day_key="2026-06-16", logged_at="2026-06-16T07:35:00Z"),
-        _meal("meal-3", day_key="2026-06-17", logged_at="2026-06-17T07:40:00Z"),
+        meal_on(2, "meal-1", 0),
+        meal_on(1, "meal-2", 5),
+        meal_on(0, "meal-3", 10),
     ]
 
 
@@ -818,7 +828,7 @@ def _candidate_payload() -> tuple[list[dict[str, object]], str, str, str]:
     meals = _three_day_meals()
     candidate = evaluate_known_pattern_candidates(
         meals,
-        now=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        now=datetime.now(timezone.utc),
     ).items[0]
     return (
         meals,
